@@ -16,14 +16,14 @@
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-        <OutputPath>..\..\..\bin\Debug\BotServices</OutputPath>
-        <DocumentationFile>../../../bin/Debug/BotServices/Meshmakers.Octo.Backend.BotServices.xml</DocumentationFile>
+        <OutputPath>..\..\bin\Debug\BotServices</OutputPath>
+        <DocumentationFile>../../bin/Debug/BotServices/Meshmakers.Octo.Backend.BotServices.xml</DocumentationFile>
         <NoWarn>1701;1702;CS8002</NoWarn>
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-        <OutputPath>..\..\..\bin\Release\BotServices</OutputPath>
-        <DocumentationFile>../../../bin/Release/BotServices/Meshmakers.Octo.Backend.BotServices.xml</DocumentationFile>
+        <OutputPath>..\..\bin\Release\BotServices</OutputPath>
+        <DocumentationFile>../../bin/Release/BotServices/Meshmakers.Octo.Backend.BotServices.xml</DocumentationFile>
         <NoWarn>1701;1702;CS8002</NoWarn>
     </PropertyGroup>
 
