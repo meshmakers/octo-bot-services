@@ -1,0 +1,57 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <ApplicationIcon />
+        <AssemblyName>Meshmakers.Octo.Backend.BotServices</AssemblyName>
+        <Description>The job services of Object Service Platform</Description>
+        <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+        <IsPackable>false</IsPackable>
+        <OutputType>Exe</OutputType>
+        <RootNamespace>Meshmakers.Octo.Backend.BotServices</RootNamespace>
+        <StartupObject />
+        <UserSecretsId>FC21694E-6810-46DB-9352-465BD6075EF3</UserSecretsId>
+        <Version>1.0.0</Version>
+        <TargetFramework>net7.0</TargetFramework>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+        <OutputPath>..\..\..\bin\Debug\BotServices</OutputPath>
+        <DocumentationFile>../../../bin/Debug/BotServices/Meshmakers.Octo.Backend.BotServices.xml</DocumentationFile>
+        <NoWarn>1701;1702;CS8002</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+        <OutputPath>..\..\..\bin\Release\BotServices</OutputPath>
+        <DocumentationFile>../../../bin/Release/BotServices/Meshmakers.Octo.Backend.BotServices.xml</DocumentationFile>
+        <NoWarn>1701;1702;CS8002</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Hangfire.Mongo" Version="1.9.2" />
+        <PackageReference Include="IdentityModel.AspNetCore.OAuth2Introspection" Version="6.2.0" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="7.0.2" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="7.0.2" />
+        <PackageReference Include="Microsoft.AspNetCore.Server.IISIntegration" Version="2.2.1" />
+        <PackageReference Include="Microsoft.Extensions.PlatformAbstractions" Version="1.1.0" />
+        <PackageReference Include="NLog.Web.AspNetCore" Version="5.2.1" />
+        <PackageReference Include="RestSharp" Version="108.0.3" />
+        <PackageReference Include="Hangfire.AspNetCore" Version="1.7.33" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj" />
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Swagger\Swagger.csproj" />
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Jobs\Jobs.csproj" />
+        <ProjectReference Include="$(OctoCorePath)src\SystematizedData\Persistence\Persistence.csproj" />
+        <ProjectReference Include="..\BotServices.Resources\BotServices.Resources.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Update="wwwroot\css\swagger.css">
+            <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
+    </ItemGroup>
+
+</Project>
