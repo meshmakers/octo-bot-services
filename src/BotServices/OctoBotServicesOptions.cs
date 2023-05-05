@@ -29,12 +29,12 @@ public class OctoBotServicesOptions
     public string RedisCachePassword { get; set; }
 
     /// <summary>
-    ///     URL of arango db
+    ///     MongoDB job database
     /// </summary>
     public string JobDatabaseName { get; set; }
 
     /// <summary>
-    ///     When true, the collections of arango db job database are created when they do not exist
+    ///     When true, the collections of mongodb job database are created when they do not exist
     /// </summary>
     public bool PrepareJobSchemaIfNecessary { get; set; }
 

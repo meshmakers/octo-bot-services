@@ -125,9 +125,8 @@ public class JobsController : ControllerBase
 
     private async Task<Tuple<string, Stream>> GetResultStream(string key)
     {
-        var contentType = (string)await _distributedCache.Database.StringGetAsync(key + "contentType");
-
-        var fileArray = (byte[])await _distributedCache.Database.StringGetAsync(key + "value");
+        var contentType = (string?)await _distributedCache.Database.StringGetAsync(key + "contentType");
+        var fileArray = (byte[]?)await _distributedCache.Database.StringGetAsync(key + "value");
         if (string.IsNullOrWhiteSpace(contentType) || fileArray == null || fileArray.Length == 0)
         {
             throw new JobFailedException("No value in distribute cache found.");
