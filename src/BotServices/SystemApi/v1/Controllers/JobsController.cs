@@ -7,8 +7,8 @@ using Hangfire;
 using Hangfire.Storage.Monitoring;
 using IdentityModel;
 using Meshmakers.Octo.Backend.Common.ApiErrors;
-using Meshmakers.Octo.Backend.DistributedCache;
 using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Common.DistributedCache;
 using Meshmakers.Octo.Common.Shared.DataTransferObjects;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -125,13 +125,12 @@ public class JobsController : ControllerBase
 
     private async Task<Tuple<string, Stream>> GetResultStream(string key)
     {
-        var contentType = (string?)await _distributedCache.Database.StringGetAsync(key + "contentType");
-        var fileArray = (byte[]?)await _distributedCache.Database.StringGetAsync(key + "value");
-        if (string.IsNullOrWhiteSpace(contentType) || fileArray == null || fileArray.Length == 0)
+        var cacheStream = await _distributedCache.GetCacheStreamAsync(key);
+        if (cacheStream == null)
         {
             throw new JobFailedException("No value in distribute cache found.");
         }
 
-        return new Tuple<string, Stream>(contentType, new MemoryStream(fileArray));
+        return new Tuple<string, Stream>(cacheStream.ContentType, new MemoryStream(cacheStream.Stream));
     }
 }

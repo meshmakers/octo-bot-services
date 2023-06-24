@@ -2,8 +2,8 @@ using System.Threading.Tasks;
 using Hangfire;
 using Hangfire.Storage;
 using Meshmakers.Octo.Backend.BotServices.Jobs;
-using Meshmakers.Octo.Backend.DistributedCache;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Common.DistributedCache;
 using Meshmakers.Octo.SystematizedData.Persistence;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
