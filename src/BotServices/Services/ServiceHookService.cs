@@ -4,6 +4,7 @@ using Hangfire.Storage;
 using Meshmakers.Octo.Backend.BotServices.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Common.DistributedCache;
+using Meshmakers.Octo.Common.Shared.DistributedCache;
 using Meshmakers.Octo.SystematizedData.Persistence;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
@@ -24,7 +25,7 @@ public class ServiceHookService : IServiceHookService
     {
         _systemContext = systemContext;
         var sub = distributedCache.Subscribe<string>(CacheCommon.KeyTenantUpdate);
-        sub.OnMessage(async message => { await SyncDataSourceAndCreateJobsAsync(); });
+        sub.OnMessage(async _ => { await SyncDataSourceAndCreateJobsAsync(); });
     }
 
     /// <summary>
