@@ -1,10 +1,12 @@
 using System.Threading.Tasks;
 using Hangfire;
 using Hangfire.Storage;
-using Meshmakers.Octo.Backend.BotServices.Jobs;
+using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Common.DistributedCache;
+using Meshmakers.Octo.Common.Shared;
 using Meshmakers.Octo.Common.Shared.DistributedCache;
+using Meshmakers.Octo.Common.Shared.Jobs;
 using Meshmakers.Octo.SystematizedData.Persistence;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
@@ -49,13 +51,13 @@ public class ServiceHookService : IServiceHookService
         var result = await _systemContext.GetTenantsAsync(systemSession);
         foreach (var octoTenant in result.List)
         {
-            RecurringJob.AddOrUpdate<ServiceHookJob>($"ServiceHook_{octoTenant.TenantId}",
-                job => job.Run(octoTenant.TenantId, JobCancellationToken.Null), "*/15 * * * *");
+            RecurringJob.AddOrUpdate<IServiceHookJob>($"ServiceHook_{octoTenant.TenantId}",
+                job => job.Run(octoTenant.TenantId, BotCancellationToken.Null), "*/15 * * * *");
 
-            RecurringJob.AddOrUpdate<AttributeValueAggregatorJob>($"AttributeValueAggregate_{octoTenant.TenantId}",
-                job => job.Run(octoTenant.TenantId, JobCancellationToken.Null), Cron.Daily);
-            RecurringJob.AddOrUpdate<EMailSenderJob>($"Notification_EMail_Sender_{octoTenant.TenantId}",
-                job => job.SendEMail(octoTenant.TenantId, JobCancellationToken.Null), Cron.Minutely);
+            RecurringJob.AddOrUpdate<IAttributeValueAggregatorJob>($"AttributeValueAggregate_{octoTenant.TenantId}",
+                job => job.Run(octoTenant.TenantId, BotCancellationToken.Null), Cron.Daily);
+            RecurringJob.AddOrUpdate<IEMailSenderJob>($"Notification_EMail_Sender_{octoTenant.TenantId}",
+                job => job.SendEMail(octoTenant.TenantId, BotCancellationToken.Null), Cron.Minutely);
         }
 
         await systemSession.CommitTransactionAsync();

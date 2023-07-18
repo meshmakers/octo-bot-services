@@ -3,10 +3,10 @@ using System.Runtime.Serialization;
 
 #pragma warning disable 1591
 
-namespace Meshmakers.Octo.Backend.BotServices.Jobs;
+namespace Meshmakers.Octo.Backend.Jobs;
 
 [Serializable]
-public class ServiceHookException : Exception
+public class ServiceHookException : JobFailedException
 {
     //
     // For guidelines regarding the creation of new exception types, see
@@ -23,7 +23,7 @@ public class ServiceHookException : Exception
     {
     }
 
-    public ServiceHookException(string message, Exception inner) : base(message, inner)
+    public ServiceHookException(string message, Exception? inner) : base(message, inner)
     {
     }
 

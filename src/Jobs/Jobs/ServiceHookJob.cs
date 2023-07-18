@@ -4,9 +4,9 @@ using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Hangfire;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Common.Shared.DataTransferObjects;
+using Meshmakers.Octo.Common.Shared.Jobs;
 using Meshmakers.Octo.SystematizedData.Persistence;
 using Meshmakers.Octo.SystematizedData.Persistence.CkModelEntities;
 using Meshmakers.Octo.SystematizedData.Persistence.DataAccess;
@@ -17,9 +17,9 @@ using RestSharp;
 
 #pragma warning disable 1591
 
-namespace Meshmakers.Octo.Backend.BotServices.Jobs;
+namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
-public class ServiceHookJob
+public class ServiceHookJob : IServiceHookJob
 {
     private const string APIKEY = "XApiKey";
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
@@ -31,7 +31,7 @@ public class ServiceHookJob
     }
 
     [DisplayName("Checks for new job schedules '{0}'")]
-    public async Task Run(string dataSource, IJobCancellationToken cancellationToken)
+    public async Task Run(string dataSource, IBotCancellationToken? cancellationToken)
     {
         try
         {
@@ -58,17 +58,23 @@ public class ServiceHookJob
                     serviceHook.GetAttributeStringValueOrDefault(Constants.ServiceHookActionAttribute);
                 var serviceHookApiKey =
                     serviceHook.GetAttributeStringValueOrDefault(Constants.ServiceHookApiKeyAttribute);
+                var fieldFilter = serviceHook.GetAttributeStringValueOrDefault(Constants.FieldFilterAttribute);
+
+                if (!string.IsNullOrWhiteSpace(fieldFilter))
+                {
+
+                    return;
+                }
+ 
                 var dataQueryOperation = new DataQueryOperation
                 {
-                    FieldFilters = JsonConvert
-                        .DeserializeObject<FieldFilterDto[]>(
-                            serviceHook.GetAttributeStringValueOrDefault(Constants.FieldFilterAttribute))
+                    FieldFilters = JsonConvert.DeserializeObject<FieldFilterDto[]>(fieldFilter)
                         .Select(f =>
                             new FieldFilter(TransformAttributeName(f.AttributeName), (FieldFilterOperator)f.Operator,
                                 f.ComparisonValue))
                 };
 
-                if (CheckCancellation(cancellationToken.ShutdownToken))
+                if (CheckCancellation(cancellationToken?.ShutdownToken))
                 {
                     return;
                 }
@@ -83,7 +89,7 @@ public class ServiceHookJob
                 try
                 {
                     await CallServiceHook(serviceHookBaseUri, serviceHookAction, serviceHookApiKey, result.Result,
-                        cancellationToken.ShutdownToken);
+                        cancellationToken?.ShutdownToken);
                 }
                 catch (Exception e)
                 {
@@ -112,7 +118,7 @@ public class ServiceHookJob
 
     private async Task CallServiceHook(string baseUri, string webServiceAction, string apiKey,
         IEnumerable<RtEntity> entities,
-        CancellationToken cancellationToken)
+        CancellationToken? cancellationToken)
     {
         var result = entities.Select(x => x.RtId.ToString());
 
@@ -125,7 +131,7 @@ public class ServiceHookJob
 
         request.AddJsonBody(result);
 
-        var response = await client.ExecutePostAsync(request, cancellationToken);
+        var response = await client.ExecutePostAsync(request, cancellationToken!.Value);
         ValidateResponse(response);
     }
 
