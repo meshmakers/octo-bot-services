@@ -9,7 +9,6 @@ using Hangfire.Mongo.Migration.Strategies.Backup;
 using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Hangfire;
-using Meshmakers.Octo.Backend.BotServices.Jobs;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Common;
 using Meshmakers.Octo.Backend.Common.Authorization;
@@ -18,6 +17,7 @@ using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Backend.Swagger.Configuration;
 using Meshmakers.Octo.Common.Shared;
+using Meshmakers.Octo.Common.Shared.Jobs;
 using Meshmakers.Octo.Common.Shared.Services;
 using Meshmakers.Octo.Services.Common.Cors;
 using Meshmakers.Octo.SystematizedData.Persistence;
@@ -83,11 +83,11 @@ public class Startup
 
         services.AddTransient<IUserSchemaService, UserSchemaService>();
         services.AddTransient<IServiceHookService, ServiceHookService>();
-        services.AddTransient<ImportModelJob>();
-        services.AddTransient<ExportModelJob>();
-        services.AddTransient<EMailSenderJob>();
-        services.AddTransient<ServiceHookJob>();
-        services.AddTransient<AttributeValueAggregatorJob>();
+        services.AddTransient<IImportModelJob, ImportModelJob>();
+        services.AddTransient<IExportModelJob, ExportModelJob>();
+        services.AddTransient<IEMailSenderJob, EMailSenderJob>();
+        services.AddTransient<IServiceHookJob, ServiceHookJob>();
+        services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
 
         services.AddDistributedPubSubCache();
         services.AddMemoryCache();

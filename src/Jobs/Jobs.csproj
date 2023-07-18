@@ -1,0 +1,51 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <AssemblyName>Meshmakers.Octo.Backend.Jobs</AssemblyName>
+        <IsPackable>true</IsPackable>
+        <PackageIcon>meshmakers64.png</PackageIcon>
+        <PackageId>Meshmakers.Octo.Backend.Jobs</PackageId>
+        <PackageLicenseFile>LICENSE</PackageLicenseFile>
+        <PackageProjectUrl>https://www.meshmakers.io</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/meshmakers/octomesh</RepositoryUrl>
+        <RootNamespace>Meshmakers.Octo.Backend.Jobs</RootNamespace>
+        <TargetFramework>net7.0</TargetFramework>
+    </PropertyGroup>
+
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+        <OutputPath>..\..\bin\Debug\BackendJobs</OutputPath>
+        <DocumentationFile>..\..\bin\Debug\BackendCommon\Jobs.xml</DocumentationFile>
+        <NoWarn>1701;1702;CS8002</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+        <OutputPath>..\..\bin\Release\BackendJobs</OutputPath>
+        <DocumentationFile>..\..\bin\Release\BackendCommon\Jobs.xml</DocumentationFile>
+        <NoWarn>1701;1702;CS8002</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Hangfire.Core" Version="1.8.3" />
+        <PackageReference Include="Meshmakers.Common.Shared" Version="4.0.2307.7001" />
+        <PackageReference Include="Meshmakers.Octo.Common.Shared" Version="0.0.2307.17008" />
+        <PackageReference Include="Microsoft.Extensions.Options" Version="7.0.1" />
+        <PackageReference Include="NLog" Version="5.2.2" />
+        <PackageReference Include="RestSharp" Version="110.2.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\..\assets\meshmakers64.png">
+            <Pack>True</Pack>
+            <PackagePath />
+            <Link>meshmakers64.png</Link>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\octo-core\src\Common\Shared\Shared.csproj" />
+      <ProjectReference Include="..\octo-core\src\SystematizedData\Persistence\Persistence.csproj" />
+    </ItemGroup>
+
+
+</Project>
