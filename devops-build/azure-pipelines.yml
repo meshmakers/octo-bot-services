@@ -10,15 +10,13 @@ trigger:
       - dev
 
 variables:
-  buildConfiguration: 'Release'
-  buildPlatform: 'any cpu'
-  solutionFile: "Octo.Bots.sln"
-  Company: "meshmakers GmbH"
-  Copyright: "(c) 2022-2023 meshmakers GmbH"
-  isRelease: true #${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/r') }}
-  MajorVersion: 0
-  MinorVersion: 0
-
+  - group: GitSSHGroup
+  - group: OctoDefault
+  - name: solutionFile
+    value: 'Octo.Bots.sln'
+  - name: isRelease
+    value: true #${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/r') }}
+    
 stages:
   - stage: Build
     jobs:
@@ -30,6 +28,12 @@ stages:
           - checkout: self
             clean: true
             submodules: true
+          - task: InstallSSHKey@0
+            inputs:
+              knownHostsEntry: '$(SSHKnownHosts)'
+              sshPublicKey: '$(SSHPublicKey)'
+              sshPassphrase: '$(SSHPassphrase)'
+              sshKeySecureFile: '$(SSHPrivateKeyFile)'
           - task: PowerShell@2
             inputs:
               targetType: 'inline'
