@@ -73,6 +73,7 @@ public class Startup
         services.AddHostedService<StartupService>();
 
         services.AddTransient<IOctoClientStore, ClientStore>();
+        services.AddTransient<IKnownOriginsProvider>(provider => provider.GetRequiredService<IOctoClientStore>());
         services.AddTransient<IOctoResourceStore, ResourceStore>();
         services.AddSingleton<ICorsPolicyProvider, CorsPolicyProvider>();
         services.AddSingleton<INotificationRepository, EntityNotificationRepository>();
