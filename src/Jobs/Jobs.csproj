@@ -27,10 +27,10 @@
 
     <ItemGroup>
         <PackageReference Include="Hangfire.Core" Version="1.8.3" />
-        <PackageReference Include="Meshmakers.Common.Shared" Version="4.0.2307.7001" />
-        <PackageReference Include="Meshmakers.Octo.Common.Shared" Version="0.0.2307.17008" />
+        <PackageReference Include="Meshmakers.Common.Shared" Version="4.0.2309.9001" />
+        <PackageReference Include="Meshmakers.Octo.Common.Shared" Version="0.0.2309.4002" />
         <PackageReference Include="Microsoft.Extensions.Options" Version="7.0.1" />
-        <PackageReference Include="NLog" Version="5.2.2" />
+        <PackageReference Include="NLog" Version="5.2.4" />
         <PackageReference Include="RestSharp" Version="110.2.0" />
     </ItemGroup>
 
