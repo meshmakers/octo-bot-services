@@ -1,6 +1,3 @@
-using System;
-using System.Runtime.Serialization;
-
 #pragma warning disable 1591
 
 namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
@@ -24,12 +21,6 @@ public class FilterAttributeNotFoundException : Exception
     }
 
     public FilterAttributeNotFoundException(string message, Exception inner) : base(message, inner)
-    {
-    }
-
-    protected FilterAttributeNotFoundException(
-        SerializationInfo info,
-        StreamingContext context) : base(info, context)
     {
     }
 }

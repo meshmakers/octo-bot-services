@@ -1,15 +1,11 @@
-﻿using System;
-using System.ComponentModel.DataAnnotations;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using System.ComponentModel.DataAnnotations;
 using Hangfire;
 using Hangfire.Storage.Monitoring;
 using IdentityModel;
-using Meshmakers.Octo.Backend.Common.ApiErrors;
 using Meshmakers.Octo.Backend.Jobs;
-using Meshmakers.Octo.Common.Shared.DataTransferObjects;
-using Meshmakers.Octo.Common.Shared.DistributedCache;
+using Meshmakers.Octo.Common.DistributionEventHub.Services;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Services.Common.ApiErrors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -24,13 +20,13 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 [ApiVersion("1.0")]
 public class JobsController : ControllerBase
 {
-    private readonly IDistributedWithPubSubCache _distributedCache;
+    private readonly IDistributedCacheService _distributedCache;
 
     /// <summary>
     ///     Constructor
     /// </summary>
     /// <param name="distributedCache"></param>
-    public JobsController(IDistributedWithPubSubCache distributedCache)
+    public JobsController(IDistributedCacheService distributedCache)
     {
         _distributedCache = distributedCache;
     }
@@ -64,13 +60,14 @@ public class JobsController : ControllerBase
     /// <summary>
     ///     Downloads the job result as binary file
     /// </summary>
+    /// <param name="tenantId">Corresponding tenant id, null if system tenant is used.</param>
     /// <param name="id">Job ID</param>
     /// <returns></returns>
     // POST: system/jobs/download?id=abc
     [HttpGet]
     [Route("download")]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
-    public async Task<IActionResult> DownloadExportRtResult(string id)
+    public async Task<IActionResult> DownloadExportRtResult(string? tenantId, string id)
     {
         try
         {
@@ -84,7 +81,7 @@ public class JobsController : ControllerBase
             }
 
             var key = (string)job.Result;
-            var resultTuple = await GetResultStream(key.Replace("\"", ""));
+            var resultTuple = await GetResultStream(tenantId, key.Replace("\"", ""));
 
             return new FileStreamResult(resultTuple.Item2, resultTuple.Item1);
         }
@@ -123,14 +120,14 @@ public class JobsController : ControllerBase
         return jobDto;
     }
 
-    private async Task<Tuple<string, Stream>> GetResultStream(string key)
+    private async Task<Tuple<string, Stream>> GetResultStream(string? tenantId, string key)
     {
-        var cacheStream = await _distributedCache.GetCacheStreamAsync(key);
+        var cacheStream = await _distributedCache.GetCacheStreamAsync(tenantId, key);
         if (cacheStream == null)
         {
             throw new JobFailedException("No value in distribute cache found.");
         }
 
-        return new Tuple<string, Stream>(cacheStream.ContentType, new MemoryStream(cacheStream.Stream));
+        return new Tuple<string, Stream>(cacheStream.ContentType, cacheStream.Stream);
     }
 }

@@ -1,41 +1,40 @@
-using System.Threading.Tasks;
 using Hangfire;
 using Hangfire.Storage;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
-using Meshmakers.Octo.Common.DistributedCache;
-using Meshmakers.Octo.Common.Shared;
-using Meshmakers.Octo.Common.Shared.DistributedCache;
-using Meshmakers.Octo.Common.Shared.Jobs;
-using Meshmakers.Octo.SystematizedData.Persistence;
+using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
 
-namespace Meshmakers.Octo.Backend.BotServices.Services;
+namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 
 /// <summary>
-///     Implements the service hook service, that creates hangfire jobs for each data source
+/// Handles the <see cref="PreUpdateTenant"/> message.
 /// </summary>
-public class ServiceHookService : IServiceHookService
+internal class PreUpdateTenantConsumer : IDistributedConsumer<PreUpdateTenant>
 {
+    readonly ILogger<PreUpdateTenantConsumer> _logger;
     private readonly ISystemContext _systemContext;
 
     /// <summary>
-    ///     Constructor
+    /// Constructor.
     /// </summary>
+    /// <param name="logger"></param>
     /// <param name="systemContext"></param>
-    /// <param name="distributedCache"></param>
-    public ServiceHookService(ISystemContext systemContext, IDistributedWithPubSubCache distributedCache)
+    public PreUpdateTenantConsumer(ILogger<PreUpdateTenantConsumer> logger, ISystemContext systemContext)
     {
+        _logger = logger;
         _systemContext = systemContext;
-        var sub = distributedCache.Subscribe<string>(CacheCommon.KeyTenantUpdate);
-        sub.OnMessage(async _ => { await SyncDataSourceAndCreateJobsAsync(); });
     }
 
     /// <summary>
     ///     Removes all jobs and creates new jobs for existing data sources
     /// </summary>
     /// <returns></returns>
-    public async Task SyncDataSourceAndCreateJobsAsync()
+    public async Task ConsumeAsync(IDistributedContext<PreUpdateTenant> context)
     {
+        _logger.LogInformation("Pre update tenant received: {Text}", context.Message.TenantId);
+        
         using (var connection = JobStorage.Current.GetConnection())
         {
             foreach (var recurringJob in connection.GetRecurringJobs())
@@ -44,12 +43,12 @@ public class ServiceHookService : IServiceHookService
             }
         }
 
-        using var systemSession = await _systemContext.StartSystemSessionAsync();
+        using var systemSession = await _systemContext.GetSystemSessionAsync();
         systemSession.StartTransaction();
 
         // Clean old jobs
-        var result = await _systemContext.GetTenantsAsync(systemSession);
-        foreach (var octoTenant in result.List)
+        var result = await _systemContext.GetChildTenantsAsync(systemSession);
+        foreach (var octoTenant in result.Items)
         {
             RecurringJob.AddOrUpdate<IServiceHookJob>($"ServiceHook_{octoTenant.TenantId}",
                 job => job.Run(octoTenant.TenantId, BotCancellationToken.Null), "*/15 * * * *");

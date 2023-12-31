@@ -1,6 +1,4 @@
-using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
 using BotServices.Resources;
 using Hangfire;
 using Hangfire.Mongo;
@@ -8,30 +6,25 @@ using Hangfire.Mongo.Migration.Strategies;
 using Hangfire.Mongo.Migration.Strategies.Backup;
 using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
+using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Hangfire;
 using Meshmakers.Octo.Backend.BotServices.Services;
-using Meshmakers.Octo.Backend.Common;
-using Meshmakers.Octo.Backend.Common.Authorization;
-using Meshmakers.Octo.Backend.DistributedCache;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Services;
-using Meshmakers.Octo.Backend.Swagger.Configuration;
-using Meshmakers.Octo.Common.Shared;
-using Meshmakers.Octo.Common.Shared.Jobs;
-using Meshmakers.Octo.Common.Shared.Services;
+using Meshmakers.Octo.Communication.Contracts;
+using Meshmakers.Octo.Communication.Contracts.Services;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
+using Meshmakers.Octo.Runtime.Engine.MongoDb;
+using Meshmakers.Octo.Services.Common;
+using Meshmakers.Octo.Services.Common.Authorization;
 using Meshmakers.Octo.Services.Common.Cors;
-using Meshmakers.Octo.SystematizedData.Persistence;
-using Meshmakers.Octo.SystematizedData.Persistence.Configuration;
-using Meshmakers.Octo.SystematizedData.Persistence.SystemStores;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
+using Meshmakers.Octo.Services.Notifications;
+using Meshmakers.Octo.Services.Swagger.Configuration;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Cors.Infrastructure;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
@@ -72,8 +65,6 @@ public class Startup
 
         services.AddHostedService<StartupService>();
 
-        services.AddTransient<IOctoClientStore, ClientStore>();
-        services.AddTransient<IOctoResourceStore, ResourceStore>();
         services.AddSingleton<ICorsPolicyProvider, CorsPolicyProvider>();
         services.AddSingleton<INotificationRepository, EntityNotificationRepository>();
         services.AddSingleton<IEMailSender, EMailSender>();
@@ -82,20 +73,27 @@ public class Startup
         services.AddSingleton<ISystemContext, SystemContext>();
 
         services.AddTransient<IUserSchemaService, UserSchemaService>();
-        services.AddTransient<IServiceHookService, ServiceHookService>();
+       // services.AddTransient<IServiceHookService, ServiceHookService>();
         services.AddTransient<IImportModelJob, ImportModelJob>();
         services.AddTransient<IExportModelJob, ExportModelJob>();
         services.AddTransient<IEMailSenderJob, EMailSenderJob>();
         services.AddTransient<IServiceHookJob, ServiceHookJob>();
         services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
 
-        services.AddDistributedPubSubCache();
         services.AddMemoryCache();
+        
+        services.AddOctoServiceInfrastructure("BotService", configureDistributionEventHub: c =>
+        {
+            c.AddBroadcastEventConsumer<PreUpdateTenantConsumer, PreUpdateTenant>();
+        });
+        
+        services.AddRuntimeEngine()
+            .AddMongoDbRuntimeRepository();
 
         services.ConfigureOptions<ConfigureIdentityServerAuthenticationOptions>();
         services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
         services.ConfigureOptions<ConfigureOctoSwaggerOptions>();
-        services.ConfigureOptions<ConfigureDistributeCacheWithPubSubOptions>();
+        services.ConfigureOptions<ConfigureDistributionEventHubOptions>();
 
         services.AddAuthentication(authenticationOptions =>
             {
@@ -258,7 +256,6 @@ public class Startup
 
         app.UseAuthorization();
 
-        app.UseOctoPersistence();
         app.UseOctoApiVersioningAndDocumentation();
 
         // Because we are behind a load balancer using HTTP it is needed to use XForwardProto to ensure

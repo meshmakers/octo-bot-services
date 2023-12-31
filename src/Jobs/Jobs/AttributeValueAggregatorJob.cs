@@ -1,12 +1,12 @@
-using System;
 using System.ComponentModel;
-using System.Linq;
-using System.Threading.Tasks;
-using Meshmakers.Octo.Common.Shared;
-using Meshmakers.Octo.Common.Shared.DistributedCache;
-using Meshmakers.Octo.Common.Shared.Jobs;
-using Meshmakers.Octo.SystematizedData.Persistence;
+using Meshmakers.Octo.Common.DistributionEventHub.Services;
+using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.ConstructionKit.Contracts.Services;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
 using NLog;
+using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
@@ -16,18 +16,22 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-    private readonly IDistributedWithPubSubCache _distributedCache;
     private readonly ISystemContext _systemContext;
+    private readonly ICkCacheService _ckCacheService;
+    private readonly IDistributionEventHubService _distributionEventHubService;
 
     /// <summary>
     ///     Constructor
     /// </summary>
     /// <param name="systemContext">System context object</param>
-    /// <param name="distributedCache">Redis distributed cache for file caching</param>
-    public AttributeValueAggregatorJob(ISystemContext systemContext, IDistributedWithPubSubCache distributedCache)
+    /// <param name="ckCacheService"></param>
+    /// <param name="distributionEventHubService">Distribution event hub service</param>
+    public AttributeValueAggregatorJob(ISystemContext systemContext, ICkCacheService ckCacheService,
+        IDistributionEventHubService distributionEventHubService)
     {
         _systemContext = systemContext;
-        _distributedCache = distributedCache;
+        _ckCacheService = ckCacheService;
+        _distributionEventHubService = distributionEventHubService;
     }
 
     /// <summary>
@@ -43,37 +47,75 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
         {
             Logger.Info($"Reading aggregatable attributes '{tenantId}'");
 
-            var dataContext = await _systemContext.CreateOrGetTenantContextAsync(tenantId);
+            var tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+            var tenantRepository = tenantContext.GetTenantRepository();
+            
+            using var session = await tenantRepository.GetSessionAsync();
+            session.StartTransaction();
 
-            foreach (var entityCacheItem in dataContext.CkCache.GetCkEntities())
+            var dataOperation = DataQueryOperation.Create();
+            var configurationResult = await tenantRepository.GetRtEntitiesByTypeAsync<RtAttributeAggregateConfiguration>(session, dataOperation);
+
+            if (!configurationResult.Items.Any())
+            {
+                Logger.Info($"No aggregatable attributes found for data source '{tenantId}'");
+            }
+            
+            // TODO: GetRtAssociationTargetsAsync needs to be optimized. We need to have better descriptions (what parameter is what) and we need to have a way the get attributes of assocs
+            // var originEntities = configurationResult.Items.Select(x => x.RtId);
+            // var assocResult = await tenantRepository
+            //     .GetRtAssociationTargetsAsync<RtAttributeAggregateConfiguration, RtEntity>(session, originEntities,
+            //         SystemBotCkIds.Configures, GraphDirections.Outbound, null, dataOperation);
+            
+            await _distributionEventHubService.PublishAsync(new PreUpdateTenant(tenantId));
+            
+            foreach (var configurationRtEntity in configurationResult.Items)
             {
                 cancellationToken?.ThrowIfCancellationRequested();
 
-                foreach (var attributeCacheItem in entityCacheItem.Attributes)
+                var rtAssociations = await tenantRepository.GetRtAssociationsAsync(session, configurationRtEntity.RtId,
+                    GraphDirections.Outbound, SystemBotCkIds.Configures);
+                var rtAssociation = rtAssociations.FirstOrDefault();
+                if (rtAssociation == null)
                 {
-                    if (!attributeCacheItem.Value.IsAutoCompleteEnabled)
-                    {
-                        continue;
-                    }
-
-                    cancellationToken?.ThrowIfCancellationRequested();
-
-                    using var session = await dataContext.Repository.StartSessionAsync();
-                    session.StartTransaction();
-
-                    var autoCompleteTexts = await dataContext.Repository.ExtractAutoCompleteValuesAsync(session,
-                        entityCacheItem.CkId,
-                        attributeCacheItem.Value.AttributeName, attributeCacheItem.Value.AutoCompleteFilter,
-                        attributeCacheItem.Value.AutoCompleteLimit);
-
-                    await dataContext.Repository.UpdateAutoCompleteTexts(session, entityCacheItem.CkId,
-                        attributeCacheItem.Value.AttributeName, autoCompleteTexts.Select(x => x.Text));
-
-                    await session.CommitTransactionAsync();
+                    continue;
                 }
-            }
 
-            await _distributedCache.PublishAsync(CacheCommon.KeyTenantUpdate, tenantId);
+                if (!configurationRtEntity.IsAutoCompleteEnabled)
+                {
+                    continue;
+                }
+
+                CkId<CkAttributeId>? attributeId = null;
+                if (!rtAssociation.Attributes.TryGetValue(SystemBotCkIds.SelectedAttributeIdAttribute, out var attributeValue))
+                {
+                    continue;
+                }
+                if (attributeValue is string s1)
+                {
+                    attributeId = s1;
+                }
+                cancellationToken?.ThrowIfCancellationRequested();
+
+                var ckTypeGraph = _ckCacheService.GetCkType(tenantId, rtAssociation.TargetCkTypeId);
+                if (attributeId == null || !ckTypeGraph.AllAttributes.TryGetValue(attributeId.Value, out var attributeCacheItem))
+                {
+                    continue;
+                }
+                
+                var autoCompleteTexts = await tenantRepository.ExtractAutoCompleteValuesAsync(session,
+                    rtAssociation.TargetCkTypeId,
+                    attributeCacheItem.AttributeName, configurationRtEntity.AutoCompleteFilter,
+                    configurationRtEntity.AutoCompleteLimit);
+                
+                cancellationToken?.ThrowIfCancellationRequested();
+
+                await tenantRepository.UpdateAutoCompleteTexts(session, ckTypeGraph.CkTypeId,
+                    attributeCacheItem.AttributeName, autoCompleteTexts.Select(x => x.Text));
+            }
+            await session.CommitTransactionAsync();
+
+            await _distributionEventHubService.PublishAsync(new PosUpdateTenant(tenantId));
 
             Logger.Info($"Aggregation of attribute values of data source '{tenantId}' completed.");
         }

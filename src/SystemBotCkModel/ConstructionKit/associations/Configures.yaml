@@ -1,0 +1,10 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+associationRoles:
+- id: Configures
+  inboundName: Configures
+  outboundName: ConfiguredBy
+  inboundMultiplicity: One
+  outboundMultiplicity: N
+  attributes:
+    - id: System.Bot/SelectedAttributeId
+      name: SelectedAttributeId

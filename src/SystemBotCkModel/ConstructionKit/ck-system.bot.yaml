@@ -1,0 +1,64 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-compiled.schema.json
+types:
+- typeId: ServiceHook
+  derivedFromCkTypeId: System/Entity
+  attributes:
+  - id: System/Enabled
+    name: Enabled
+  - id: System/Query.CkTypeId
+    name: QueryCkTypeId
+  - id: System/Query.FieldFilter
+    name: FieldFilter
+  - id: System/Name
+    name: Name
+  - id: System.Bot/ServiceHook.Uri
+    name: ServiceHookBaseUri
+  - id: System.Bot/ServiceHook.Action
+    name: ServiceHookAction
+  - id: System.Bot/ServiceHook.ApiKey
+    name: ServiceHookApiKey
+    isOptional: true
+- typeId: AttributeAggregateConfiguration
+  derivedFromCkTypeId: System/Entity
+  attributes:
+  - id: System/Enabled
+    name: IsAutoCompleteEnabled
+  - id: System.Bot/AutoCompleteFilter
+    name: AutoCompleteFilter
+  - id: System.Bot/AutoCompleteLimit
+    name: AutoCompleteLimit
+  associations:
+  - id: System.Bot/Configures
+    targetCkTypeId: System/Entity
+associationRoles:
+- id: Configures
+  inboundName: Configures
+  outboundName: ConfiguredBy
+  inboundMultiplicity: One
+  outboundMultiplicity: N
+  attributes:
+  - id: System.Bot/SelectedAttributeId
+    name: SelectedAttributeId
+attributes:
+- id: AutoCompleteFilter
+  valueType: String
+  description: The filter for auto complete defined by a regex expression.
+- id: AutoCompleteLimit
+  valueType: Int
+  defaultValues:
+  - 50
+  description: The maximum number of items to return from the autocomplete filter and stored at the type attribute's autoCompleteValues property.
+- id: SelectedAttributeId
+  valueType: String
+  description: The id of the attribute that is being configured.
+- id: ServiceHook.Uri
+  valueType: String
+- id: ServiceHook.Action
+  valueType: String
+- id: ServiceHook.ApiKey
+  valueType: String
+records: []
+enums: []
+modelId: System.Bot
+dependencies:
+- System

@@ -1,6 +1,4 @@
-﻿using System.Threading;
-using Hangfire;
-using Meshmakers.Octo.Common.Shared.Jobs;
+﻿using Hangfire;
 
 namespace Meshmakers.Octo.Backend.Jobs;
 

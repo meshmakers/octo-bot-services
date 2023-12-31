@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="JsonSchemaMappingsProjectConfiguration">
+    <state>
+      <map>
+        <entry key="ck-compiled-model">
+          <value>
+            <SchemaInfo>
+              <option name="generatedName" value="New Schema" />
+              <option name="name" value="ck-compiled-model" />
+              <option name="relativePathToSchema" value="../octo-construction-kit-compiler/src/ConstructionKit.Contracts/Serialization/Schema/ck-compiled-model.json" />
+            </SchemaInfo>
+          </value>
+        </entry>
+        <entry key="ck-element-associationRole">
+          <value>
+            <SchemaInfo>
+              <option name="generatedName" value="New Schema" />
+              <option name="name" value="ck-element-associationRole" />
+              <option name="relativePathToSchema" value="../octo-construction-kit-compiler/src/ConstructionKit.Contracts/Serialization/Schema/ck-element-associationRole.json" />
+            </SchemaInfo>
+          </value>
+        </entry>
+        <entry key="ck-element-attribute">
+          <value>
+            <SchemaInfo>
+              <option name="generatedName" value="New Schema" />
+              <option name="name" value="ck-element-attribute" />
+              <option name="relativePathToSchema" value="../octo-construction-kit-compiler/src/ConstructionKit.Contracts/Serialization/Schema/ck-element-attribute.json" />
+            </SchemaInfo>
+          </value>
+        </entry>
+        <entry key="ck-element-enum">
+          <value>
+            <SchemaInfo>
+              <option name="generatedName" value="New Schema" />
+              <option name="name" value="ck-element-enum" />
+              <option name="relativePathToSchema" value="../octo-construction-kit-compiler/src/ConstructionKit.Contracts/Serialization/Schema/ck-element-enum.json" />
+            </SchemaInfo>
+          </value>
+        </entry>
+        <entry key="ck-element-record">
+          <value>
+            <SchemaInfo>
+              <option name="generatedName" value="New Schema" />
+              <option name="name" value="ck-element-record" />
+              <option name="relativePathToSchema" value="../octo-construction-kit-compiler/src/ConstructionKit.Contracts/Serialization/Schema/ck-element-record.json" />
+            </SchemaInfo>
+          </value>
+        </entry>
+        <entry key="ck-element-type">
+          <value>
+            <SchemaInfo>
+              <option name="generatedName" value="New Schema" />
+              <option name="name" value="ck-element-type" />
+              <option name="relativePathToSchema" value="../octo-construction-kit-compiler/src/ConstructionKit.Contracts/Serialization/Schema/ck-element-type.json" />
+            </SchemaInfo>
+          </value>
+        </entry>
+        <entry key="ck-elements">
+          <value>
+            <SchemaInfo>
+              <option name="generatedName" value="New Schema" />
+              <option name="name" value="ck-elements" />
+              <option name="relativePathToSchema" value="../octo-construction-kit-compiler/src/ConstructionKit.Contracts/Serialization/Schema/ck-elements.json" />
+            </SchemaInfo>
+          </value>
+        </entry>
+      </map>
+    </state>
+  </component>
+</project>

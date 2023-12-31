@@ -1,8 +1,4 @@
-using System;
 using Microsoft.AspNetCore;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using NLog;
 using NLog.Web;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
@@ -13,20 +9,11 @@ namespace Meshmakers.Octo.Backend.BotServices;
 
 public class Program
 {
-    private static string GetNLogConfigFileName()
-    {
-#if DEBUG
-        return "nlog.Debug.config";
-#else
-            return "nlog.Release.config";
-#endif
-    }
-
     public static void Main(string[] args)
     {
         // NLog: setup the logger first to catch all errors
-        var nlogFactory = NLogBuilder.ConfigureNLog(GetNLogConfigFileName());
-        var logger = nlogFactory.GetCurrentClassLogger();
+        var nLogFactory = LogManager.Setup().RegisterNLogWeb().LoadConfigurationFromFile("nlog.config").LogFactory;
+        var logger = nLogFactory.GetCurrentClassLogger();
         try
         {
             logger.Debug("init main");
@@ -45,10 +32,10 @@ public class Program
         }
     }
 
-    public static IWebHostBuilder CreateWebHostBuilder(string[] args)
+    private static IWebHostBuilder CreateWebHostBuilder(string[] args)
     {
         return WebHost.CreateDefaultBuilder(args)
-            .ConfigureAppConfiguration((hostingContext, config) =>
+            .ConfigureAppConfiguration((_, config) =>
             {
                 // Call additional providers here as needed.
                 // Call AddEnvironmentVariables last if you need to allow environment
@@ -56,7 +43,7 @@ public class Program
                 config.AddEnvironmentVariables("OCTO_").AddCommandLine(args);
                 config.AddUserSecrets(typeof(Program).Assembly, true);
             })
-            .ConfigureLogging((hostingContext, logging) =>
+            .ConfigureLogging((_, logging) =>
             {
                 logging.ClearProviders();
                 logging.SetMinimumLevel(LogLevel.Trace);

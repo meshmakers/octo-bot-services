@@ -1,19 +1,14 @@
-using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Meshmakers.Common.Shared;
-using Meshmakers.Octo.Common.Shared.DataTransferObjects;
-using Meshmakers.Octo.Common.Shared.Jobs;
-using Meshmakers.Octo.SystematizedData.Persistence;
-using Meshmakers.Octo.SystematizedData.Persistence.CkModelEntities;
-using Meshmakers.Octo.SystematizedData.Persistence.DataAccess;
-using Meshmakers.Octo.SystematizedData.Persistence.DatabaseEntities;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
+using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Newtonsoft.Json;
 using NLog;
+using Persistence.SystemCkModel.ConstructionKit.Generated.System.v1;
 using RestSharp;
+using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
 
 #pragma warning disable 1591
 
@@ -21,7 +16,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 public class ServiceHookJob : IServiceHookJob
 {
-    private const string APIKEY = "XApiKey";
+    private const string Apikey = "XApiKey";
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly ISystemContext _systemContext;
 
@@ -31,48 +26,56 @@ public class ServiceHookJob : IServiceHookJob
     }
 
     [DisplayName("Checks for new job schedules '{0}'")]
-    public async Task Run(string dataSource, IBotCancellationToken? cancellationToken)
+    public async Task Run(string tenantId, IBotCancellationToken? cancellationToken)
     {
         try
         {
             var startDateTime = DateTime.Now;
-            var dataSourceContext = await _systemContext.CreateOrGetTenantContextAsync(dataSource);
-            using var session = await dataSourceContext.Repository.StartSessionAsync();
+            var tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+            var tenantRepository = tenantContext.GetTenantRepository();
+
+            using var session = await tenantRepository.GetSessionAsync();
             session.StartTransaction();
 
-            var dataQueryQueryOperation = new DataQueryOperation
-            {
-                FieldFilters = new[] { new FieldFilter(Constants.EnabledAttribute, FieldFilterOperator.Equals, true) }
-            };
+            var dataQueryQueryOperation = DataQueryOperation.Create()
+                .FieldFilter(SystemCkIds.EnabledAttribute, FieldFilterOperator.Equals, true);
 
             var serviceHookResultSet =
-                await dataSourceContext.Repository.GetRtEntitiesByTypeAsync<RtSystemServiceHook>(session,
+                await tenantRepository.GetRtEntitiesByTypeAsync<RtServiceHook>(session,
                     dataQueryQueryOperation);
 
-            foreach (var serviceHook in serviceHookResultSet.Result)
+            foreach (var serviceHook in serviceHookResultSet.Items)
             {
-                var targetCkId = serviceHook.GetAttributeStringValueOrDefault(Constants.QueryCkIdAttribute);
+                var targetCkId = serviceHook.GetAttributeStringValueOrDefault(SystemCkIds.QueryCkTypeIdAttribute);
                 var serviceHookBaseUri =
-                    serviceHook.GetAttributeStringValueOrDefault(Constants.ServiceHookBaseUriAttribute);
+                    serviceHook.GetAttributeStringValueOrDefault(SystemBotCkIds.ServiceHookUriAttribute);
                 var serviceHookAction =
-                    serviceHook.GetAttributeStringValueOrDefault(Constants.ServiceHookActionAttribute);
+                    serviceHook.GetAttributeStringValueOrDefault(SystemBotCkIds.ServiceHookActionAttribute);
                 var serviceHookApiKey =
-                    serviceHook.GetAttributeStringValueOrDefault(Constants.ServiceHookApiKeyAttribute);
-                var fieldFilter = serviceHook.GetAttributeStringValueOrDefault(Constants.FieldFilterAttribute);
+                    serviceHook.GetAttributeStringValueOrDefault(SystemBotCkIds.ServiceHookApiKeyAttribute);
+                var fieldFilter = serviceHook.GetAttributeStringValueOrDefault(SystemCkIds.QueryFieldFilterAttribute);
 
-                if (!string.IsNullOrWhiteSpace(fieldFilter))
+                if (!string.IsNullOrWhiteSpace(fieldFilter) || string.IsNullOrWhiteSpace(targetCkId) ||
+                    string.IsNullOrWhiteSpace(fieldFilter) || string.IsNullOrWhiteSpace(serviceHookBaseUri) ||
+                    string.IsNullOrWhiteSpace(serviceHookAction))
                 {
-
-                    return;
+                    continue;
                 }
- 
-                var dataQueryOperation = new DataQueryOperation
+
+                var dataQueryOperation = DataQueryOperation.Create();
+
+                var fieldFilters = JsonConvert.DeserializeObject<FieldFilterDto[]>(fieldFilter);
+                if (fieldFilters == null)
                 {
-                    FieldFilters = JsonConvert.DeserializeObject<FieldFilterDto[]>(fieldFilter)
-                        .Select(f =>
-                            new FieldFilter(TransformAttributeName(f.AttributeName), (FieldFilterOperator)f.Operator,
-                                f.ComparisonValue))
-                };
+                    continue;
+                }
+
+                foreach (var f in fieldFilters)
+                {
+                    dataQueryOperation = dataQueryOperation.FieldFilter(TransformAttributeName(f.AttributeName),
+                        (FieldFilterOperator)f.Operator,
+                        f.ComparisonValue);
+                }
 
                 if (CheckCancellation(cancellationToken?.ShutdownToken))
                 {
@@ -80,7 +83,7 @@ public class ServiceHookJob : IServiceHookJob
                 }
 
                 var result =
-                    await dataSourceContext.Repository.GetRtEntitiesByTypeAsync(session, targetCkId, dataQueryOperation,
+                    await tenantRepository.GetRtEntitiesByTypeAsync(session, targetCkId, dataQueryOperation,
                         0, 500);
 
                 Logger.Info(
@@ -88,7 +91,7 @@ public class ServiceHookJob : IServiceHookJob
 
                 try
                 {
-                    await CallServiceHook(serviceHookBaseUri, serviceHookAction, serviceHookApiKey, result.Result,
+                    await CallServiceHook(serviceHookBaseUri, serviceHookAction, serviceHookApiKey, result.Items,
                         cancellationToken?.ShutdownToken);
                 }
                 catch (Exception e)
@@ -116,7 +119,7 @@ public class ServiceHookJob : IServiceHookJob
         return attributeName;
     }
 
-    private async Task CallServiceHook(string baseUri, string webServiceAction, string apiKey,
+    private async Task CallServiceHook(string baseUri, string webServiceAction, string? apiKey,
         IEnumerable<RtEntity> entities,
         CancellationToken? cancellationToken)
     {
@@ -126,7 +129,7 @@ public class ServiceHookJob : IServiceHookJob
         var request = new RestRequest(webServiceAction, Method.Post);
         if (!string.IsNullOrEmpty(apiKey))
         {
-            request.AddHeader(APIKEY, apiKey);
+            request.AddHeader(Apikey, apiKey);
         }
 
         request.AddJsonBody(result);

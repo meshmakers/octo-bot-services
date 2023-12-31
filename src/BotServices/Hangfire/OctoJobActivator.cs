@@ -1,4 +1,3 @@
-using System;
 using Hangfire;
 
 #pragma warning disable 1591
@@ -16,6 +15,6 @@ public class OctoJobActivator : JobActivator
 
     public override object ActivateJob(Type type)
     {
-        return _serviceProvider.GetService(type);
+        return _serviceProvider.GetService(type) ?? base.ActivateJob(type);
     }
 }

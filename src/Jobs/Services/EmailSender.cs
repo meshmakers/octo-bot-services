@@ -1,9 +1,7 @@
-using System;
 using System.Net;
 using System.Net.Mail;
-using System.Threading.Tasks;
 using Meshmakers.Common.Shared;
-using Meshmakers.Octo.Common.Shared.Services;
+using Meshmakers.Octo.Communication.Contracts.Services;
 using Microsoft.Extensions.Options;
 
 namespace Meshmakers.Octo.Backend.Jobs.Services;
