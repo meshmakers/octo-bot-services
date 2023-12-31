@@ -1,0 +1,8 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+attributes:
+- id: ServiceHook.Uri
+  valueType: String
+- id: ServiceHook.Action
+  valueType: String
+- id: ServiceHook.ApiKey
+  valueType: String

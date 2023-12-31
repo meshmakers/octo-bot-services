@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.Options;
 
-namespace Meshmakers.Octo.Backend.BotServices;
+namespace Meshmakers.Octo.Backend.BotServices.Configuration;
 
 internal class ConfigureOpenIdConnectOptions : IConfigureNamedOptions<OpenIdConnectOptions>
 {
@@ -17,7 +17,7 @@ internal class ConfigureOpenIdConnectOptions : IConfigureNamedOptions<OpenIdConn
         Configure(Options.DefaultName, options);
     }
 
-    public void Configure(string name, OpenIdConnectOptions options)
+    public void Configure(string? name, OpenIdConnectOptions options)
     {
         options.Authority = _octoBotServicesOptions.Value.AuthorityUrl;
     }

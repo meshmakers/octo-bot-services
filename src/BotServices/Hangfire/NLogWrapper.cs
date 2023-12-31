@@ -1,5 +1,4 @@
-﻿using System;
-using Hangfire.Logging;
+﻿using Hangfire.Logging;
 using NLog;
 using LogLevel = Hangfire.Logging.LogLevel;
 
@@ -14,7 +13,7 @@ internal class NLogWrapper : ILog
         _targetLogger = targetLogger ?? throw new ArgumentNullException(nameof(targetLogger));
     }
 
-    public bool Log(LogLevel logLevel, Func<string> messageFunc, Exception exception = null)
+    public bool Log(LogLevel logLevel, Func<string>? messageFunc, Exception? exception = null)
     {
         var targetLogLevel = ToTargetLogLevel(logLevel);
 

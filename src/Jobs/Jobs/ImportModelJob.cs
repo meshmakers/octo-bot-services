@@ -1,13 +1,9 @@
-using System;
 using System.ComponentModel;
-using System.IO;
-using System.Threading.Tasks;
 using Meshmakers.Common.Shared;
-using Meshmakers.Octo.Common.Shared.DataTransferObjects;
-using Meshmakers.Octo.Common.Shared.DistributedCache;
-using Meshmakers.Octo.Common.Shared.Jobs;
-using Meshmakers.Octo.SystematizedData.Persistence;
-using Meshmakers.Octo.SystematizedData.Persistence.DatabaseEntities;
+using Meshmakers.Octo.Backend.Jobs.Commands;
+using Meshmakers.Octo.Common.DistributionEventHub.Services;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using NLog;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -18,18 +14,21 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 public class ImportModelJob : IImportModelJob
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-    private readonly IDistributedWithPubSubCache _distributedCache;
-    private readonly ISystemContext _systemContext;
+    private readonly IImportCkModelCommand _importCkModelCommand;
+    private readonly IImportRtModelCommand _importRtModelCommand;
+    private readonly IDistributedCacheService _distributedCacheService;
 
     /// <summary>
     ///     Constructor
     /// </summary>
-    /// <param name="systemContext">System context object</param>
-    /// <param name="distributedCache">Redis distributed cache for file caching</param>
-    public ImportModelJob(ISystemContext systemContext, IDistributedWithPubSubCache distributedCache)
+    /// <param name="distributedCacheService"></param>
+    /// <param name="importCkModelCommand">Redis distributed cache for file caching</param>
+    /// <param name="importRtModelCommand"></param>
+    public ImportModelJob(IDistributedCacheService distributedCacheService, IImportCkModelCommand importCkModelCommand, IImportRtModelCommand importRtModelCommand)
     {
-        _systemContext = systemContext;
-        _distributedCache = distributedCache;
+        _distributedCacheService = distributedCacheService;
+        _importCkModelCommand = importCkModelCommand;
+        _importRtModelCommand = importRtModelCommand;
     }
 
     /// <summary>
@@ -53,18 +52,14 @@ public class ImportModelJob : IImportModelJob
             }
 
             Logger.Info($"Reading input file from cache for CK import to '{tenantId}'");
-            var tempFile = await GetTempFile(key);
+            var tempFile = await GetTempFile(tenantId, key);
 
             Logger.Info($"Starting import of file '{tempFile}'");
-            using var systemSession = await _systemContext.StartSystemSessionAsync();
-            systemSession.StartTransaction();
 
-            await _systemContext.ImportCkModelAsync(systemSession, tenantId, (ScopeIds)scopeId, tempFile,
+            await _importCkModelCommand.ImportAsync(tenantId, tempFile,
                 cancellationToken?.ShutdownToken);
 
-            await systemSession.CommitTransactionAsync();
-
-            await ClearCache(key);
+            await ClearCache(tenantId, key);
 
             Logger.Info($"Import of file '{tempFile}' completed.");
         }
@@ -88,18 +83,13 @@ public class ImportModelJob : IImportModelJob
         try
         {
             Logger.Info($"Reading input file from cache for RT import to '{tenantId}'");
-            var tempFile = await GetTempFile(key);
+            var tempFile = await GetTempFile(tenantId, key);
 
             Logger.Info($"Starting import of file '{tempFile}'");
-            var tenantContext = await _systemContext.CreateOrGetTenantContextAsync(tenantId);
-            using var session = await tenantContext.Repository.StartSessionAsync();
-            // session.StartTransaction();
 
-            await tenantContext.ImportRtModelAsync(session, tempFile, cancellationToken?.ShutdownToken);
+            await _importRtModelCommand.Import(tenantId, tempFile, cancellationToken?.ShutdownToken);
 
-            // await session.CommitTransactionAsync();
-
-            await ClearCache(key);
+            await ClearCache(tenantId, key);
 
             Logger.Info($"Import of file '{tempFile}' completed.");
         }
@@ -110,9 +100,9 @@ public class ImportModelJob : IImportModelJob
         }
     }
 
-    private async Task<string> GetTempFile(string key)
+    private async Task<string> GetTempFile(string? tenantId, string key)
     {
-        CacheStream? cacheStream = await _distributedCache.GetCacheStreamAsync(key);
+        var cacheStream = await _distributedCacheService.GetCacheStreamAsync(tenantId, key);
         if (cacheStream == null)
         {
             throw new JobFailedException("No value in distribute cache found.");
@@ -120,30 +110,27 @@ public class ImportModelJob : IImportModelJob
 
         var tempFile = Path.GetTempFileName();
 
-        using (var memoryStream = new MemoryStream(cacheStream.Stream))
-        {
             if (cacheStream.ContentType.ToLower() == "application/zip")
             {
-                await memoryStream.ExtractFileFromZipAsync(cacheStream.ContentType, ".json", tempFile);
+                await cacheStream.Stream.ExtractFileFromZipAsync(cacheStream.ContentType, ".json", tempFile);
             }
             else if (cacheStream.ContentType.ToLower() == "application/json")
             {
                 await using (var streamWriter = new StreamWriter(tempFile))
                 {
-                    await memoryStream.CopyToAsync(streamWriter.BaseStream);
+                    await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
                 }
             }
             else
             {
                 throw new JobFailedException("File type is not supported.");
             }
-        }
 
         return tempFile;
     }
 
-    private async Task ClearCache(string key)
+    private async Task ClearCache(string? tenantId, string key)
     {
-        await _distributedCache.DeleteCacheStreamAsync(key);
+        await _distributedCacheService.DeleteCacheStreamAsync(tenantId, key);
     }
 }

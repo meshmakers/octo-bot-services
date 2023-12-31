@@ -10,23 +10,28 @@ public class OctoBotServicesOptions
     /// </summary>
     public OctoBotServicesOptions()
     {
+        BrokerHost = "localhost";
         JobDatabaseName = "OctoSystemJobs";
         PrepareJobSchemaIfNecessary = true;
         AuthorityUrl = "https://localhost:5003";
         PublicUrl = "https://localhost:5009";
         PublicAdminPanelUrl = "https://localhost:5005";
-        RedisCacheHost = "localhost";
     }
+    
+    /// <summary>
+    ///     Gets or sets the RabbitMq host name
+    /// </summary>
+    public string BrokerHost { get; set; }
+    
+    /// <summary>
+    ///     Gets or sets the RabbitMq user
+    /// </summary>
+    public string? BrokerUser { get; set; }
 
     /// <summary>
-    ///     Gets or sets the redis cache host name
+    ///     Gets or sets the RabbitMq password
     /// </summary>
-    public string RedisCacheHost { get; set; }
-
-    /// <summary>
-    ///     Gets or sets the redis cache password
-    /// </summary>
-    public string RedisCachePassword { get; set; }
+    public string? BrokerPassword { get; set; }
 
     /// <summary>
     ///     MongoDB job database

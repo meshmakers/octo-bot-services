@@ -8,6 +8,6 @@ internal class HangfireDashboardAuthorizationFilter : IDashboardAuthorizationFil
     {
         var httpContext = context.GetHttpContext();
 
-        return httpContext.User.Identity.IsAuthenticated;
+        return httpContext.User.Identity?.IsAuthenticated ?? false;
     }
 }

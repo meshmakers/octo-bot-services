@@ -4,12 +4,21 @@
     </PropertyGroup>
     <Import Condition="Exists($(BaseDirectoryBuildPath))" Project="$(BaseDirectoryBuildPath)" />
     <PropertyGroup>
-        <OctoCorePath Condition=" '$(OctoCorePath)' == '' ">$(MSBuildThisFileDirectory)src/octo-core/</OctoCorePath>
         <OctoCommonServicesPath Condition=" '$(OctoCommonServicesPath)' == '' ">$(MSBuildThisFileDirectory)src/octo-common-services/</OctoCommonServicesPath>
-        <Authors>meshmakers GmbH</Authors>
-        <Company>meshmakers GmbH</Company>
-        <Copyright>https://www.meshmakers.io</Copyright>
+        <OctoCorePath Condition=" '$(OctoCorePath)' == '' ">$(OctoCommonServicesPath)src/octo-core/</OctoCorePath>
+        <Authors>meshmakers GmbH and Contributors</Authors>
+        <Company>meshmakers GmbH and Contributors</Company>
+        <Copyright>(c) 2022-2024 meshmakers GmbH</Copyright>
         <LangVersion>latestmajor</LangVersion>
         <Nullable>enable</Nullable>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <ImplicitUsings>true</ImplicitUsings>
+        <RepositoryUrl>https://github.com/meshmakers/octo-bot-services</RepositoryUrl>
+        <PackageLicenseFile>LICENSE</PackageLicenseFile>
+        <PackageProjectUrl>https://www.meshmakers.io</PackageProjectUrl>
+        <PackageTags>Octo data mesh iot</PackageTags>
+        <TargetFramework>net8.0</TargetFramework>
+        <PackageVersion Condition="'$(Configuration)'=='DebugL'">999.0.0</PackageVersion>
+        <RestoreSources Condition="'$(Configuration)'=='DebugL'">$(MSBuildThisFileDirectory)../nuget</RestoreSources>
     </PropertyGroup>
 </Project>

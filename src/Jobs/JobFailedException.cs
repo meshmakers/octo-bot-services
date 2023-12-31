@@ -1,6 +1,3 @@
-using System;
-using System.Runtime.Serialization;
-
 namespace Meshmakers.Octo.Backend.Jobs;
 
 /// <summary>
@@ -21,13 +18,6 @@ public class JobFailedException : Exception
 
     /// <inheritdoc />
     public JobFailedException(string message, Exception? inner) : base(message, inner)
-    {
-    }
-
-    /// <inheritdoc />
-    protected JobFailedException(
-        SerializationInfo info,
-        StreamingContext context) : base(info, context)
     {
     }
 }

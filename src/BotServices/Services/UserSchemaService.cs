@@ -1,155 +1,136 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using BotServices.Resources;
-using Duende.IdentityServer.Models;
 using IdentityModel;
 using Meshmakers.Common.Shared;
-using Meshmakers.Octo.Common.Shared;
-using Meshmakers.Octo.SystematizedData.Persistence;
-using Meshmakers.Octo.SystematizedData.Persistence.SystemEntities;
-using Meshmakers.Octo.SystematizedData.Persistence.SystemStores;
+using Meshmakers.Octo.Common.DistributionEventHub.Services;
+using Meshmakers.Octo.Communication.Contracts;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands.Payloads;
+using Meshmakers.Octo.Services.Infrastructure.Services;
 using Microsoft.Extensions.Options;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
 internal class UserSchemaService : IUserSchemaService
 {
-    private readonly IOctoClientStore _clientStore;
+    private readonly ICommandClient<CreateIdentityDataCommandRequest> _commandClient;
+
     private readonly OctoBotServicesOptions _octoBotServicesOptions;
-    private readonly IOctoResourceStore _resourceStore;
     private readonly ISystemContext _systemContext;
 
-    public UserSchemaService(ISystemContext systemContext, IOctoResourceStore resourceStore,
-        IOctoClientStore clientStore,
+    public UserSchemaService(ISystemContext systemContext,
+        ICommandClient<CreateIdentityDataCommandRequest> commandClient,
         IOptions<OctoBotServicesOptions> octoBotServicesOptions)
     {
+        _commandClient = commandClient;
+
         _systemContext = systemContext;
-        _resourceStore = resourceStore;
-        _clientStore = clientStore;
         _octoBotServicesOptions = octoBotServicesOptions.Value;
     }
 
     public async Task SetupAsync()
     {
-        using var session = await _systemContext.StartSystemSessionAsync();
+        using var session = await _systemContext.GetSystemSessionAsync();
         session.StartTransaction();
 
-        var version =
-            await _systemContext.GetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey, 0);
-        if (version < BotServiceConstants.BotServiceSchemaVersionValue)
+        var botServiceConfiguration =
+            await _systemContext.GetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
+                new DefaultConfigurationVersion { Version = -1 });
+        if (botServiceConfiguration == null || botServiceConfiguration.Version < BotServiceConstants.BotServiceSchemaVersionValue)
         {
-            await CreateApiScopes();
-            await CreateApiResources();
-            await CreateClients();
+            CreateIdentityDataCommandRequest createIdentityDataCommandRequest = new(null);
+            CreateApiScopes(createIdentityDataCommandRequest);
+            CreateApiResources(createIdentityDataCommandRequest);
+            CreateClients(createIdentityDataCommandRequest);
+
+            await _commandClient.GetResponse<GenericCommandResponse>(createIdentityDataCommandRequest);
 
             await _systemContext.SetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
-                BotServiceConstants.BotServiceSchemaVersionValue);
+                new DefaultConfigurationVersion { Version = BotServiceConstants.BotServiceSchemaVersionValue });
         }
 
         await session.CommitTransactionAsync();
     }
 
-    private async Task CreateApiScopes()
+    private void CreateApiScopes(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
-        await _resourceStore.TryCreateApiScopeAsync(new ApiScope(CommonConstants.BotApiFullAccess,
-            CommonConstants.BotApiFullAccessDisplayName));
-        await _resourceStore.TryCreateApiScopeAsync(new ApiScope(CommonConstants.BotApiReadOnly,
-            CommonConstants.BotApiReadOnlyDisplayName));
+        createIdentityDataCommandRequest.ApiScopes = new List<DistApiScopeDto>
+        {
+            new(CommonConstants.BotApiFullAccess,
+                CommonConstants.BotApiFullAccessDisplayName),
+            new(CommonConstants.BotApiReadOnly,
+                CommonConstants.BotApiReadOnlyDisplayName)
+        };
     }
 
-    private async Task CreateApiResources()
+    private void CreateApiResources(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
-        await _resourceStore.GetOrCreateApiResourceAsync(new ApiResource
+        createIdentityDataCommandRequest.ApiResources = new List<DistApiResourcesDto>
         {
-            Name = CommonConstants.BotApi,
-            DisplayName = CommonConstants.BotApiDisplayName,
-            Description = CommonConstants.BotApiDescription,
-            Enabled = true,
-            Scopes = new List<string>
+            new (CommonConstants.BotApi, CommonConstants.BotApiDisplayName)
             {
-                CommonConstants.BotApiFullAccess,
-                CommonConstants.BotApiReadOnly
+                Description = CommonConstants.BotApiDescription,
+                IsEnabled = true,
+                Scopes = new List<string>
+                {
+                    CommonConstants.BotApiFullAccess,
+                    CommonConstants.BotApiReadOnly
+                }
             }
-        });
+        };
     }
 
-    private async Task CreateClients()
+    private void CreateClients(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
-        var octoBotServices = await _clientStore.FindClientByIdAsync(CommonConstants.BotServicesClientId);
-        if (octoBotServices == null)
+        createIdentityDataCommandRequest.Clients = new List<DistClientDto>
         {
-            var appClient = new OctoClient
+            new(CommonConstants.BotServicesClientId,
+                BotTexts.Backend_BotServices_UserSchema_BotServices_DisplayName,
+                _octoBotServicesOptions.PublicAdminPanelUrl)
             {
-                ClientId = CommonConstants.BotServicesClientId,
+                AllowedGrantTypes = [OidcConstants.GrantTypes.Implicit],
 
-                ClientName = BotTexts.Backend_BotServices_UserSchema_BotServices_DisplayName,
-                ClientUri = _octoBotServicesOptions.PublicUrl,
-
-                AllowedGrantTypes = new[] { OidcConstants.GrantTypes.Implicit },
-
-                RequirePkce = true,
-                RequireClientSecret = false,
-
-                AccessTokenType = AccessTokenType.Jwt,
-                AllowAccessTokensViaBrowser = true,
-                AlwaysIncludeUserClaimsInIdToken = true,
+                RequireConsent = false,
 
                 RedirectUris =
-                {
+                [
                     _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") + "signin-oidc"
-                },
+                ],
 
-                PostLogoutRedirectUris = { _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") },
-                AllowedCorsOrigins = { _octoBotServicesOptions.PublicUrl.TrimEnd('/') },
+                PostLogoutRedirectUris = [ _octoBotServicesOptions.PublicAdminPanelUrl.EnsureEndsWith("/") ],
+                AllowedCorsOrigins = [ _octoBotServicesOptions.PublicAdminPanelUrl.TrimEnd('/') ],
+                AllowOfflineAccess = true,
                 AllowedScopes =
-                {
+                [
                     CommonConstants.Scopes.OpenId,
                     CommonConstants.Scopes.Profile,
                     CommonConstants.Scopes.Email,
                     JwtClaimTypes.Role
-                }
-            };
-            await _clientStore.CreateAsync(appClient);
-        }
-
-        var octoBotServiceSwaggerClient =
-            await _clientStore.FindClientByIdAsync(CommonConstants.OctoBotServicesSwaggerClientId);
-        if (octoBotServiceSwaggerClient == null)
-        {
-            var appClient = new OctoClient
+                ]
+            },
+            new (CommonConstants.OctoBotServicesSwaggerClientId, 
+                BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName, 
+                _octoBotServicesOptions.PublicUrl)
             {
-                ClientId = CommonConstants.OctoBotServicesSwaggerClientId,
-
-                ClientName = BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName,
-                ClientUri = _octoBotServicesOptions.PublicUrl,
-
-                AllowedGrantTypes = new[] { OidcConstants.GrantTypes.AuthorizationCode },
-
-                RequirePkce = true,
-                RequireClientSecret = false,
-
-                AccessTokenType = AccessTokenType.Jwt,
-                AllowAccessTokensViaBrowser = true,
-                AlwaysIncludeUserClaimsInIdToken = true,
-
+                AllowedGrantTypes = [OidcConstants.GrantTypes.AuthorizationCode],
+            
                 RedirectUris =
-                {
+                [
                     _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/swagger/oauth2-redirect.html")
-                },
-
-                PostLogoutRedirectUris = { _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") },
-                AllowedCorsOrigins = { _octoBotServicesOptions.PublicUrl.TrimEnd('/') },
+                ],
+            
+                PostLogoutRedirectUris = [ _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") ],
+                AllowedCorsOrigins = [ _octoBotServicesOptions.PublicUrl.TrimEnd('/') ],
                 AllowedScopes =
-                {
+                [
                     CommonConstants.Scopes.OpenId,
                     CommonConstants.Scopes.Profile,
                     CommonConstants.Scopes.Email,
                     JwtClaimTypes.Role,
                     CommonConstants.BotApiFullAccess,
                     CommonConstants.BotApiReadOnly
-                }
-            };
-            await _clientStore.CreateAsync(appClient);
-        }
+                ]
+            }
+        };
     }
 }

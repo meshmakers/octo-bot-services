@@ -3,34 +3,25 @@
     <PropertyGroup>
         <AssemblyName>Meshmakers.Octo.Backend.Jobs</AssemblyName>
         <IsPackable>true</IsPackable>
-        <PackageIcon>meshmakers64.png</PackageIcon>
         <PackageId>Meshmakers.Octo.Backend.Jobs</PackageId>
-        <PackageLicenseFile>LICENSE</PackageLicenseFile>
-        <PackageProjectUrl>https://www.meshmakers.io</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/meshmakers/octomesh</RepositoryUrl>
         <RootNamespace>Meshmakers.Octo.Backend.Jobs</RootNamespace>
-        <TargetFramework>net7.0</TargetFramework>
-    </PropertyGroup>
-
-
-    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-        <OutputPath>..\..\bin\Debug\BackendJobs</OutputPath>
-        <DocumentationFile>..\..\bin\Debug\BackendCommon\Jobs.xml</DocumentationFile>
+        <OutputPath>..\..\bin\$(Configuration)\</OutputPath>
+        <DocumentationFile>..\..\bin\$(Configuration)\$(AssemblyName).xml</DocumentationFile>
         <NoWarn>1701;1702;CS8002</NoWarn>
+        <Configurations>Debug;Release;DebugL</Configurations>
+        <Platforms>AnyCPU</Platforms>
     </PropertyGroup>
 
-    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-        <OutputPath>..\..\bin\Release\BackendJobs</OutputPath>
-        <DocumentationFile>..\..\bin\Release\BackendCommon\Jobs.xml</DocumentationFile>
-        <NoWarn>1701;1702;CS8002</NoWarn>
-    </PropertyGroup>
+    <ItemGroup Condition="'$(Configuration)'!='DebugL'">
+        <PackageReference Include="Meshmakers.Octo.Communication.Contracts" Version="3.0.7" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(Configuration)'=='DebugL'">
+        <PackageReference Include="Meshmakers.Octo.Communication.Contracts" Version="999.0.0" />
+    </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Hangfire.Core" Version="1.8.3" />
-        <PackageReference Include="Meshmakers.Common.Shared" Version="4.0.2309.9001" />
-        <PackageReference Include="Meshmakers.Octo.Common.Shared" Version="0.0.2309.4002" />
-        <PackageReference Include="Microsoft.Extensions.Options" Version="7.0.1" />
-        <PackageReference Include="NLog" Version="5.2.4" />
+        <PackageReference Include="Hangfire.Core" Version="1.8.7" />
         <PackageReference Include="RestSharp" Version="110.2.0" />
     </ItemGroup>
 
@@ -43,8 +34,9 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\octo-core\src\Common\Shared\Shared.csproj" />
-      <ProjectReference Include="..\octo-core\src\SystematizedData\Persistence\Persistence.csproj" />
+        <ProjectReference Include="$(OctoCorePath)src\MongoDb\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj" />
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj" />
+        <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj" />
     </ItemGroup>
 
 

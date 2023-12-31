@@ -1,12 +1,9 @@
-using System;
 using System.ComponentModel;
-using System.Threading.Tasks;
 using Hangfire;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Backend.Jobs.Services;
-using Meshmakers.Octo.Common.Shared.DataTransferObjects;
-using Meshmakers.Octo.Common.Shared.Jobs;
-using Meshmakers.Octo.Common.Shared.Services;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Communication.Contracts.Services;
 using NLog;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;

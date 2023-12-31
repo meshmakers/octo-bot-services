@@ -1,6 +1,3 @@
-using System;
-using System.Runtime.Serialization;
-
 #pragma warning disable 1591
 
 namespace Meshmakers.Octo.Backend.Jobs;
@@ -24,12 +21,6 @@ public class ServiceHookException : JobFailedException
     }
 
     public ServiceHookException(string message, Exception? inner) : base(message, inner)
-    {
-    }
-
-    protected ServiceHookException(
-        SerializationInfo info,
-        StreamingContext context) : base(info, context)
     {
     }
 }

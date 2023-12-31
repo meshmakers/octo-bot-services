@@ -1,0 +1,13 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+attributes:
+- id: AutoCompleteFilter
+  description: The filter for auto complete defined by a regex expression.
+  valueType: String
+- id: AutoCompleteLimit
+  description: The maximum number of items to return from the autocomplete filter and stored at the type attribute's autoCompleteValues property.
+  valueType: Int
+  defaultValues:
+    - 50
+- id: SelectedAttributeId
+  description: The id of the attribute that is being configured.
+  valueType: String

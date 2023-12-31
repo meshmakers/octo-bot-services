@@ -1,0 +1,14 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+types:
+- typeId: AttributeAggregateConfiguration
+  derivedFromCkTypeId: System/Entity
+  attributes:
+  - id: System/Enabled
+    name: IsAutoCompleteEnabled
+  - id: System.Bot/AutoCompleteFilter
+    name: AutoCompleteFilter
+  - id: System.Bot/AutoCompleteLimit
+    name: AutoCompleteLimit
+  associations:
+  - id: System.Bot/Configures
+    targetCkTypeId: System/Entity

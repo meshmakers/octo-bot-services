@@ -1,7 +1,4 @@
-using System;
 using System.Net;
-using System.Runtime.Serialization;
-
 #pragma warning disable 1591
 
 namespace Meshmakers.Octo.Backend.Jobs;
@@ -20,12 +17,6 @@ public class ServiceHookResultException : Exception
             : $"{httpStatusCode}: {message}", inner)
     {
         HttpStatusCode = httpStatusCode;
-    }
-
-    protected ServiceHookResultException(
-        SerializationInfo info,
-        StreamingContext context) : base(info, context)
-    {
     }
 
     public HttpStatusCode HttpStatusCode { get; }
