@@ -3,15 +3,19 @@ using IdentityModel;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
+using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands.Payloads;
+using Meshmakers.Octo.Services.Infrastructure;
+using Meshmakers.Octo.Services.Infrastructure.Initialization;
 using Meshmakers.Octo.Services.Infrastructure.Services;
 using Microsoft.Extensions.Options;
+using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
-internal class UserSchemaService : IUserSchemaService
+internal class UserSchemaService : IAsyncInitializationService
 {
     private readonly ICommandClient<CreateIdentityDataCommandRequest> _commandClient;
 
@@ -28,8 +32,12 @@ internal class UserSchemaService : IUserSchemaService
         _octoBotServicesOptions = octoBotServicesOptions.Value;
     }
 
-    public async Task SetupAsync()
+    public int Order => 0;
+    
+    public async Task InitializeAsync()
     {
+        await ImportCkModel();
+
         using var session = await _systemContext.GetSystemSessionAsync();
         session.StartTransaction();
 
@@ -51,6 +59,27 @@ internal class UserSchemaService : IUserSchemaService
 
         await session.CommitTransactionAsync();
     }
+    
+    private async Task ImportCkModel()
+    {
+        using var session = await _systemContext.GetSystemSessionAsync();
+        session.StartTransaction();
+        
+        if (!await _systemContext.IsCkModelExistingAsync(session, SystemBotCkIds.ModelId))
+        {
+            // We ensure that at least the system tenant contains a valid ck model.Other tenants
+            // need to be enabled manually by a admin.
+            OperationResult operationResult = new();
+            await _systemContext.ImportCkModelAsync(session, SystemBotCkIds.ModelId, operationResult);
+            if (operationResult.HasErrors || operationResult.HasFatalErrors)
+            {
+                throw InitializationException.ImportCkModelFailed(_systemContext.TenantId, operationResult.GetMessages());
+            }
+        }
+
+        await session.CommitTransactionAsync();
+    }
+
 
     private void CreateApiScopes(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {

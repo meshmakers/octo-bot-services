@@ -19,12 +19,14 @@ using Meshmakers.Octo.Runtime.Engine.MongoDb;
 using Meshmakers.Octo.Services.Common;
 using Meshmakers.Octo.Services.Common.Authorization;
 using Meshmakers.Octo.Services.Common.Cors;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Notifications;
 using Meshmakers.Octo.Services.Swagger.Configuration;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
@@ -63,8 +65,6 @@ public class Startup
         services.Configure<OctoSystemConfiguration>(options => Configuration.GetSection("System").Bind(options));
         services.Configure<EMailOptions>(options => Configuration.GetSection("EMail").Bind(options));
 
-        services.AddHostedService<StartupService>();
-
         services.AddSingleton<ICorsPolicyProvider, CorsPolicyProvider>();
         services.AddSingleton<INotificationRepository, EntityNotificationRepository>();
         services.AddSingleton<IEMailSender, EMailSender>();
@@ -72,8 +72,6 @@ public class Startup
 
         services.AddSingleton<ISystemContext, SystemContext>();
 
-        services.AddTransient<IUserSchemaService, UserSchemaService>();
-        // services.AddTransient<IServiceHookService, ServiceHookService>();
         services.AddTransient<IImportModelJob, ImportModelJob>();
         services.AddTransient<IExportModelJob, ExportModelJob>();
         services.AddTransient<IEMailSenderJob, EMailSenderJob>();
@@ -83,10 +81,17 @@ public class Startup
         services.AddMemoryCache();
 
         services.AddOctoServiceInfrastructure("BotService",
-            c => { c.AddBroadcastEventConsumer<PreUpdateTenantConsumer, PreUpdateTenant>(); });
+            c =>
+            {
+                c.AddCommandClient<CreateIdentityDataCommandRequest>("identity::create-identity-data");
+                c.AddBroadcastEventConsumer<PreUpdateTenantConsumer, PreUpdateTenant>();
+            });
 
         services.AddRuntimeEngine()
             .AddMongoDbRuntimeRepository();
+        
+        services.AddInitializationService<UserSchemaService>();
+        services.AddInitializationService<ServiceHookService>();
 
         services.ConfigureOptions<ConfigureIdentityServerAuthenticationOptions>();
         services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
