@@ -4,7 +4,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BotServices", "src\BotServi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BotServices.Resources", "src\BotServices.Resources\BotServices.Resources.csproj", "{249AD00E-8F0E-4F92-94BF-1EF2BFA59545}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "octo-construction-kit-engine-mongodb", "octo-construction-kit-engine-mongodb", "{883C73AC-76E1-4143-B98A-47D6993DD6D6}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "octo-construction-kit", "octo-construction-kit", "{883C73AC-76E1-4143-B98A-47D6993DD6D6}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "octo-common-services", "octo-common-services", "{22E68814-EE3C-4D58-9A5A-886F7D17832B}"
 EndProject

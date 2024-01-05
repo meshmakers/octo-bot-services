@@ -2,7 +2,7 @@
   "profiles": {
     "Meshmakers.Octo.Backend.BotServices": {
       "commandName": "Project",
-      "launchBrowser": true,
+      "launchBrowser": false,
       "launchUrl": "ui/jobs",
       "applicationUrl": "https://localhost:5009;http://localhost:5008",
       "environmentVariables": {
