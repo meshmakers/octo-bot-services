@@ -73,7 +73,7 @@ public class Startup
         services.AddSingleton<ISystemContext, SystemContext>();
 
         services.AddTransient<IUserSchemaService, UserSchemaService>();
-       // services.AddTransient<IServiceHookService, ServiceHookService>();
+        // services.AddTransient<IServiceHookService, ServiceHookService>();
         services.AddTransient<IImportModelJob, ImportModelJob>();
         services.AddTransient<IExportModelJob, ExportModelJob>();
         services.AddTransient<IEMailSenderJob, EMailSenderJob>();
@@ -81,12 +81,10 @@ public class Startup
         services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
 
         services.AddMemoryCache();
-        
-        services.AddOctoServiceInfrastructure("BotService", configureDistributionEventHub: c =>
-        {
-            c.AddBroadcastEventConsumer<PreUpdateTenantConsumer, PreUpdateTenant>();
-        });
-        
+
+        services.AddOctoServiceInfrastructure("BotService",
+            c => { c.AddBroadcastEventConsumer<PreUpdateTenantConsumer, PreUpdateTenant>(); });
+
         services.AddRuntimeEngine()
             .AddMongoDbRuntimeRepository();
 
@@ -130,7 +128,6 @@ public class Startup
                     NameClaimType = JwtClaimTypes.Name,
                     RoleClaimType = JwtClaimTypes.Role
                 };
-                
             }).AddJwtBearer(jwt =>
             {
                 jwt.Audience = CommonConstants.BotApi;

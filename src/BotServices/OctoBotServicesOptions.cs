@@ -17,12 +17,12 @@ public class OctoBotServicesOptions
         PublicUrl = "https://localhost:5009";
         PublicAdminPanelUrl = "https://localhost:5005";
     }
-    
+
     /// <summary>
     ///     Gets or sets the RabbitMq host name
     /// </summary>
     public string BrokerHost { get; set; }
-    
+
     /// <summary>
     ///     Gets or sets the RabbitMq user
     /// </summary>

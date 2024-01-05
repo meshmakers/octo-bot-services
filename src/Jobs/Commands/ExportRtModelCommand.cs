@@ -1,12 +1,12 @@
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.ConstructionKit.Models.System.ConstructionKit.Generated.System.v1;
 using Meshmakers.Octo.Runtime.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
 using Microsoft.Extensions.Logging;
-using Persistence.SystemCkModel.ConstructionKit.Generated.System.v1;
 using RtEntityDto = Meshmakers.Octo.Runtime.Contracts.DataTransferObjects.RtEntityDto;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
@@ -39,31 +39,49 @@ internal class ExportRtModelCommand : IExportRtModelCommand
             var query = await tenantRepository.GetRtEntityByRtIdAsync(session,
                 new RtEntityId(SystemCkIds.ModelId, SystemCkIds.QueryTypeId, queryId));
 
-            if (CheckCancellation(cancellationToken)) throw new OperationCanceledException();
+            if (CheckCancellation(cancellationToken))
+            {
+                throw new OperationCanceledException();
+            }
 
-            if (query == null) throw CommandExecutionFailedException.QueryNotFound(queryId);
+            if (query == null)
+            {
+                throw CommandExecutionFailedException.QueryNotFound(queryId);
+            }
 
             var dataQueryOperation = DataQueryOperation.Create();
 
             var sortingDtoList = query.GetAttributeStringValueOrDefault("Sorting")?.Deserialize<ICollection<SortDto>>();
             if (sortingDtoList != null)
+            {
                 foreach (var sortDto in sortingDtoList)
+                {
                     dataQueryOperation.SortOrder(sortDto.AttributeName.ToPascalCase(), (SortOrders)sortDto.SortOrder);
+                }
+            }
 
             var fieldFilterDtoList =
                 query.GetAttributeStringValueOrDefault("FieldFilter")?.Deserialize<ICollection<FieldFilterDto>>();
             if (fieldFilterDtoList != null)
+            {
                 foreach (var fieldFilterDto in fieldFilterDtoList)
+                {
                     dataQueryOperation.FieldFilter(TransformAttributeName(fieldFilterDto.AttributeName),
                         (FieldFilterOperator)fieldFilterDto.Operator, fieldFilterDto.ComparisonValue);
+                }
+            }
 
             var ckTypeIdString = query.GetAttributeStringValueOrDefault("QueryCkTypeId");
-            if (string.IsNullOrWhiteSpace(ckTypeIdString)) throw CommandExecutionFailedException.QueryCkTypeIdNotSet(queryId);
+            if (string.IsNullOrWhiteSpace(ckTypeIdString))
+            {
+                throw CommandExecutionFailedException.QueryCkTypeIdNotSet(queryId);
+            }
+
             var ckTypeId = new CkId<CkTypeId>(ckTypeIdString);
 
             var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync(session, ckTypeId, dataQueryOperation);
 
-            var entityCacheItem = await tenantRepository.GetEntityCacheItemAsync(ckTypeId);
+            var entityCacheItem = await tenantRepository.GetCkTypeGraphAsync(ckTypeId);
 
             var model = new RtModelRootDto();
             model.Entities.AddRange(resultSet.Items.Select(entity =>
@@ -112,7 +130,10 @@ internal class ExportRtModelCommand : IExportRtModelCommand
 
     private static bool CheckCancellation(CancellationToken? cancellationToken)
     {
-        if (cancellationToken != null && cancellationToken.Value.IsCancellationRequested) return true;
+        if (cancellationToken != null && cancellationToken.Value.IsCancellationRequested)
+        {
+            return true;
+        }
 
         return false;
     }

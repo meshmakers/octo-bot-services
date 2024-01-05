@@ -1,12 +1,12 @@
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
-/// Interface for a job that can be run by the service hook
+///     Interface for a job that can be run by the service hook
 /// </summary>
 public interface IServiceHookJob
 {
     /// <summary>
-    /// Runs the job
+    ///     Runs the job
     /// </summary>
     /// <param name="tenantId"></param>
     /// <param name="cancellationToken"></param>

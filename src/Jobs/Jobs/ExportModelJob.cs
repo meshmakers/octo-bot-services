@@ -3,7 +3,6 @@ using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
-using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using NLog;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -69,7 +68,8 @@ public class ExportModelJob : IExportModelJob
             await using (var memoryStream = new MemoryStream())
             {
                 await streamReader.BaseStream.PackFileToZipAsync("RtEntities.json", memoryStream);
-                return await _distributedCache.CacheStreamAsync(tenantId, memoryStream, "application/zip", "RtEntities.zip", TimeSpan.FromHours(1));
+                return await _distributedCache.CacheStreamAsync(tenantId, memoryStream, "application/zip", "RtEntities.zip",
+                    TimeSpan.FromHours(1));
             }
         }
     }

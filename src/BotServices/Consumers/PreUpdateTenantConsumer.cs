@@ -9,15 +9,15 @@ using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
 namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 
 /// <summary>
-/// Handles the <see cref="PreUpdateTenant"/> message.
+///     Handles the <see cref="PreUpdateTenant" /> message.
 /// </summary>
 internal class PreUpdateTenantConsumer : IDistributedConsumer<PreUpdateTenant>
 {
-    readonly ILogger<PreUpdateTenantConsumer> _logger;
+    private readonly ILogger<PreUpdateTenantConsumer> _logger;
     private readonly ISystemContext _systemContext;
 
     /// <summary>
-    /// Constructor.
+    ///     Constructor.
     /// </summary>
     /// <param name="logger"></param>
     /// <param name="systemContext"></param>
@@ -34,7 +34,7 @@ internal class PreUpdateTenantConsumer : IDistributedConsumer<PreUpdateTenant>
     public async Task ConsumeAsync(IDistributedContext<PreUpdateTenant> context)
     {
         _logger.LogInformation("Pre update tenant received: {Text}", context.Message.TenantId);
-        
+
         using (var connection = JobStorage.Current.GetConnection())
         {
             foreach (var recurringJob in connection.GetRecurringJobs())

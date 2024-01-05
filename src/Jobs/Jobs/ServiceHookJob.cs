@@ -1,12 +1,12 @@
 using System.ComponentModel;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.ConstructionKit.Models.System.ConstructionKit.Generated.System.v1;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Newtonsoft.Json;
 using NLog;
-using Persistence.SystemCkModel.ConstructionKit.Generated.System.v1;
 using RestSharp;
 using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
 

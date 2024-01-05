@@ -3,20 +3,25 @@
 namespace Meshmakers.Octo.Backend.Jobs;
 
 /// <summary>
-/// Cancellation token for bots 
+///     Cancellation token for bots
 /// </summary>
 public class BotCancellationToken : IBotCancellationToken
 {
     private readonly IJobCancellationToken _cancellationToken;
 
     /// <summary>
-    /// Constructor
+    ///     Constructor
     /// </summary>
     /// <param name="cancellationToken"></param>
     public BotCancellationToken(IJobCancellationToken cancellationToken)
     {
         _cancellationToken = cancellationToken;
     }
+
+    /// <summary>
+    ///     Returns null
+    /// </summary>
+    public static IBotCancellationToken? Null => null;
 
     /// <inheritdoc />
     public CancellationToken ShutdownToken => _cancellationToken.ShutdownToken;
@@ -27,9 +32,4 @@ public class BotCancellationToken : IBotCancellationToken
     {
         _cancellationToken.ThrowIfCancellationRequested();
     }
-    
-    /// <summary>
-    /// Returns null
-    /// </summary>
-    public static IBotCancellationToken? Null => null;
 }

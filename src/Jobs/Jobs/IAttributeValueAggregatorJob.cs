@@ -1,9 +1,7 @@
-using System.Threading.Tasks;
-
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
-/// Interface for aggregating attribute values
+///     Interface for aggregating attribute values
 /// </summary>
 public interface IAttributeValueAggregatorJob
 {

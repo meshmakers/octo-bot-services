@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
     <PropertyGroup>
-        <ApplicationIcon/>
+        <ApplicationIcon />
         <AssemblyName>Meshmakers.Octo.Backend.BotServices</AssemblyName>
         <Description>The Bot services of OctoMesh</Description>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
@@ -9,7 +9,7 @@
         <IsPackable>false</IsPackable>
         <OutputType>Exe</OutputType>
         <RootNamespace>Meshmakers.Octo.Backend.BotServices</RootNamespace>
-        <StartupObject/>
+        <StartupObject />
         <UserSecretsId>FC21694E-6810-46DB-9352-465BD6075EF3</UserSecretsId>
         <OutputPath>..\..\bin\$(Configuration)\</OutputPath>
         <DocumentationFile>..\..\bin\$(Configuration)\$(AssemblyName).xml</DocumentationFile>
@@ -17,23 +17,23 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Hangfire.Mongo" Version="1.9.15"/>
-        <PackageReference Include="IdentityModel.AspNetCore.OAuth2Introspection" Version="6.2.0"/>
-        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0"/>
-        <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="8.0.0"/>
-        <PackageReference Include="Microsoft.AspNetCore.Server.IISIntegration" Version="2.2.1"/>
-        <PackageReference Include="Microsoft.Extensions.PlatformAbstractions" Version="1.1.0"/>
-        <PackageReference Include="NLog.Web.AspNetCore" Version="5.3.8"/>
-        <PackageReference Include="Hangfire.AspNetCore" Version="1.8.7"/>
+        <PackageReference Include="Hangfire.Mongo" Version="1.9.16" />
+        <PackageReference Include="IdentityModel.AspNetCore.OAuth2Introspection" Version="6.2.0" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="8.0.0" />
+        <PackageReference Include="Microsoft.AspNetCore.Server.IISIntegration" Version="2.2.1" />
+        <PackageReference Include="Microsoft.Extensions.PlatformAbstractions" Version="1.1.0" />
+        <PackageReference Include="NLog.Web.AspNetCore" Version="5.3.8" />
+        <PackageReference Include="Hangfire.AspNetCore" Version="1.8.7" />
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj"/>
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Swagger\Swagger.csproj"/>
-        <ProjectReference Include="..\BotServices.Resources\BotServices.Resources.csproj"/>
-        <ProjectReference Include="..\Jobs\Jobs.csproj"/>
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Notifications\Notifications.csproj"/>
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Infrastructure\Infrastructure.csproj"/>
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj" />
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Swagger\Swagger.csproj" />
+        <ProjectReference Include="..\BotServices.Resources\BotServices.Resources.csproj" />
+        <ProjectReference Include="..\Jobs\Jobs.csproj" />
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Notifications\Notifications.csproj" />
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Infrastructure\Infrastructure.csproj" />
     </ItemGroup>
 
     <ItemGroup>

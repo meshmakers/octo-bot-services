@@ -1,7 +1,3 @@
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Hosting;
-
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
 internal class StartupService : IHostedService

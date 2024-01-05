@@ -1,9 +1,7 @@
-using System.Threading.Tasks;
-
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
-/// Exports a runtime object graph
+///     Exports a runtime object graph
 /// </summary>
 public interface IExportModelJob
 {

@@ -4,7 +4,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BotServices", "src\BotServi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BotServices.Resources", "src\BotServices.Resources\BotServices.Resources.csproj", "{249AD00E-8F0E-4F92-94BF-1EF2BFA59545}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "octo-core", "octo-core", "{883C73AC-76E1-4143-B98A-47D6993DD6D6}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "octo-construction-kit-engine-mongodb", "octo-construction-kit-engine-mongodb", "{883C73AC-76E1-4143-B98A-47D6993DD6D6}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "octo-common-services", "octo-common-services", "{22E68814-EE3C-4D58-9A5A-886F7D17832B}"
 EndProject
@@ -14,11 +14,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Swagger", "src\octo-common-
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jobs", "src\Jobs\Jobs.csproj", "{1878A9B2-D180-4E76-889B-851019360038}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Persistence.SystemCkModel", "src\octo-common-services\src\octo-core\src\Common\Persistence.SystemCkModel\Persistence.SystemCkModel.csproj", "{A9E42AEF-9426-4DFB-92C0-3F247A91BD41}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Runtime.Contracts.MongoDb", "src\octo-common-services\src\octo-construction-kit-engine-mongodb\src\Runtime.Contracts.MongoDb\Runtime.Contracts.MongoDb.csproj", "{469D0D60-4357-4D8A-A581-6C386F21823E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Runtime.Contracts.MongoDb", "src\octo-common-services\src\octo-core\src\MongoDb\Runtime.Contracts.MongoDb\Runtime.Contracts.MongoDb.csproj", "{469D0D60-4357-4D8A-A581-6C386F21823E}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Runtime.Engine.MongoDb", "src\octo-common-services\src\octo-core\src\MongoDb\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj", "{A5876818-D4A8-474D-AF0B-94A1F170EC1C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Runtime.Engine.MongoDb", "src\octo-common-services\src\octo-construction-kit-engine-mongodb\src\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj", "{A5876818-D4A8-474D-AF0B-94A1F170EC1C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SystemBotCkModel", "src\SystemBotCkModel\SystemBotCkModel.csproj", "{7444A80A-058D-4C31-AB1C-6A7153D7E0E1}"
 EndProject
@@ -63,12 +61,6 @@ Global
 		{1878A9B2-D180-4E76-889B-851019360038}.Release|Any CPU.Build.0 = Release|Any CPU
 		{1878A9B2-D180-4E76-889B-851019360038}.DebugL|Any CPU.ActiveCfg = DebugL|Any CPU
 		{1878A9B2-D180-4E76-889B-851019360038}.DebugL|Any CPU.Build.0 = DebugL|Any CPU
-		{A9E42AEF-9426-4DFB-92C0-3F247A91BD41}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A9E42AEF-9426-4DFB-92C0-3F247A91BD41}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A9E42AEF-9426-4DFB-92C0-3F247A91BD41}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A9E42AEF-9426-4DFB-92C0-3F247A91BD41}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A9E42AEF-9426-4DFB-92C0-3F247A91BD41}.DebugL|Any CPU.ActiveCfg = DebugL|Any CPU
-		{A9E42AEF-9426-4DFB-92C0-3F247A91BD41}.DebugL|Any CPU.Build.0 = DebugL|Any CPU
 		{469D0D60-4357-4D8A-A581-6C386F21823E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{469D0D60-4357-4D8A-A581-6C386F21823E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{469D0D60-4357-4D8A-A581-6C386F21823E}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -103,7 +95,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{F75AAA70-74B6-4B48-95D9-917AC101112A} = {22E68814-EE3C-4D58-9A5A-886F7D17832B}
 		{5037ED92-C3E0-4578-AA8E-C569CF7ADF4A} = {22E68814-EE3C-4D58-9A5A-886F7D17832B}
-		{A9E42AEF-9426-4DFB-92C0-3F247A91BD41} = {883C73AC-76E1-4143-B98A-47D6993DD6D6}
 		{469D0D60-4357-4D8A-A581-6C386F21823E} = {883C73AC-76E1-4143-B98A-47D6993DD6D6}
 		{A5876818-D4A8-474D-AF0B-94A1F170EC1C} = {883C73AC-76E1-4143-B98A-47D6993DD6D6}
 		{7597CBD5-475A-40FF-B745-6334767A0B3D} = {22E68814-EE3C-4D58-9A5A-886F7D17832B}

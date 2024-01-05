@@ -1,5 +1,3 @@
-using System;
-
 namespace Meshmakers.Octo.Backend.BotServices;
 
 internal static class BotServiceConstants

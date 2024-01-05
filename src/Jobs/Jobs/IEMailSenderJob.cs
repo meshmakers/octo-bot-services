@@ -1,9 +1,7 @@
-using System.Threading.Tasks;
-
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
-/// E-Mail Sender Job
+///     E-Mail Sender Job
 /// </summary>
 public interface IEMailSenderJob
 {

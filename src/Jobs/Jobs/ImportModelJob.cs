@@ -3,7 +3,6 @@ using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
-using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using NLog;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -14,9 +13,9 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 public class ImportModelJob : IImportModelJob
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private readonly IDistributedCacheService _distributedCacheService;
     private readonly IImportCkModelCommand _importCkModelCommand;
     private readonly IImportRtModelCommand _importRtModelCommand;
-    private readonly IDistributedCacheService _distributedCacheService;
 
     /// <summary>
     ///     Constructor
@@ -24,7 +23,8 @@ public class ImportModelJob : IImportModelJob
     /// <param name="distributedCacheService"></param>
     /// <param name="importCkModelCommand">Redis distributed cache for file caching</param>
     /// <param name="importRtModelCommand"></param>
-    public ImportModelJob(IDistributedCacheService distributedCacheService, IImportCkModelCommand importCkModelCommand, IImportRtModelCommand importRtModelCommand)
+    public ImportModelJob(IDistributedCacheService distributedCacheService, IImportCkModelCommand importCkModelCommand,
+        IImportRtModelCommand importRtModelCommand)
     {
         _distributedCacheService = distributedCacheService;
         _importCkModelCommand = importCkModelCommand;
@@ -110,21 +110,21 @@ public class ImportModelJob : IImportModelJob
 
         var tempFile = Path.GetTempFileName();
 
-            if (cacheStream.ContentType.ToLower() == "application/zip")
+        if (cacheStream.ContentType.ToLower() == "application/zip")
+        {
+            await cacheStream.Stream.ExtractFileFromZipAsync(cacheStream.ContentType, ".json", tempFile);
+        }
+        else if (cacheStream.ContentType.ToLower() == "application/json")
+        {
+            await using (var streamWriter = new StreamWriter(tempFile))
             {
-                await cacheStream.Stream.ExtractFileFromZipAsync(cacheStream.ContentType, ".json", tempFile);
+                await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
             }
-            else if (cacheStream.ContentType.ToLower() == "application/json")
-            {
-                await using (var streamWriter = new StreamWriter(tempFile))
-                {
-                    await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
-                }
-            }
-            else
-            {
-                throw new JobFailedException("File type is not supported.");
-            }
+        }
+        else
+        {
+            throw new JobFailedException("File type is not supported.");
+        }
 
         return tempFile;
     }
