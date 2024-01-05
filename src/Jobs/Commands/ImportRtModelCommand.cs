@@ -96,7 +96,7 @@ internal class ImportRtModelCommand : IImportRtModelCommand
     {
         await Parallel.ForEachAsync(modelRtEntities, async (modelRtEntity, token) =>
         {
-            var entityCacheItem = await tenantRepository.GetEntityCacheItemAsync(modelRtEntity.CkTypeId);
+            var entityCacheItem = await tenantRepository.GetCkTypeGraphAsync(modelRtEntity.CkTypeId);
 
             var rtEntity = await tenantRepository.CreateTransientRtEntityAsync(modelRtEntity.CkTypeId).ConfigureAwait(false);
             rtEntity.RtId = modelRtEntity.RtId;
@@ -104,7 +104,10 @@ internal class ImportRtModelCommand : IImportRtModelCommand
             rtEntity.RtCreationDateTime = modelRtEntity.RtCreationDateTime;
             rtEntity.RtWellKnownName = modelRtEntity.RtWellKnownName;
 
-            if (_entityImportIds.Contains(rtEntity.RtId)) _logger.LogError("'{RtEntityRtId}' already imported", rtEntity.RtId);
+            if (_entityImportIds.Contains(rtEntity.RtId))
+            {
+                _logger.LogError("'{RtEntityRtId}' already imported", rtEntity.RtId);
+            }
 
             lock (_entityImportIds)
             {
@@ -169,16 +172,28 @@ internal class ImportRtModelCommand : IImportRtModelCommand
             var associationsMax = _importAssociationQueue.Count;
 
             for (var i = 0; i < entityMax; i++)
+            {
                 if (_importEntityQueue.TryDequeue(out var tmp))
+                {
                     importEntities.Add(tmp);
+                }
                 else
+                {
                     break;
+                }
+            }
 
             for (var i = 0; i < associationsMax; i++)
+            {
                 if (_importAssociationQueue.TryDequeue(out var tmp))
+                {
                     importAssociations.Add(tmp);
+                }
                 else
+                {
                     break;
+                }
+            }
 
             if (importEntities.Any())
             {

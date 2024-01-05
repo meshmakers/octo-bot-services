@@ -3,7 +3,7 @@ using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
-/// Imports a construction kit model or a runtime object graph
+///     Imports a construction kit model or a runtime object graph
 /// </summary>
 public interface IImportModelJob
 {

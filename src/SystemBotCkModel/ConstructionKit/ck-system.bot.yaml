@@ -1,6 +1,7 @@
 $schema: https://schemas.meshmakers.cloud/construction-kit-compiled.schema.json
 types:
-- typeId: ServiceHook
+- isCollectionRoot: true
+  typeId: ServiceHook
   derivedFromCkTypeId: System/Entity
   attributes:
   - id: System/Enabled
@@ -18,7 +19,8 @@ types:
   - id: System.Bot/ServiceHook.ApiKey
     name: ServiceHookApiKey
     isOptional: true
-- typeId: AttributeAggregateConfiguration
+- isCollectionRoot: true
+  typeId: AttributeAggregateConfiguration
   derivedFromCkTypeId: System/Entity
   attributes:
   - id: System/Enabled

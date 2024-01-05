@@ -67,7 +67,7 @@ internal class UserSchemaService : IUserSchemaService
     {
         createIdentityDataCommandRequest.ApiResources = new List<DistApiResourcesDto>
         {
-            new (CommonConstants.BotApi, CommonConstants.BotApiDisplayName)
+            new(CommonConstants.BotApi, CommonConstants.BotApiDisplayName)
             {
                 Description = CommonConstants.BotApiDescription,
                 IsEnabled = true,
@@ -97,8 +97,8 @@ internal class UserSchemaService : IUserSchemaService
                     _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") + "signin-oidc"
                 ],
 
-                PostLogoutRedirectUris = [ _octoBotServicesOptions.PublicAdminPanelUrl.EnsureEndsWith("/") ],
-                AllowedCorsOrigins = [ _octoBotServicesOptions.PublicAdminPanelUrl.TrimEnd('/') ],
+                PostLogoutRedirectUris = [_octoBotServicesOptions.PublicAdminPanelUrl.EnsureEndsWith("/")],
+                AllowedCorsOrigins = [_octoBotServicesOptions.PublicAdminPanelUrl.TrimEnd('/')],
                 AllowOfflineAccess = true,
                 AllowedScopes =
                 [
@@ -108,19 +108,19 @@ internal class UserSchemaService : IUserSchemaService
                     JwtClaimTypes.Role
                 ]
             },
-            new (CommonConstants.OctoBotServicesSwaggerClientId, 
-                BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName, 
+            new(CommonConstants.OctoBotServicesSwaggerClientId,
+                BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName,
                 _octoBotServicesOptions.PublicUrl)
             {
                 AllowedGrantTypes = [OidcConstants.GrantTypes.AuthorizationCode],
-            
+
                 RedirectUris =
                 [
                     _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/swagger/oauth2-redirect.html")
                 ],
-            
-                PostLogoutRedirectUris = [ _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") ],
-                AllowedCorsOrigins = [ _octoBotServicesOptions.PublicUrl.TrimEnd('/') ],
+
+                PostLogoutRedirectUris = [_octoBotServicesOptions.PublicUrl.EnsureEndsWith("/")],
+                AllowedCorsOrigins = [_octoBotServicesOptions.PublicUrl.TrimEnd('/')],
                 AllowedScopes =
                 [
                     CommonConstants.Scopes.OpenId,

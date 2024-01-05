@@ -1,12 +1,12 @@
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
 
 /// <summary>
-/// Import a construction kit model from a file.
+///     Import a construction kit model from a file.
 /// </summary>
 public interface IImportCkModelCommand
 {
     /// <summary>
-    /// Imports as text
+    ///     Imports as text
     /// </summary>
     /// <param name="tenantId"></param>
     /// <param name="jsonText"></param>
@@ -16,7 +16,7 @@ public interface IImportCkModelCommand
         CancellationToken? cancellationToken = null);
 
     /// <summary>
-    /// Imports from a file
+    ///     Imports from a file
     /// </summary>
     /// <param name="tenantId"></param>
     /// <param name="filePath"></param>

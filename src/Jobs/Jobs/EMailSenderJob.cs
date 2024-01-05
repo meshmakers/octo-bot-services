@@ -13,10 +13,9 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// </summary>
 public class EMailSenderJob : IEMailSenderJob
 {
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly IEMailSender _eMailSender;
     private readonly INotificationRepository _notificationRepository;
-    
-    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
     /// <summary>
     ///     Constructor
@@ -40,7 +39,7 @@ public class EMailSenderJob : IEMailSenderJob
     public async Task SendEMail(string tenantId, IBotCancellationToken? cancellationToken)
     {
         Logger.Info($"Job to send E-Mails started for tenant '{tenantId}'");
-        
+
         PagedResult<NotificationMessageDto> pagedResult;
         do
         {
@@ -69,7 +68,7 @@ public class EMailSenderJob : IEMailSenderJob
                 {
                     continue;
                 }
-                
+
                 try
                 {
                     await _eMailSender.SendEmailAsync(notificationMessageDto.RecipientAddress,
@@ -82,7 +81,7 @@ public class EMailSenderJob : IEMailSenderJob
                 }
                 catch (NotificationSendFailedException e)
                 {
-                    Logger.Error(e, $"Sending of E-Mail failed.");
+                    Logger.Error(e, "Sending of E-Mail failed.");
 
                     notificationMessageDto.SentDateTime = DateTime.UtcNow;
                     notificationMessageDto.SendStatus = SendStatusDto.Error;
@@ -93,7 +92,6 @@ public class EMailSenderJob : IEMailSenderJob
             Logger.Info($"Updating sent date '{tenantId}'");
             await _notificationRepository.StoreNotificationMessages(tenantId, pagedResult.List);
             Logger.Info($"Completed updating sent date for E-Mail notfications '{tenantId}'. Next page.");
-            
         } while (pagedResult.TotalCount > 0);
     }
 }

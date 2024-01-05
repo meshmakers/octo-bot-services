@@ -1,6 +1,4 @@
-﻿using System.Threading.Tasks;
-
-namespace Meshmakers.Octo.Backend.Jobs.Services;
+﻿namespace Meshmakers.Octo.Backend.Jobs.Services;
 
 /// <summary>
 ///     E-Mail sender interface

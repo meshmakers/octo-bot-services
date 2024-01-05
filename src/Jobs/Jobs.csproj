@@ -12,31 +12,23 @@
         <Platforms>AnyCPU</Platforms>
     </PropertyGroup>
 
-    <ItemGroup Condition="'$(Configuration)'!='DebugL'">
-        <PackageReference Include="Meshmakers.Octo.Communication.Contracts" Version="3.0.8" />
-    </ItemGroup>
-
-    <ItemGroup Condition="'$(Configuration)'=='DebugL'">
-        <PackageReference Include="Meshmakers.Octo.Communication.Contracts" Version="999.0.0" />
-    </ItemGroup>
-
     <ItemGroup>
-        <PackageReference Include="Hangfire.Core" Version="1.8.7" />
-        <PackageReference Include="RestSharp" Version="110.2.0" />
+        <PackageReference Include="Hangfire.Core" Version="1.8.7"/>
+        <PackageReference Include="RestSharp" Version="110.2.0"/>
     </ItemGroup>
 
     <ItemGroup>
         <None Include="..\..\assets\meshmakers64.png">
             <Pack>True</Pack>
-            <PackagePath />
+            <PackagePath/>
             <Link>meshmakers64.png</Link>
         </None>
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="$(OctoCorePath)src\MongoDb\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj" />
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj" />
-        <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj" />
+        <ProjectReference Include="$(OctoConstructionKitPath)src\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj"/>
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj"/>
+        <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj"/>
     </ItemGroup>
 
 
