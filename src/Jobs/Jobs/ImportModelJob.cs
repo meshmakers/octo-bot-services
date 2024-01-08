@@ -106,7 +106,7 @@ public class ImportModelJob : IImportModelJob
         {
             await cacheStream.Stream.ExtractFileFromZipAsync(cacheStream.ContentType, ".json", tempFile);
         }
-        else if (cacheStream.ContentType.ToLower() == "application/json")
+        else if (cacheStream.ContentType.ToLower() == "application/json" || cacheStream.ContentType.ToLower() == "text/yaml")
         {
             await using (var streamWriter = new StreamWriter(tempFile))
             {

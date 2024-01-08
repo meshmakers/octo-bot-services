@@ -36,14 +36,11 @@ internal class ImportRtModelCommand : IImportRtModelCommand
     {
         _logger.LogInformation("Importing RT entities using text started");
 
-        using var systemSession = await _systemContext.GetSystemSessionAsync();
-        systemSession.StartTransaction();
         ITenantContext tenantContext = _systemContext;
         if (tenantId != _systemContext.TenantId)
         {
             tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
         } 
-        await systemSession.CommitTransactionAsync();
 
         var tenantRepository = tenantContext.GetTenantRepository();
 
@@ -55,6 +52,8 @@ internal class ImportRtModelCommand : IImportRtModelCommand
             OperationResult operationResult = new();
             var rtModelRoot = await _rtSerializer.DeserializeAsync(jsonText, "-", operationResult);
             await ImportEntityAsync(session, rtModelRoot.Entities, tenantRepository);
+
+            await session.CommitTransactionAsync();
 
             _logger.LogInformation("{Count} entities, {AssociationsCount} associations imported", _entityImportIds.Count,
                 _associationsCount);
@@ -73,7 +72,6 @@ internal class ImportRtModelCommand : IImportRtModelCommand
         var session = await _systemContext.GetSystemSessionAsync();
         try
         {
-            session.StartTransaction();
             ITenantContext tenantContext = _systemContext;
             if (tenantId != _systemContext.TenantId)
             {
@@ -81,6 +79,7 @@ internal class ImportRtModelCommand : IImportRtModelCommand
             }   
             var tenantRepository = tenantContext.GetTenantRepository();
 
+            session.StartTransaction();
             await using (var stream = File.OpenRead(filePath))
             {
                 var rtDeserializeStream = await _rtSerializer.DeserializeStreamAsync(stream, cancellationToken);
@@ -92,6 +91,8 @@ internal class ImportRtModelCommand : IImportRtModelCommand
                 };
                 await rtDeserializeStream.ReadAsync();
             }
+
+            await session.CommitTransactionAsync();
 
             _logger.LogInformation("{Count} entities, {AssociationsCount} associations imported", _entityImportIds.Count,
                 _associationsCount);
