@@ -90,9 +90,9 @@ public class Startup
                 c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>("bot::import-rt");
                 c.AddCommandConsumer<ModelCommandsConsumer, ExportRtCommandRequest>("bot::export-rt");
                 c.AddCommandClient<CreateIdentityDataCommandRequest>("identity::create-identity-data");
-                c.AddBroadcastEventConsumer<CreateJobsConsumer, PosCreateTenant>();
-                c.AddBroadcastEventConsumer<CreateJobsConsumer, PosUpdateTenant>();
-                c.AddBroadcastEventConsumer<CreateJobsConsumer, PreDeleteTenant>();
+                c.AddBroadcastEventConsumer<TenantManagementConsumer, PosCreateTenant>();
+                c.AddBroadcastEventConsumer<TenantManagementConsumer, PosUpdateTenant>();
+                c.AddBroadcastEventConsumer<TenantManagementConsumer, PreDeleteTenant>();
             });
 
         services.AddRuntimeEngine()
