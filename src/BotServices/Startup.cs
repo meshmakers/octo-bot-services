@@ -13,20 +13,18 @@ using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Communication.Contracts.Services;
-using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
-using Meshmakers.Octo.Runtime.Engine.MongoDb;
 using Meshmakers.Octo.Services.Common;
 using Meshmakers.Octo.Services.Common.Authorization;
 using Meshmakers.Octo.Services.Common.Cors;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
+using Meshmakers.Octo.Services.Infrastructure.Services;
 using Meshmakers.Octo.Services.Notifications;
 using Meshmakers.Octo.Services.Swagger.Configuration;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
@@ -65,12 +63,15 @@ public class Startup
         services.Configure<OctoSystemConfiguration>(options => Configuration.GetSection("System").Bind(options));
         services.Configure<EMailOptions>(options => Configuration.GetSection("EMail").Bind(options));
 
-        services.AddSingleton<ICorsPolicyProvider, CorsPolicyProvider>();
+        services.AddSingleton<CorsPolicyProvider>();
+        services.AddSingleton<ICorsPolicyProvider>(provider => provider.GetRequiredService<CorsPolicyProvider>());
+
+        services.AddTransient<IJobCreatorService, JobCreatorService>();
         services.AddSingleton<INotificationRepository, EntityNotificationRepository>();
         services.AddSingleton<IEMailSender, EMailSender>();
         services.AddCors();
 
-        services.AddSingleton<ISystemContext, SystemContext>();
+        services.AddTransient<IDefaultConfigurationCreatorService, DefaultConfigurationCreatorService>();
 
         services.AddTransient<IImportModelJob, ImportModelJob>();
         services.AddTransient<IExportModelJob, ExportModelJob>();
@@ -83,16 +84,20 @@ public class Startup
         services.AddOctoServiceInfrastructure("BotService",
             c =>
             {
+                c.AddHangfireMessageScheduler();
+                
+                c.AddCommandConsumer<ModelCommandsConsumer, ImportCkCommandRequest>("bot::import-ck");
+                c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>("bot::import-rt");
+                c.AddCommandConsumer<ModelCommandsConsumer, ExportRtCommandRequest>("bot::export-rt");
                 c.AddCommandClient<CreateIdentityDataCommandRequest>("identity::create-identity-data");
-                c.AddBroadcastEventConsumer<PreUpdateTenantConsumer, PreUpdateTenant>();
+                c.AddBroadcastEventConsumer<CreateJobsConsumer, PosCreateTenant>();
+                c.AddBroadcastEventConsumer<CreateJobsConsumer, PosUpdateTenant>();
+                c.AddBroadcastEventConsumer<CreateJobsConsumer, PreDeleteTenant>();
             });
 
         services.AddRuntimeEngine()
             .AddMongoDbRuntimeRepository();
         
-        services.AddInitializationService<UserSchemaService>();
-        services.AddInitializationService<ServiceHookService>();
-
         services.ConfigureOptions<ConfigureIdentityServerAuthenticationOptions>();
         services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
         services.ConfigureOptions<ConfigureOctoSwaggerOptions>();
@@ -227,7 +232,8 @@ public class Startup
             config.UseActivator(new OctoJobActivator(serviceProvider));
         });
 
-        services.AddHangfireServer(options => { options.Queues = new[] { "octoSystem", "default" }; });
+        // ReSharper disable once StringLiteralTypo
+        services.AddHangfireServer(options => { options.Queues = ["octosystem", "default"]; });
     }
 
     /// <summary>

@@ -8,34 +8,40 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands.Payloads;
 using Meshmakers.Octo.Services.Infrastructure;
-using Meshmakers.Octo.Services.Infrastructure.Initialization;
 using Meshmakers.Octo.Services.Infrastructure.Services;
+using Meshmakers.Octo.Services.Notifications.ConstructionKit.Generated.System.Notification.v1;
 using Microsoft.Extensions.Options;
 using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
-internal class UserSchemaService : IAsyncInitializationService
+internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreatorService
 {
     private readonly ICommandClient<CreateIdentityDataCommandRequest> _commandClient;
 
     private readonly OctoBotServicesOptions _octoBotServicesOptions;
     private readonly ISystemContext _systemContext;
+    private readonly IJobCreatorService _jobCreatorService;
 
-    public UserSchemaService(ISystemContext systemContext,
+    public DefaultConfigurationCreatorService(ISystemContext systemContext, IJobCreatorService jobCreatorService,
         ICommandClient<CreateIdentityDataCommandRequest> commandClient,
         IOptions<OctoBotServicesOptions> octoBotServicesOptions)
     {
         _commandClient = commandClient;
 
         _systemContext = systemContext;
+        _jobCreatorService = jobCreatorService;
         _octoBotServicesOptions = octoBotServicesOptions.Value;
     }
 
-    public int Order => 0;
-    
-    public async Task InitializeAsync()
+    public async Task SetupAsync(string tenantId)
     {
+        if (tenantId != _systemContext.TenantId)
+        {
+            // Currently we only support the system tenant.
+            return;
+        }
+        
         await ImportCkModel();
 
         using var session = await _systemContext.GetSystemSessionAsync();
@@ -46,7 +52,7 @@ internal class UserSchemaService : IAsyncInitializationService
                 new DefaultConfigurationVersion { Version = -1 });
         if (botServiceConfiguration == null || botServiceConfiguration.Version < BotServiceConstants.BotServiceSchemaVersionValue)
         {
-            CreateIdentityDataCommandRequest createIdentityDataCommandRequest = new(null);
+            CreateIdentityDataCommandRequest createIdentityDataCommandRequest = new(_systemContext.TenantId);
             CreateApiScopes(createIdentityDataCommandRequest);
             CreateApiResources(createIdentityDataCommandRequest);
             CreateClients(createIdentityDataCommandRequest);
@@ -58,6 +64,10 @@ internal class UserSchemaService : IAsyncInitializationService
         }
 
         await session.CommitTransactionAsync();
+        
+        // Create jobs
+        _jobCreatorService.DeleteJobs(tenantId);
+        _jobCreatorService.CreateJobs(tenantId);
     }
     
     private async Task ImportCkModel()
@@ -67,10 +77,18 @@ internal class UserSchemaService : IAsyncInitializationService
         
         if (!await _systemContext.IsCkModelExistingAsync(session, SystemBotCkIds.ModelId))
         {
-            // We ensure that at least the system tenant contains a valid ck model.Other tenants
-            // need to be enabled manually by a admin.
             OperationResult operationResult = new();
             await _systemContext.ImportCkModelAsync(session, SystemBotCkIds.ModelId, operationResult);
+            if (operationResult.HasErrors || operationResult.HasFatalErrors)
+            {
+                throw InitializationException.ImportCkModelFailed(_systemContext.TenantId, operationResult.GetMessages());
+            }
+        }
+        
+        if (!await _systemContext.IsCkModelExistingAsync(session, SystemNotificationCkIds.ModelId))
+        {
+            OperationResult operationResult = new();
+            await _systemContext.ImportCkModelAsync(session, SystemNotificationCkIds.ModelId, operationResult);
             if (operationResult.HasErrors || operationResult.HasFatalErrors)
             {
                 throw InitializationException.ImportCkModelFailed(_systemContext.TenantId, operationResult.GetMessages());

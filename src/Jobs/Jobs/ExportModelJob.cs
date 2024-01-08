@@ -35,7 +35,7 @@ public class ExportModelJob : IExportModelJob
     /// <param name="cancellationToken">An cancellation token to abort the job</param>
     /// <returns>The key the result file is stored.</returns>
     [DisplayName("Export Runtime Metadata to data source '{0}'")]
-    public async Task<string> ExportRtAsync(string tenantId, string queryId,
+    public async Task<string> ExportRtAsync(string tenantId, OctoObjectId queryId,
         IBotCancellationToken? cancellationToken)
     {
         try
@@ -45,7 +45,7 @@ public class ExportModelJob : IExportModelJob
 
             Logger.Info($"Starting export of file '{tempFile}'");
 
-            await _exportRtModelCommand.ExportAsync(tenantId, new OctoObjectId(queryId), tempFile,
+            await _exportRtModelCommand.ExportAsync(tenantId, queryId, tempFile,
                 cancellationToken?.ShutdownToken);
 
             var key = await CacheFileToRedis(tenantId, tempFile);

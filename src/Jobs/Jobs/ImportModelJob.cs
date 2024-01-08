@@ -2,7 +2,6 @@ using System.ComponentModel;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
-using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using NLog;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -36,21 +35,14 @@ public class ImportModelJob : IImportModelJob
     /// </summary>
     /// <param name="tenantId">The corresponding tenant id</param>
     /// <param name="key">The key definition in redis</param>
-    /// <param name="scopeId">The scope id</param>
     /// <param name="cancellationToken">An cancellation token to abort the job</param>
     /// <returns></returns>
     [DisplayName("Importing ConstructionKit Metadata to data source '{0}'")]
-    public async Task ImportCkAsync(string tenantId, string key, ScopeIdsDto scopeId,
+    public async Task ImportCkAsync(string tenantId, string key,
         IBotCancellationToken? cancellationToken)
     {
         try
         {
-            if (scopeId == ScopeIdsDto.System)
-            {
-                throw new InvalidOperationException(
-                    "Scope SYSTEM cannot be imported, because this scope is handled by system.");
-            }
-
             Logger.Info($"Reading input file from cache for CK import to '{tenantId}'");
             var tempFile = await GetTempFile(tenantId, key);
 
@@ -100,7 +92,7 @@ public class ImportModelJob : IImportModelJob
         }
     }
 
-    private async Task<string> GetTempFile(string? tenantId, string key)
+    private async Task<string> GetTempFile(string tenantId, string key)
     {
         var cacheStream = await _distributedCacheService.GetCacheStreamAsync(tenantId, key);
         if (cacheStream == null)
@@ -129,7 +121,7 @@ public class ImportModelJob : IImportModelJob
         return tempFile;
     }
 
-    private async Task ClearCache(string? tenantId, string key)
+    private async Task ClearCache(string tenantId, string key)
     {
         await _distributedCacheService.DeleteCacheStreamAsync(tenantId, key);
     }

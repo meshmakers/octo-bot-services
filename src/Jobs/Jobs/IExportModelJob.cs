@@ -1,3 +1,5 @@
+using Meshmakers.Octo.ConstructionKit.Contracts;
+
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
@@ -12,6 +14,6 @@ public interface IExportModelJob
     /// <param name="queryId">Id of query, whose data is exported</param>
     /// <param name="cancellationToken">An cancellation token to abort the job</param>
     /// <returns>The key the result file is stored.</returns>
-    Task<string> ExportRtAsync(string tenantId, string queryId,
+    Task<string> ExportRtAsync(string tenantId, OctoObjectId queryId,
         IBotCancellationToken? cancellationToken);
 }

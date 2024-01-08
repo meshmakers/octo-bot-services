@@ -67,7 +67,7 @@ public class JobsController : ControllerBase
     [HttpGet]
     [Route("download")]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
-    public async Task<IActionResult> DownloadExportRtResult(string? tenantId, string id)
+    public async Task<IActionResult> DownloadExportRtResult(string tenantId, string id)
     {
         try
         {
@@ -120,7 +120,7 @@ public class JobsController : ControllerBase
         return jobDto;
     }
 
-    private async Task<Tuple<string, Stream>> GetResultStream(string? tenantId, string key)
+    private async Task<Tuple<string, Stream>> GetResultStream(string tenantId, string key)
     {
         var cacheStream = await _distributedCache.GetCacheStreamAsync(tenantId, key);
         if (cacheStream == null)
