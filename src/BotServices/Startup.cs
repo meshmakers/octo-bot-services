@@ -97,6 +97,8 @@ public class Startup
 
         services.AddRuntimeEngine()
             .AddMongoDbRuntimeRepository();
+
+        services.AddOctoCommands();
         
         services.ConfigureOptions<ConfigureIdentityServerAuthenticationOptions>();
         services.ConfigureOptions<ConfigureOpenIdConnectOptions>();

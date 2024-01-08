@@ -28,14 +28,11 @@ internal class ExportRtModelCommand : IExportRtModelCommand
     public async Task ExportAsync(string tenantId, OctoObjectId queryId, string filePath,
         CancellationToken? cancellationToken)
     {
-        using var systemSession = await _systemContext.GetSystemSessionAsync();
-        systemSession.StartTransaction();
         ITenantContext tenantContext = _systemContext;
         if (tenantId != _systemContext.TenantId)
         {
             tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
         }   
-        await systemSession.CommitTransactionAsync();
         
         var tenantRepository = tenantContext.GetTenantRepository();
 
