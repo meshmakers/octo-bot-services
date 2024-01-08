@@ -7,11 +7,11 @@ namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 /// <summary>
 ///    Updates jobs for a tenant
 /// </summary>
-internal class CreateJobsConsumer : IDistributedConsumer<PosUpdateTenant>,
+internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
     IDistributedConsumer<PosCreateTenant>, 
     IDistributedConsumer<PreDeleteTenant>
 {
-    private readonly ILogger<CreateJobsConsumer> _logger;
+    private readonly ILogger<TenantManagementConsumer> _logger;
     private readonly IJobCreatorService _jobCreatorService;
 
     /// <summary>
@@ -19,7 +19,7 @@ internal class CreateJobsConsumer : IDistributedConsumer<PosUpdateTenant>,
     /// </summary>
     /// <param name="logger"></param>
     /// <param name="jobCreatorService"></param>
-    public CreateJobsConsumer(ILogger<CreateJobsConsumer> logger, IJobCreatorService jobCreatorService)
+    public TenantManagementConsumer(ILogger<TenantManagementConsumer> logger, IJobCreatorService jobCreatorService)
     {
         _logger = logger;
         _jobCreatorService = jobCreatorService;

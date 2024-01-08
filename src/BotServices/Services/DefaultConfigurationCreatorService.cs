@@ -36,13 +36,14 @@ internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreator
 
     public async Task SetupAsync(string tenantId)
     {
+        await ImportCkModelAsync(tenantId);
+
+        // Identity configuration is next
         if (tenantId != _systemContext.TenantId)
         {
             // Currently we only support the system tenant.
             return;
         }
-        
-        await ImportCkModel();
 
         using var session = await _systemContext.GetSystemSessionAsync();
         session.StartTransaction();
@@ -70,34 +71,39 @@ internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreator
         _jobCreatorService.CreateJobs(tenantId);
     }
     
-    private async Task ImportCkModel()
+    private async Task ImportCkModelAsync(string tenantId)
     {
-        using var session = await _systemContext.GetSystemSessionAsync();
+        ITenantContext tenantContext = _systemContext;
+        if (tenantId != _systemContext.TenantId)
+        {
+            tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+        }
+        
+        using var session = await tenantContext.GetSystemSessionAsync();
         session.StartTransaction();
         
-        if (!await _systemContext.IsCkModelExistingAsync(session, SystemBotCkIds.ModelId))
+        if (!await tenantContext.IsCkModelExistingAsync(session, SystemBotCkIds.ModelId))
         {
             OperationResult operationResult = new();
-            await _systemContext.ImportCkModelAsync(session, SystemBotCkIds.ModelId, operationResult);
+            await tenantContext.ImportCkModelAsync(session, SystemBotCkIds.ModelId, operationResult);
             if (operationResult.HasErrors || operationResult.HasFatalErrors)
             {
-                throw InitializationException.ImportCkModelFailed(_systemContext.TenantId, operationResult.GetMessages());
+                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId, operationResult.GetMessages());
             }
         }
         
-        if (!await _systemContext.IsCkModelExistingAsync(session, SystemNotificationCkIds.ModelId))
+        if (!await tenantContext.IsCkModelExistingAsync(session, SystemNotificationCkIds.ModelId))
         {
             OperationResult operationResult = new();
-            await _systemContext.ImportCkModelAsync(session, SystemNotificationCkIds.ModelId, operationResult);
+            await tenantContext.ImportCkModelAsync(session, SystemNotificationCkIds.ModelId, operationResult);
             if (operationResult.HasErrors || operationResult.HasFatalErrors)
             {
-                throw InitializationException.ImportCkModelFailed(_systemContext.TenantId, operationResult.GetMessages());
+                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId, operationResult.GetMessages());
             }
         }
 
         await session.CommitTransactionAsync();
     }
-
 
     private void CreateApiScopes(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
