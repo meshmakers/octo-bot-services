@@ -12,10 +12,9 @@ public interface IImportModelJob
     /// </summary>
     /// <param name="tenantId">The corresponding tenant id</param>
     /// <param name="key">The key definition in redis</param>
-    /// <param name="scopeId">The scope id</param>
     /// <param name="cancellationToken">An cancellation token to abort the job</param>
     /// <returns></returns>
-    Task ImportCkAsync(string tenantId, string key, ScopeIdsDto scopeId,
+    Task ImportCkAsync(string tenantId, string key,
         IBotCancellationToken? cancellationToken);
 
     /// <summary>

@@ -31,7 +31,11 @@ public class ServiceHookJob : IServiceHookJob
         try
         {
             var startDateTime = DateTime.Now;
-            var tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+            ITenantContext tenantContext = _systemContext;
+            if (tenantId != _systemContext.TenantId)
+            {
+                tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+            }
             var tenantRepository = tenantContext.GetTenantRepository();
 
             using var session = await tenantRepository.GetSessionAsync();

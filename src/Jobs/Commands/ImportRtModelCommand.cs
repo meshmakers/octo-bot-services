@@ -36,7 +36,15 @@ internal class ImportRtModelCommand : IImportRtModelCommand
     {
         _logger.LogInformation("Importing RT entities using text started");
 
-        var tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+        using var systemSession = await _systemContext.GetSystemSessionAsync();
+        systemSession.StartTransaction();
+        ITenantContext tenantContext = _systemContext;
+        if (tenantId != _systemContext.TenantId)
+        {
+            tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+        } 
+        await systemSession.CommitTransactionAsync();
+
         var tenantRepository = tenantContext.GetTenantRepository();
 
         var session = await tenantRepository.GetSessionAsync();
@@ -66,7 +74,11 @@ internal class ImportRtModelCommand : IImportRtModelCommand
         try
         {
             session.StartTransaction();
-            var tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+            ITenantContext tenantContext = _systemContext;
+            if (tenantId != _systemContext.TenantId)
+            {
+                tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
+            }   
             var tenantRepository = tenantContext.GetTenantRepository();
 
             await using (var stream = File.OpenRead(filePath))
