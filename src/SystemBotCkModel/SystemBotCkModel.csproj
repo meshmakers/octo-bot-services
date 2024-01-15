@@ -7,23 +7,16 @@
     </PropertyGroup>
 
     <ItemGroup Condition="'$(Configuration)'!='DebugL'">
-        <PackageReference Include="Meshmakers.Octo.ConstructionKit.Contracts" Version="3.0.20" />
-        <PackageReference Include="Meshmakers.Octo.ConstructionKit.SourceGeneration" OutputItemType="Analyzer" ReferenceOutputAssembly="false" Version="3.0.20" />
-        <PackageReference Include="Meshmakers.Octo.Runtime.Contracts" Version="3.0.20" />
+        <PackageReference Include="Meshmakers.Octo.ConstructionKit.Contracts" Version="3.0.26" />
+        <PackageReference Include="Meshmakers.Octo.ConstructionKit.SourceGeneration" OutputItemType="Analyzer" ReferenceOutputAssembly="false" Version="3.0.26" />
+        <PackageReference Include="Meshmakers.Octo.Runtime.Contracts" Version="3.0.26" />
+        <PackageReference Include="Meshmakers.Octo.ConstructionKit.MsBuildTasks" Version="3.0.26" PrivateAssets="all" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(Configuration)'=='DebugL'">
         <PackageReference Include="Meshmakers.Octo.ConstructionKit.Contracts" Version="999.0.0" />
         <PackageReference Include="Meshmakers.Octo.ConstructionKit.SourceGeneration" OutputItemType="Analyzer" ReferenceOutputAssembly="false" Version="999.0.0" />
         <PackageReference Include="Meshmakers.Octo.Runtime.Contracts" Version="999.0.0" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <None Remove="ConstructionKit\ck-*.yaml" />
-        <EmbeddedResource Include="ConstructionKit\ck-*.yaml">
-            <GenerateCkModelServiceClass>true</GenerateCkModelServiceClass>
-        </EmbeddedResource>
-        <None Remove="ConstructionKit\ck-*.cache.json" />
-        <AdditionalFiles Include="ConstructionKit\ck-*.cache.json" />
+        <PackageReference Include="Meshmakers.Octo.ConstructionKit.MsBuildTasks" Version="999.0.0" PrivateAssets="all" />
     </ItemGroup>
 </Project>
