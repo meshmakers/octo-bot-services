@@ -36,6 +36,13 @@ internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreator
 
     public async Task SetupAsync(string tenantId)
     {
+        // Do nothing if the system tenant is not existing.
+        // Identity Service is creating the system tenant currently.
+        if (!await _systemContext.IsSystemTenantExistingAsync())
+        {
+            return;
+        }
+        
         await ImportCkModelAsync(tenantId);
 
         // Identity configuration is next
@@ -44,7 +51,7 @@ internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreator
             // Currently we only support the system tenant.
             return;
         }
-
+        
         using var session = await _systemContext.GetSystemSessionAsync();
         session.StartTransaction();
 
