@@ -71,7 +71,7 @@ public class Startup
         services.AddSingleton<IEMailSender, EMailSender>();
         services.AddCors();
 
-        services.AddTransient<IDefaultConfigurationCreatorService, DefaultConfigurationCreatorService>();
+        services.AddScoped<IDefaultConfigurationCreatorService, DefaultConfigurationCreatorService>();
 
         services.AddTransient<IImportModelJob, ImportModelJob>();
         services.AddTransient<IExportModelJob, ExportModelJob>();
