@@ -15,18 +15,21 @@ using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
-internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreatorService
+internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorServiceBase
 {
+    private readonly ILogger<DefaultConfigurationCreatorService> _logger;
     private readonly ICommandClient<CreateIdentityDataCommandRequest> _commandClient;
 
     private readonly OctoBotServicesOptions _octoBotServicesOptions;
     private readonly ISystemContext _systemContext;
     private readonly IJobCreatorService _jobCreatorService;
 
-    public DefaultConfigurationCreatorService(ISystemContext systemContext, IJobCreatorService jobCreatorService,
+    public DefaultConfigurationCreatorService(ILoggerFactory loggerFactory, ISystemContext systemContext, IJobCreatorService jobCreatorService,
         ICommandClient<CreateIdentityDataCommandRequest> commandClient,
         IOptions<OctoBotServicesOptions> octoBotServicesOptions)
+        : base(loggerFactory.CreateLogger<DefaultConfigurationCreatorServiceBase>())
     {
+        _logger = loggerFactory.CreateLogger<DefaultConfigurationCreatorService>();
         _commandClient = commandClient;
 
         _systemContext = systemContext;
@@ -34,14 +37,16 @@ internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreator
         _octoBotServicesOptions = octoBotServicesOptions.Value;
     }
 
-    public async Task SetupAsync(string tenantId)
+    protected override async Task SetupTenantAsync(string tenantId)
     {
-        // Do nothing if the system tenant is not existing.
+               // Do nothing if the system tenant is not existing.
         // Identity Service is creating the system tenant currently.
         if (!await _systemContext.IsSystemTenantExistingAsync())
         {
             return;
         }
+        
+        _logger.LogInformation("Setting up default configuration for tenant '{TenantId}'", tenantId);
         
         await ImportCkModelAsync(tenantId);
 
@@ -60,6 +65,8 @@ internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreator
                 new DefaultConfigurationVersion { Version = -1 });
         if (botServiceConfiguration == null || botServiceConfiguration.Version < BotServiceConstants.BotServiceSchemaVersionValue)
         {
+            _logger.LogInformation("Creating identity data for tenant '{TenantId}'", tenantId);
+
             CreateIdentityDataCommandRequest createIdentityDataCommandRequest = new(_systemContext.TenantId);
             CreateApiScopes(createIdentityDataCommandRequest);
             CreateApiResources(createIdentityDataCommandRequest);
@@ -76,8 +83,10 @@ internal class DefaultConfigurationCreatorService : IDefaultConfigurationCreator
         // Create jobs
         _jobCreatorService.DeleteJobs(tenantId);
         _jobCreatorService.CreateJobs(tenantId);
+        
+        _logger.LogInformation("Setup default configuration for tenant '{TenantId}' completed", tenantId);
     }
-    
+
     private async Task ImportCkModelAsync(string tenantId)
     {
         ITenantContext tenantContext = _systemContext;
