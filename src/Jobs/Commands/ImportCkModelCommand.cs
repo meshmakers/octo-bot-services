@@ -42,10 +42,7 @@ internal class ImportCkModelCommand : IImportCkModelCommand
                 tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
             }   
 
-            using var session = await _systemContext.GetSystemSessionAsync();
-            session.StartTransaction();
-            await tenantContext.ImportCkModelAsync(session, ckCompiledModelRoot);
-            await session.CommitTransactionAsync();
+            await tenantContext.ImportCkModelAsync(ckCompiledModelRoot);
 
             _logger.LogInformation("Import of CK model completed");
         }
@@ -81,10 +78,7 @@ internal class ImportCkModelCommand : IImportCkModelCommand
                 tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
             }  
             
-            using var session = await _systemContext.GetSystemSessionAsync();
-            session.StartTransaction();
-            await tenantContext.ImportCkModelAsync(session, ckCompiledModelRoot);
-            await session.CommitTransactionAsync();
+            await tenantContext.ImportCkModelAsync(ckCompiledModelRoot);
 
             _logger.LogInformation("Import of CK model completed");
         }
