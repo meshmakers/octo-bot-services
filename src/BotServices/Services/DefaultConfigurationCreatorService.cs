@@ -39,7 +39,7 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
 
     protected override async Task SetupTenantAsync(string tenantId)
     {
-               // Do nothing if the system tenant is not existing.
+        // Do nothing if the system tenant is not existing.
         // Identity Service is creating the system tenant currently.
         if (!await _systemContext.IsSystemTenantExistingAsync())
         {
@@ -89,36 +89,27 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
 
     private async Task ImportCkModelAsync(string tenantId)
     {
-        ITenantContext tenantContext = _systemContext;
-        if (tenantId != _systemContext.TenantId)
-        {
-            tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
-        }
+        var tenantContext = await _systemContext.FindTenantContextAsync(tenantId);
         
-        using var session = await tenantContext.GetSystemSessionAsync();
-        session.StartTransaction();
-        
-        if (!await tenantContext.IsCkModelExistingAsync(session, SystemBotCkIds.ModelId))
+        if (!await tenantContext.IsCkModelExistingAsync(SystemBotCkIds.ModelId))
         {
             OperationResult operationResult = new();
-            await tenantContext.ImportCkModelAsync(session, SystemBotCkIds.ModelId, operationResult);
-            if (operationResult.HasErrors || operationResult.HasFatalErrors)
-            {
-                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId, operationResult.GetMessages());
-            }
-        }
-        
-        if (!await tenantContext.IsCkModelExistingAsync(session, SystemNotificationCkIds.ModelId))
-        {
-            OperationResult operationResult = new();
-            await tenantContext.ImportCkModelAsync(session, SystemNotificationCkIds.ModelId, operationResult);
+            await tenantContext.ImportCkModelAsync(SystemBotCkIds.ModelId, operationResult);
             if (operationResult.HasErrors || operationResult.HasFatalErrors)
             {
                 throw InitializationException.ImportCkModelFailed(tenantContext.TenantId, operationResult.GetMessages());
             }
         }
 
-        await session.CommitTransactionAsync();
+        if (!await tenantContext.IsCkModelExistingAsync(SystemNotificationCkIds.ModelId))
+        {
+            OperationResult operationResult = new();
+            await tenantContext.ImportCkModelAsync(SystemNotificationCkIds.ModelId, operationResult);
+            if (operationResult.HasErrors || operationResult.HasFatalErrors)
+            {
+                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId, operationResult.GetMessages());
+            }
+        }
     }
 
     private void CreateApiScopes(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
