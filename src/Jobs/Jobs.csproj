@@ -13,22 +13,22 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Hangfire.Core" Version="1.8.7"/>
-        <PackageReference Include="RestSharp" Version="110.2.0"/>
+        <PackageReference Include="Hangfire.Core" Version="1.8.9" />
+        <PackageReference Include="RestSharp" Version="110.2.0" />
     </ItemGroup>
 
     <ItemGroup>
         <None Include="..\..\assets\meshmakers64.png">
             <Pack>True</Pack>
-            <PackagePath/>
+            <PackagePath />
             <Link>meshmakers64.png</Link>
         </None>
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="$(OctoConstructionKitPath)src\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj"/>
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj"/>
-        <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj"/>
+        <ProjectReference Include="$(OctoConstructionKitPath)src\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj" />
+        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj" />
+        <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj" />
     </ItemGroup>
 
 
