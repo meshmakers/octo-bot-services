@@ -22,6 +22,9 @@ types:
 - isCollectionRoot: true
   typeId: AttributeAggregateConfiguration
   derivedFromCkTypeId: System/Entity
+  associations:
+  - id: System.Bot/Configures
+    targetCkTypeId: System/Entity
   attributes:
   - id: System/Enabled
     name: IsAutoCompleteEnabled
@@ -29,9 +32,6 @@ types:
     name: AutoCompleteFilter
   - id: System.Bot/AutoCompleteLimit
     name: AutoCompleteLimit
-  associations:
-  - id: System.Bot/Configures
-    targetCkTypeId: System/Entity
 associationRoles:
 - id: Configures
   inboundName: Configures
