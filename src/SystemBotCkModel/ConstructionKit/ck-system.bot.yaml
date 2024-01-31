@@ -2,35 +2,35 @@ $schema: https://schemas.meshmakers.cloud/construction-kit-compiled.schema.json
 types:
 - isCollectionRoot: true
   typeId: ServiceHook
-  derivedFromCkTypeId: System/Entity
+  derivedFromCkTypeId: System-1.0.0/Entity-1.0.0
   attributes:
-  - id: System/Enabled
+  - id: System-1.0.0/Enabled-1.0.0
     name: Enabled
-  - id: System/Query.CkTypeId
+  - id: System-1.0.0/Query.CkTypeId-1.0.0
     name: QueryCkTypeId
-  - id: System/Query.FieldFilter
+  - id: System-1.0.0/Query.FieldFilter-1.0.0
     name: FieldFilter
-  - id: System/Name
+  - id: System-1.0.0/Name-1.0.0
     name: Name
-  - id: System.Bot/ServiceHook.Uri
+  - id: System.Bot-1.0.0/ServiceHook.Uri-1.0.0
     name: ServiceHookBaseUri
-  - id: System.Bot/ServiceHook.Action
+  - id: System.Bot-1.0.0/ServiceHook.Action-1.0.0
     name: ServiceHookAction
-  - id: System.Bot/ServiceHook.ApiKey
+  - id: System.Bot-1.0.0/ServiceHook.ApiKey-1.0.0
     name: ServiceHookApiKey
     isOptional: true
 - isCollectionRoot: true
   typeId: AttributeAggregateConfiguration
-  derivedFromCkTypeId: System/Entity
+  derivedFromCkTypeId: System-1.0.0/Entity-1.0.0
   associations:
-  - id: System.Bot/Configures
-    targetCkTypeId: System/Entity
+  - id: System.Bot-1.0.0/Configures-1.0.0
+    targetCkTypeId: System-1.0.0/Entity-1.0.0
   attributes:
-  - id: System/Enabled
+  - id: System-1.0.0/Enabled-1.0.0
     name: IsAutoCompleteEnabled
-  - id: System.Bot/AutoCompleteFilter
+  - id: System.Bot-1.0.0/AutoCompleteFilter-1.0.0
     name: AutoCompleteFilter
-  - id: System.Bot/AutoCompleteLimit
+  - id: System.Bot-1.0.0/AutoCompleteLimit-1.0.0
     name: AutoCompleteLimit
 associationRoles:
 - id: Configures
@@ -39,7 +39,7 @@ associationRoles:
   inboundMultiplicity: One
   outboundMultiplicity: N
   attributes:
-  - id: System.Bot/SelectedAttributeId
+  - id: System.Bot-1.0.0/SelectedAttributeId-1.0.0
     name: SelectedAttributeId
 attributes:
 - id: AutoCompleteFilter

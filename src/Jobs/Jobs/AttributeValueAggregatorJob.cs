@@ -104,7 +104,7 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
                 cancellationToken?.ThrowIfCancellationRequested();
 
                 var ckTypeGraph = _ckCacheService.GetCkType(tenantId, rtAssociation.TargetCkTypeId);
-                if (attributeId == null || !ckTypeGraph.AllAttributes.TryGetValue(attributeId.Value, out var attributeCacheItem))
+                if (attributeId == null || !ckTypeGraph.AllAttributes.TryGetValue(attributeId, out var attributeCacheItem))
                 {
                     continue;
                 }
