@@ -97,7 +97,7 @@ internal class ExportRtModelCommand : IExportRtModelCommand
                     RtChangedDateTime = entity.RtChangedDateTime,
                     RtCreationDateTime = entity.RtCreationDateTime,
                     RtWellKnownName = entity.RtWellKnownName,
-                    CkTypeId = entity.CkTypeId
+                    CkTypeId = entity.CkTypeId ?? throw OperationFailedException.CkTypeIdUndefined()
                 };
 
                 exEntity.Attributes.AddRange(entity.Attributes.Select(pair =>
