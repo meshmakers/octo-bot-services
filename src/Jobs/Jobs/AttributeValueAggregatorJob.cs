@@ -103,14 +103,14 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
 
                 cancellationToken?.ThrowIfCancellationRequested();
 
-                var ckTypeGraph = _ckCacheService.GetCkType(tenantId, rtAssociation.TargetCkTypeId);
+                var ckTypeGraph = _ckCacheService.GetCkType(tenantId, rtAssociation.TargetCkTypeId ?? throw OperationFailedException.CkTypeIdUndefined());
                 if (attributeId == null || !ckTypeGraph.AllAttributes.TryGetValue(attributeId, out var attributeCacheItem))
                 {
                     continue;
                 }
 
                 var autoCompleteTexts = await tenantRepository.ExtractAutoCompleteValuesAsync(session,
-                    rtAssociation.TargetCkTypeId,
+                    rtAssociation.TargetCkTypeId ?? throw OperationFailedException.CkTypeIdUndefined(),
                     attributeCacheItem.AttributeName, configurationRtEntity.AutoCompleteFilter,
                     configurationRtEntity.AutoCompleteLimit);
 
