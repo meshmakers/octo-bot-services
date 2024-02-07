@@ -48,7 +48,7 @@ public class ImportModelJob : IImportModelJob
 
             Logger.Info($"Starting import of file '{tempFile}'");
 
-            await _importCkModelCommand.ImportAsync(tenantId, tempFile,
+            await _importCkModelCommand.ImportAsync(tenantId, tempFile.Item1,
                 cancellationToken?.ShutdownToken);
 
             await ClearCache(tenantId, key);
@@ -79,7 +79,7 @@ public class ImportModelJob : IImportModelJob
 
             Logger.Info($"Starting import of file '{tempFile}'");
 
-            await _importRtModelCommand.Import(tenantId, tempFile, cancellationToken?.ShutdownToken);
+            await _importRtModelCommand.Import(tenantId, tempFile.Item1, tempFile.Item2, cancellationToken?.ShutdownToken);
 
             await ClearCache(tenantId, key);
 
@@ -92,7 +92,7 @@ public class ImportModelJob : IImportModelJob
         }
     }
 
-    private async Task<string> GetTempFile(string tenantId, string key)
+    private async Task<Tuple<string, string>> GetTempFile(string tenantId, string key)
     {
         var cacheStream = await _distributedCacheService.GetCacheStreamAsync(tenantId, key);
         if (cacheStream == null)
@@ -118,7 +118,7 @@ public class ImportModelJob : IImportModelJob
             throw new JobFailedException("File type is not supported.");
         }
 
-        return tempFile;
+        return new Tuple<string, string>(tempFile, cacheStream.ContentType);
     }
 
     private async Task ClearCache(string tenantId, string key)
