@@ -55,4 +55,9 @@ internal class CommandExecutionFailedException : Exception
     {
         return new CommandExecutionFailedException($"Attribute '{modelAttributeId}' does not exist in type '{ckTypeId}'.");
     }
+
+    public static Exception RecordNotFound(CkId<CkRecordId> ckRecordId, CkId<CkTypeId> ckTypeId)
+    {
+        return new CommandExecutionFailedException($"Record '{ckRecordId}' does not exist at type '{ckTypeId}'.");
+    }
 }

@@ -19,7 +19,8 @@ public interface IImportRtModelCommand
     /// </summary>
     /// <param name="tenantId"></param>
     /// <param name="filePath"></param>
+    /// <param name="contentType"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    Task Import(string tenantId, string filePath, CancellationToken? cancellationToken = null);
+    Task Import(string tenantId, string filePath, string contentType, CancellationToken? cancellationToken = null);
 }
