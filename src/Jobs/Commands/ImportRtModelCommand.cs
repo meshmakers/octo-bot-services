@@ -116,7 +116,7 @@ internal class ImportRtModelCommand : IImportRtModelCommand
     {
         await Parallel.ForEachAsync(modelRtEntities, async (modelRtEntity, token) =>
         {
-            var ckTypeGraph = _cacheService.GetCkType(tenantRepository.TenantId, modelRtEntity.CkTypeId);
+            var ckTypeGraph = await tenantRepository.GetCkTypeGraphAsync(modelRtEntity.CkTypeId);
 
             var rtEntity = await tenantRepository.CreateTransientRtEntityAsync(modelRtEntity.CkTypeId).ConfigureAwait(false);
             rtEntity.RtId = modelRtEntity.RtId;
