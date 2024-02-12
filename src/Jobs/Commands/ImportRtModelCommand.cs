@@ -44,8 +44,12 @@ internal class ImportRtModelCommand : IImportRtModelCommand
     public async Task ImportText(string tenantId, string jsonText, CancellationToken? cancellationToken = null)
     {
         _logger.LogInformation("Importing RT entities using text started");
-
+        
         var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
+        if (!_cacheService.IsTenantLoaded(tenantId))
+        {
+            await tenantRepository.LoadCacheForTenantAsync(_cacheService);
+        }
 
         var session = await tenantRepository.GetSessionAsync();
         try
@@ -54,6 +58,7 @@ internal class ImportRtModelCommand : IImportRtModelCommand
 
             OperationResult operationResult = new();
             var rtModelRoot = await _rtYamlSerializer.DeserializeAsync(jsonText, "-", operationResult);
+            ValidateCkModels(tenantId, rtModelRoot.Dependencies);
             await ImportEntityAsync(session, rtModelRoot.Entities, tenantRepository);
 
             await session.CommitTransactionAsync();
@@ -71,12 +76,16 @@ internal class ImportRtModelCommand : IImportRtModelCommand
     public async Task Import(string tenantId, string filePath, string contentType, CancellationToken? cancellationToken = null)
     {
         _logger.LogInformation("Importing RT entities using file started");
+        
+        var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
+        if (!_cacheService.IsTenantLoaded(tenantId))
+        {
+            await tenantRepository.LoadCacheForTenantAsync(_cacheService);
+        }
 
-        var session = await _systemContext.GetSystemSessionAsync();
+        var session = await tenantRepository.GetSessionAsync();
         try
         {
-            var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
-
             session.StartTransaction();
             await using (var stream = File.OpenRead(filePath))
             {
@@ -84,6 +93,7 @@ internal class ImportRtModelCommand : IImportRtModelCommand
                 {
                     OperationResult operationResult = new();
                     var rtModelRootDto = await _rtYamlSerializer.DeserializeAsync(stream, filePath, operationResult);
+                    ValidateCkModels(tenantId, rtModelRootDto.Dependencies);
                     await ImportEntityAsync(session, rtModelRootDto.Entities, tenantRepository);
                 }
                 else
@@ -95,6 +105,7 @@ internal class ImportRtModelCommand : IImportRtModelCommand
 
                         args.IsHandled = true;
                     };
+                    ValidateCkModels(tenantId, rtDeserializeStream.Dependencies.ToList());
                     await rtDeserializeStream.ReadAsync();
                 }
             }
@@ -110,13 +121,22 @@ internal class ImportRtModelCommand : IImportRtModelCommand
             throw;
         }
     }
+    
+    private void ValidateCkModels(string tenantId, ICollection<CkModelId> ckModelIds)
+    {
+        var missingCkModelIds = _cacheService.EnsureModelIds(tenantId, ckModelIds);
+        if (missingCkModelIds.Any())
+        {
+            throw CommandExecutionFailedException.CkModelsMissing(tenantId, missingCkModelIds); 
+        }
+    }
 
     private async Task ImportEntityAsync(IOctoSession session, IEnumerable<RtEntityDto> modelRtEntities,
         ITenantRepository tenantRepository)
     {
         await Parallel.ForEachAsync(modelRtEntities, async (modelRtEntity, token) =>
         {
-            var ckTypeGraph = await tenantRepository.GetCkTypeGraphAsync(modelRtEntity.CkTypeId);
+            var ckTypeGraph = _cacheService.GetCkType(tenantRepository.TenantId, modelRtEntity.CkTypeId);
 
             var rtEntity = await tenantRepository.CreateTransientRtEntityAsync(modelRtEntity.CkTypeId).ConfigureAwait(false);
             rtEntity.RtId = modelRtEntity.RtId;

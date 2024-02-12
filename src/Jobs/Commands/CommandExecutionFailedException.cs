@@ -60,4 +60,9 @@ internal class CommandExecutionFailedException : Exception
     {
         return new CommandExecutionFailedException($"Record '{ckRecordId}' does not exist at type '{ckTypeId}'.");
     }
+
+    public static Exception CkModelsMissing(string tenantId, ICollection<CkModelId> ckModelIds)
+    {
+        return new CommandExecutionFailedException($"Models '{string.Join(", ", ckModelIds)}' are missing in tenant '{tenantId}'.");
+    }
 }
