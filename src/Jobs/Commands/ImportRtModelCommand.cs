@@ -9,6 +9,7 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repository;
 using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
@@ -156,24 +157,29 @@ internal class ImportRtModelCommand : IImportRtModelCommand
 
             token.ThrowIfCancellationRequested();
 
-            AssignAttributes(tenantRepository, modelRtEntity, ckTypeGraph, rtEntity, ckTypeGraph.CkTypeId);
+            AssignAttributes(tenantRepository, modelRtEntity, ckTypeGraph, rtEntity, "type", ckTypeGraph.CkTypeId);
 
             _importEntityQueue.Enqueue(rtEntity);
 
             if (modelRtEntity.Associations != null && modelRtEntity.Associations.Count > 0)
             {
-                var originId = rtEntity.RtId;
 
                 foreach (var association in modelRtEntity.Associations)
                 {
+                    var ckAssociationRoleGraph = _cacheService.GetCkAssociationRole(tenantRepository.TenantId, association.RoleId);
+
                     var rtAssociation = new RtAssociation
                     {
                         AssociationRoleId = association.RoleId,
-                        OriginRtId = originId,
+                        OriginRtId = rtEntity.RtId,
                         OriginCkTypeId = rtEntity.CkTypeId,
                         TargetRtId = association.TargetRtId,
-                        TargetCkTypeId = association.TargetCkTypeId
+                        TargetCkTypeId = association.TargetCkTypeId,
+                        TargetCkAttributeIds = association.TargetCkAttributeIds
                     };
+                    
+                    AssignAttributes(tenantRepository, association, ckAssociationRoleGraph, rtAssociation, "association", ckAssociationRoleGraph.CkRoleId);
+
                     _importAssociationQueue.Enqueue(rtAssociation);
                     Interlocked.Increment(ref _associationsCount);
                 }
@@ -185,8 +191,9 @@ internal class ImportRtModelCommand : IImportRtModelCommand
         await ImportToDatabase(session, tenantRepository);
     }
 
-    private void AssignAttributes(ITenantRepository tenantRepository, RtTypeWithAttributesDto rtTypeWithAttributesDto,
-        CkTypeWithAttributesGraph ckTypeWithAttributesGraph, RtTypeWithAttributes rtTypeWithAttributes, CkId<CkTypeId> ckTypeId)
+    private void AssignAttributes<TKey>(ITenantRepository tenantRepository, RtTypeWithAttributesDto rtTypeWithAttributesDto,
+        CkTypeWithAttributesGraph ckTypeWithAttributesGraph, RtTypeWithAttributes rtTypeWithAttributes, string elementType, CkId<TKey> ckId)
+        where TKey : IComparable<TKey>, ICkKey
     {
         foreach (var modelAttribute in rtTypeWithAttributesDto.Attributes)
         {
@@ -195,9 +202,8 @@ internal class ImportRtModelCommand : IImportRtModelCommand
             if (typeAttributeGraph == null)
             {
                 _logger.LogError("'{ModelAttributeId}' does not exit on type '{CkTypeId}'", modelAttribute.Id,
-                    ckTypeId);
-                throw CommandExecutionFailedException.AttributeNotFound(modelAttribute.Id,
-                    ckTypeId);
+                    ckId);
+                throw CommandExecutionFailedException.AttributeNotFound(modelAttribute.Id, elementType, ckId);
             }
 
             if (typeAttributeGraph.ValueType == AttributeValueTypesDto.Record)
@@ -209,16 +215,15 @@ internal class ImportRtModelCommand : IImportRtModelCommand
                     {
                         _logger.LogError("'{ModelAttributeId}' defines unknown record '{CkRecordId}' at type '{CkTypeId}'",
                             modelAttribute.Id,
-                            rtRecordDto.CkRecordId, ckTypeId);
-                        throw CommandExecutionFailedException.RecordNotFound(
-                            rtRecordDto.CkRecordId, ckTypeId);
+                            rtRecordDto.CkRecordId, ckId);
+                        throw CommandExecutionFailedException.RecordNotFound(rtRecordDto.CkRecordId, elementType, ckId);
                     }
 
                     var rtRecord = new RtRecord
                     {
                         CkRecordId = ckRecordGraph.CkRecordId
                     };
-                    AssignAttributes(tenantRepository, rtRecordDto, ckRecordGraph, rtRecord, ckTypeId);
+                    AssignAttributes(tenantRepository, rtRecordDto, ckRecordGraph, rtRecord, elementType, ckId);
 
                     rtTypeWithAttributes.SetAttributeValue(typeAttributeGraph.AttributeName, typeAttributeGraph.ValueType, rtRecord);
                 }
