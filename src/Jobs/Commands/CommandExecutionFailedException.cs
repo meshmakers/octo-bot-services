@@ -51,14 +51,16 @@ internal class CommandExecutionFailedException : Exception
         return new CommandExecutionFailedException($"Query '{queryId}‘ has no QueryCkTypeId attribute set.");
     }
 
-    public static Exception AttributeNotFound(CkId<CkAttributeId> modelAttributeId, CkId<CkTypeId> ckTypeId)
+    public static Exception AttributeNotFound<TKey>(CkId<CkAttributeId> modelAttributeId, string elementType, CkId<TKey> ckId)
+        where TKey : IComparable<TKey>, ICkKey
     {
-        return new CommandExecutionFailedException($"Attribute '{modelAttributeId}' does not exist in type '{ckTypeId}'.");
+        return new CommandExecutionFailedException($"Attribute '{modelAttributeId}' does not exist at {elementType} '{ckId}'.");
     }
 
-    public static Exception RecordNotFound(CkId<CkRecordId> ckRecordId, CkId<CkTypeId> ckTypeId)
+    public static Exception RecordNotFound<TKey>(CkId<CkRecordId> ckRecordId, string elementType,  CkId<TKey> ckId)
+        where TKey : IComparable<TKey>, ICkKey
     {
-        return new CommandExecutionFailedException($"Record '{ckRecordId}' does not exist at type '{ckTypeId}'.");
+        return new CommandExecutionFailedException($"Record '{ckRecordId}' does not exist at {elementType} '{ckId}'.");
     }
 
     public static Exception CkModelsMissing(string tenantId, ICollection<CkModelId> ckModelIds)
