@@ -172,7 +172,7 @@ internal class ImportRtModelCommand : IImportRtModelCommand
                     {
                         AssociationRoleId = association.RoleId,
                         OriginRtId = rtEntity.RtId,
-                        OriginCkTypeId = rtEntity.CkTypeId,
+                        OriginCkTypeId = rtEntity.CkTypeId!,
                         TargetRtId = association.TargetRtId,
                         TargetCkTypeId = association.TargetCkTypeId,
                         TargetCkAttributeIds = association.TargetCkAttributeIds
