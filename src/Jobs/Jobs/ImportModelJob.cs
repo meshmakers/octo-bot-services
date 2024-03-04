@@ -94,7 +94,7 @@ public class ImportModelJob : IImportModelJob
 
     private async Task<Tuple<string, string>> GetTempFile(string tenantId, string key)
     {
-        var cacheStream = await _distributedCacheService.GetCacheStreamAsync(tenantId, key);
+        var cacheStream = await _distributedCacheService.GetCacheStreamByIdAsync(tenantId, key);
         if (cacheStream == null)
         {
             throw new JobFailedException("No value in distribute cache found.");

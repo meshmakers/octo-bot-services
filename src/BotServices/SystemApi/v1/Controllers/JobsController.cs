@@ -122,7 +122,7 @@ public class JobsController : ControllerBase
 
     private async Task<Tuple<string, Stream>> GetResultStream(string tenantId, string key)
     {
-        var cacheStream = await _distributedCache.GetCacheStreamAsync(tenantId, key);
+        var cacheStream = await _distributedCache.GetCacheStreamByIdAsync(tenantId, key);
         if (cacheStream == null)
         {
             throw new JobFailedException("No value in distribute cache found.");

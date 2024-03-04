@@ -68,7 +68,7 @@ public class ExportModelJob : IExportModelJob
             await using (var memoryStream = new MemoryStream())
             {
                 await streamReader.BaseStream.PackFileToZipAsync("RtEntities.json", memoryStream);
-                return await _distributedCache.CacheStreamAsync(tenantId, memoryStream, "application/zip", "RtEntities.zip",
+                return await _distributedCache.CreateStreamAsync(tenantId, memoryStream, "application/zip", "RtEntities.zip",
                     TimeSpan.FromHours(1));
             }
         }

@@ -1,0 +1,17 @@
+"$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
+types:
+  - typeId: ExecutePipeline
+    derivedFromCkTypeId: System/Entity
+    isFinal: false
+    isAbstract: false
+    attributes:
+      - id: System/Enabled
+        name: Enabled
+      - id: System/Query.CkTypeId
+        name: QueryCkTypeId
+      - id: System/Query.FieldFilter
+        name: FieldFilter
+      - id: System/Name
+        name: Name
+# Welche data pipeline
+# params?
