@@ -14,6 +14,18 @@ types:
   - id: System.Bot-1.0.0/AutoCompleteLimit-1.0.0
     name: AutoCompleteLimit
 - isCollectionRoot: true
+  typeId: ExecutePipeline
+  derivedFromCkTypeId: System-1.0.0/Entity-1.0.0
+  attributes:
+  - id: System-1.0.0/Enabled-1.0.0
+    name: Enabled
+  - id: System-1.0.0/Query.CkTypeId-1.0.0
+    name: QueryCkTypeId
+  - id: System-1.0.0/Query.FieldFilter-1.0.0
+    name: FieldFilter
+  - id: System-1.0.0/Name-1.0.0
+    name: Name
+- isCollectionRoot: true
   typeId: ServiceHook
   derivedFromCkTypeId: System-1.0.0/Entity-1.0.0
   attributes:
