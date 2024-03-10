@@ -6,7 +6,7 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
 using NLog;
-using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
+using SystemBotCkModel.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 

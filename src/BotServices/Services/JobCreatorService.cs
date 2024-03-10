@@ -5,8 +5,8 @@ using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Services.Infrastructure;
-using Meshmakers.Octo.Services.Notifications.ConstructionKit.Generated.System.Notification.v1;
-using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
+using Meshmakers.Octo.Services.Notifications.Generated.System.Notification.v1;
+using SystemBotCkModel.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 

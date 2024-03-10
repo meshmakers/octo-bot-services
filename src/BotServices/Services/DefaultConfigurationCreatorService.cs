@@ -4,15 +4,15 @@ using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts;
-using Meshmakers.Octo.ConstructionKit.Models.System.ConstructionKit.Generated.System.v1;
+using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v1;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands.Payloads;
 using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Services;
-using Meshmakers.Octo.Services.Notifications.ConstructionKit.Generated.System.Notification.v1;
+using Meshmakers.Octo.Services.Notifications.Generated.System.Notification.v1;
 using Microsoft.Extensions.Options;
-using SystemBotCkModel.ConstructionKit.Generated.System.Bot.v1;
+using SystemBotCkModel.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
