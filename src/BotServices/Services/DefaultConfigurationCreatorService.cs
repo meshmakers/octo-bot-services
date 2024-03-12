@@ -25,7 +25,8 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
     private readonly ISystemContext _systemContext;
     private readonly IJobCreatorService _jobCreatorService;
 
-    public DefaultConfigurationCreatorService(ILoggerFactory loggerFactory, ISystemContext systemContext, IJobCreatorService jobCreatorService,
+    public DefaultConfigurationCreatorService(ILoggerFactory loggerFactory, ISystemContext systemContext,
+        IJobCreatorService jobCreatorService,
         ICommandClient<CreateIdentityDataCommandRequest> commandClient,
         IOptions<OctoBotServicesOptions> octoBotServicesOptions)
         : base(loggerFactory.CreateLogger<DefaultConfigurationCreatorServiceBase>())
@@ -46,16 +47,16 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         {
             return;
         }
-        
+
         // That means that the system tenant database is existing but (currently) not valid.
         // We wait for a PosTenantCreated event to create the default configuration.
         if (!await _systemContext.IsCkModelExistingAsync(SystemCkIds.ModelId))
         {
             return;
         }
-        
+
         _logger.LogInformation("Setting up default configuration for tenant '{TenantId}'", tenantId);
-        
+
         await ImportCkModelAsync(tenantId);
 
         // Identity configuration is next
@@ -65,13 +66,16 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
             return;
         }
         
+        _logger.LogInformation("Setting up default identity data for tenant '{TenantId}'", tenantId);
+
         using var session = await _systemContext.GetSystemSessionAsync();
         session.StartTransaction();
 
         var botServiceConfiguration =
             await _systemContext.GetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
                 new DefaultConfigurationVersion { Version = -1 });
-        if (botServiceConfiguration == null || botServiceConfiguration.Version < BotServiceConstants.BotServiceSchemaVersionValue)
+        if (botServiceConfiguration == null ||
+            botServiceConfiguration.Version < BotServiceConstants.BotServiceSchemaVersionValue)
         {
             _logger.LogInformation("Creating identity data for tenant '{TenantId}'", tenantId);
 
@@ -80,32 +84,48 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
             CreateApiResources(createIdentityDataCommandRequest);
             CreateClients(createIdentityDataCommandRequest);
 
-            await _commandClient.GetResponse<GenericCommandResponse>(createIdentityDataCommandRequest);
-
-            await _systemContext.SetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
-                new DefaultConfigurationVersion { Version = BotServiceConstants.BotServiceSchemaVersionValue });
+            _logger.LogInformation("Creating identity data for tenant '{TenantId}'", tenantId);
+            var r = await _commandClient.GetResponseWithRetry<EnumCommandResponse<CreateIdentityDataResult>>(
+                createIdentityDataCommandRequest);
+            _logger.LogInformation("Create identity data response: {Response}", r.Response);
+            if (r.Response == CreateIdentityDataResult.Success)
+            {
+                await _systemContext.SetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
+                    new DefaultConfigurationVersion { Version = BotServiceConstants.BotServiceSchemaVersionValue });
+            }
+            else if (r.Response != CreateIdentityDataResult.FailedTenantHasNoIdentityCk)
+            {
+                _logger.LogInformation("The tenant '{TenantId}' has no identity CK, skipped to create identity data",
+                    tenantId);
+            }
+            else
+            {
+                _logger.LogError("The tenant '{TenantId}' has no identity CK, skipped to create identity data",
+                    tenantId);
+            }
         }
 
         await session.CommitTransactionAsync();
-        
+
         // Create jobs
         _jobCreatorService.DeleteJobs(tenantId);
         _jobCreatorService.CreateJobs(tenantId);
-        
+
         _logger.LogInformation("Setup default configuration for tenant '{TenantId}' completed", tenantId);
     }
 
     private async Task ImportCkModelAsync(string tenantId)
     {
         var tenantContext = await _systemContext.FindTenantContextAsync(tenantId);
-        
+
         if (!await tenantContext.IsCkModelExistingAsync(SystemBotCkIds.ModelId))
         {
             OperationResult operationResult = new();
             await tenantContext.ImportCkModelAsync(SystemBotCkIds.ModelId, operationResult);
             if (operationResult.HasErrors || operationResult.HasFatalErrors)
             {
-                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId, operationResult.GetMessages());
+                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
+                    operationResult.GetMessages());
             }
         }
 
@@ -115,7 +135,8 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
             await tenantContext.ImportCkModelAsync(SystemNotificationCkIds.ModelId, operationResult);
             if (operationResult.HasErrors || operationResult.HasFatalErrors)
             {
-                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId, operationResult.GetMessages());
+                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
+                    operationResult.GetMessages());
             }
         }
     }
