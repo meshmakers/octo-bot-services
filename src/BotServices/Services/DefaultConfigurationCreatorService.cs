@@ -43,14 +43,8 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
     {
         // Do nothing if the system tenant is not existing.
         // Identity Service is creating the system tenant currently.
-        if (!await _systemContext.IsSystemTenantExistingAsync())
-        {
-            return;
-        }
-
-        // That means that the system tenant database is existing but (currently) not valid.
         // We wait for a PosTenantCreated event to create the default configuration.
-        if (!await _systemContext.IsCkModelExistingAsync(SystemCkIds.ModelId))
+        if (!await _systemContext.IsSystemTenantExistingAsync())
         {
             return;
         }
