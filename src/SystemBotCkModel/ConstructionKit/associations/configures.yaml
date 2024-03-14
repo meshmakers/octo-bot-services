@@ -6,5 +6,5 @@ associationRoles:
   inboundMultiplicity: One
   outboundMultiplicity: N
   attributes:
-    - id: System.Bot/SelectedAttributeId
+    - id: ${thisModel}/SelectedAttributeId
       name: SelectedAttributeId
