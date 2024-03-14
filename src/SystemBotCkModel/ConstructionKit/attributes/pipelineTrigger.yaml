@@ -1,0 +1,4 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+attributes:
+- id: CronExpression
+  valueType: String

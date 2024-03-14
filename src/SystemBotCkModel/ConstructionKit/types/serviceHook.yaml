@@ -1,6 +1,6 @@
 "$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
 types:
-  - typeId: ExecutePipeline
+  - typeId: ServiceHook
     derivedFromCkTypeId: System/Entity
     isFinal: false
     isAbstract: false
@@ -13,5 +13,10 @@ types:
         name: FieldFilter
       - id: System/Name
         name: Name
-# Welche data pipeline
-# params?
+      - id: ${thisModel}/ServiceHook.Uri
+        name: ServiceHookBaseUri
+      - id: ${thisModel}/ServiceHook.Action
+        name: ServiceHookAction
+      - id: ${thisModel}/ServiceHook.ApiKey
+        name: ServiceHookApiKey
+        isOptional: true
