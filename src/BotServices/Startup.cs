@@ -86,10 +86,11 @@ public class Startup
             {
                 c.AddHangfireMessageScheduler();
                 
-                c.AddCommandConsumer<ModelCommandsConsumer, ImportCkCommandRequest>("bot::import-ck");
-                c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>("bot::import-rt");
-                c.AddCommandConsumer<ModelCommandsConsumer, ExportRtCommandRequest>("bot::export-rt");
-                c.AddCommandClient<CreateIdentityDataCommandRequest>("identity::create-identity-data");
+                c.AddCommandConsumer<ModelCommandsConsumer, ImportCkCommandRequest>(QueueNames.ImportCkCommand);
+                c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>(QueueNames.ImportRtCommand);
+                c.AddCommandConsumer<ModelCommandsConsumer, ExportRtCommandRequest>(QueueNames.ExportRtCommand);
+                c.AddCommandConsumer<RecurringJobConsumer, RemoveRecurringJobsByScheduleGroupRequest>(QueueNames.RemoveRecurringJobsByScheduleGroupCommand);
+                c.AddCommandClient<CreateIdentityDataCommandRequest>(QueueNames.CreateIdentityDataCommand);
                 c.AddBroadcastEventConsumer<TenantManagementConsumer, PosCreateTenant>();
                 c.AddBroadcastEventConsumer<TenantManagementConsumer, PosUpdateTenant>();
                 c.AddBroadcastEventConsumer<TenantManagementConsumer, PreDeleteTenant>();
@@ -231,7 +232,6 @@ public class Startup
 
             config.UseMongoStorage(mongoUrlBuilder.ToString(), storageOptions);
             config.UseLogProvider(new NLogProvider());
-            config.UseActivator(new OctoJobActivator(serviceProvider));
         });
 
         // ReSharper disable once StringLiteralTypo
