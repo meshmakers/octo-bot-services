@@ -169,7 +169,7 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         {
             new(CommonConstants.BotServicesClientId,
                 BotTexts.Backend_BotServices_UserSchema_BotServices_DisplayName,
-                _octoBotServicesOptions.PublicAdminPanelUrl)
+                _octoBotServicesOptions.PublicUrl)
             {
                 AllowedGrantTypes = [OidcConstants.GrantTypes.Implicit],
 
@@ -180,8 +180,8 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
                     _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") + "signin-oidc"
                 ],
 
-                PostLogoutRedirectUris = [_octoBotServicesOptions.PublicAdminPanelUrl.EnsureEndsWith("/")],
-                AllowedCorsOrigins = [_octoBotServicesOptions.PublicAdminPanelUrl.TrimEnd('/')],
+                PostLogoutRedirectUris = [_octoBotServicesOptions.PublicUrl.EnsureEndsWith("/")],
+                AllowedCorsOrigins = [_octoBotServicesOptions.PublicUrl.TrimEnd('/')],
                 AllowOfflineAccess = true,
                 AllowedScopes =
                 [
