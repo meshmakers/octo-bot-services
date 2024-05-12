@@ -62,7 +62,7 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         
         _logger.LogInformation("Setting up default identity data for tenant '{TenantId}'", tenantId);
 
-        using var session = await _systemContext.GetSystemSessionAsync();
+        using var session = await _systemContext.GetAdminSessionAsync();
         session.StartTransaction();
 
         var botServiceConfiguration =
