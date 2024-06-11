@@ -15,7 +15,7 @@ WORKDIR /src
 COPY . .
 ENV NUGET_XMLDOC_MODE=none
 WORKDIR "/src/src/BotServices"
-RUN dotnet build "BotServices.csproj" -c Release
+RUN dotnet build "BotServices.csproj" -c Release -p:OctoNugetPrivateServer=${OCTO_PRIVATE_NUGET_SERVICE}
 
 FROM build AS publish
 RUN dotnet publish "BotServices.csproj" -c Release -o /app
