@@ -17,8 +17,8 @@ variables:
   - name: solutionFile
     value: 'Octo.Bots.sln'
   - name: isRelease
-    value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/r') }}
-    
+    value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/r') }}  
+
 stages:
   - stage: Build
     jobs:
@@ -56,6 +56,7 @@ stages:
                 }
             displayName: 'Set build number'
           - template: setversion.yml
+          - template: download-ca.yml
           - task: DotNetCoreCLI@2
             displayName: 'Test'
             inputs:
