@@ -17,7 +17,7 @@ internal class ExportRtModelCommand : IExportRtModelCommand
     private readonly IRtSerializer _rtSerializer;
     private readonly ISystemContext _systemContext;
 
-    internal ExportRtModelCommand(ILogger<ExportRtModelCommand> logger, ISystemContext systemContext, IRtSerializer rtSerializer)
+    public ExportRtModelCommand(ILogger<ExportRtModelCommand> logger, ISystemContext systemContext, IRtSerializer rtSerializer)
     {
         _logger = logger;
         _systemContext = systemContext;

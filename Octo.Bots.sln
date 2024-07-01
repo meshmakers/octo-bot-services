@@ -24,6 +24,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Infrastructure", "src\octo-
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Notifications", "src\octo-common-services\src\Notifications\Notifications.csproj", "{474ACB42-4C40-458D-B8A1-283D17979A86}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Observability", "src\octo-common-services\src\Observability\Observability.csproj", "{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -91,6 +93,12 @@ Global
 		{474ACB42-4C40-458D-B8A1-283D17979A86}.Release|Any CPU.Build.0 = Release|Any CPU
 		{474ACB42-4C40-458D-B8A1-283D17979A86}.DebugL|Any CPU.ActiveCfg = DebugL|Any CPU
 		{474ACB42-4C40-458D-B8A1-283D17979A86}.DebugL|Any CPU.Build.0 = DebugL|Any CPU
+		{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6}.DebugL|Any CPU.ActiveCfg = DebugL|Any CPU
+		{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6}.DebugL|Any CPU.Build.0 = DebugL|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F75AAA70-74B6-4B48-95D9-917AC101112A} = {22E68814-EE3C-4D58-9A5A-886F7D17832B}
@@ -99,5 +107,6 @@ Global
 		{A5876818-D4A8-474D-AF0B-94A1F170EC1C} = {883C73AC-76E1-4143-B98A-47D6993DD6D6}
 		{7597CBD5-475A-40FF-B745-6334767A0B3D} = {22E68814-EE3C-4D58-9A5A-886F7D17832B}
 		{474ACB42-4C40-458D-B8A1-283D17979A86} = {22E68814-EE3C-4D58-9A5A-886F7D17832B}
+		{ADA9E7C6-6D26-4D56-B078-EF8DF95B99D6} = {22E68814-EE3C-4D58-9A5A-886F7D17832B}
 	EndGlobalSection
 EndGlobal
