@@ -5,50 +5,38 @@ using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
 
-internal class ImportCkModelCommand : IImportCkModelCommand
+internal class ImportCkModelCommand(
+    ILogger<ImportCkModelCommand> logger,
+    ICkSerializer ckSerializer,
+    ISystemContext systemContext)
+    : CommandBase, IImportCkModelCommand
 {
-    private readonly ICkSerializer _ckSerializer;
-    private readonly ILogger<ImportCkModelCommand> _logger;
-    private readonly ISystemContext _systemContext;
-
-    public ImportCkModelCommand(ILogger<ImportCkModelCommand> logger, ICkSerializer ckSerializer,
-        ISystemContext systemContext)
-    {
-        _logger = logger;
-        _ckSerializer = ckSerializer;
-        _systemContext = systemContext;
-    }
-
     public async Task ImportTextAsync(string tenantId, string jsonText,
         CancellationToken? cancellationToken = null)
     {
         try
         {
-            _logger.LogInformation("Reading CK model....");
+            logger.LogInformation("Reading CK model....");
             var operationResult = new OperationResult();
-            var ckCompiledModelRoot = await _ckSerializer.DeserializeCompiledModelRootAsync(jsonText, "-", operationResult);
+            var ckCompiledModelRoot = await ckSerializer.DeserializeCompiledModelRootAsync(jsonText, "-", operationResult);
 
             if (ckCompiledModelRoot == null)
             {
-                _logger.LogInformation("Import of CK model failed, model cannot be deserialized");
-                operationResult.WriteMessagesToLogger(_logger);
+                logger.LogInformation("Import of CK model failed, model cannot be deserialized");
+                operationResult.WriteMessagesToLogger(logger);
                 throw CommandExecutionFailedException.CannotDeserializeModelFromString(jsonText);
             }
 
-            _logger.LogInformation("Executing import of CK model....");
-            ITenantContext tenantContext = _systemContext;
-            if (tenantId != _systemContext.TenantId)
-            {
-                tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
-            }   
+            logger.LogInformation("Executing import of CK model....");
+            var tenantContext = await systemContext.FindTenantContextAsync(tenantId);
 
             await tenantContext.ImportCkModelAsync(ckCompiledModelRoot);
 
-            _logger.LogInformation("Import of CK model completed");
+            logger.LogInformation("Import of CK model completed");
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Import of CK model failed");
+            logger.LogError(e, "Import of CK model failed");
             throw;
         }
     }
@@ -58,33 +46,28 @@ internal class ImportCkModelCommand : IImportCkModelCommand
     {
         try
         {
-            _logger.LogInformation("Reading CK model....");
+            logger.LogInformation("Reading CK model....");
             var operationResult = new OperationResult();
             await using var streamReader = File.OpenRead(filePath);
             var ckCompiledModelRoot =
-                await _ckSerializer.DeserializeCompiledModelRootAsync(streamReader, Path.GetFileName(filePath), operationResult);
+                await ckSerializer.DeserializeCompiledModelRootAsync(streamReader, Path.GetFileName(filePath), operationResult);
 
             if (ckCompiledModelRoot == null || operationResult.HasErrors)
             {
-                _logger.LogError("Import of CK model failed, model cannot be deserialized");
-                operationResult.WriteMessagesToLogger(_logger);
+                logger.LogError("Import of CK model failed, model cannot be deserialized");
+                operationResult.WriteMessagesToLogger(logger);
                 throw CommandExecutionFailedException.CannotDeserializeModel(filePath);
             }
 
-            _logger.LogInformation("Executing import of CK model....");
-            ITenantContext tenantContext = _systemContext;
-            if (tenantId != _systemContext.TenantId)
-            {
-                tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
-            }  
-            
+            logger.LogInformation("Executing import of CK model....");
+            var tenantContext = await systemContext.FindTenantContextAsync(tenantId);
             await tenantContext.ImportCkModelAsync(ckCompiledModelRoot);
 
-            _logger.LogInformation("Import of CK model completed");
+            logger.LogInformation("Import of CK model completed");
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Import of CK model failed");
+            logger.LogError(e, "Import of CK model failed");
             throw;
         }
     }

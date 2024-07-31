@@ -11,30 +11,18 @@ using RtEntityDto = Meshmakers.Octo.Runtime.Contracts.DataTransferObjects.RtEnti
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
 
-internal class ExportRtModelCommand : IExportRtModelCommand
+internal class ExportRtModelByQueryByQueryCommand(
+    ILogger<ExportRtModelByQueryByQueryCommand> logger,
+    ISystemContext systemContext,
+    IRtSerializer rtSerializer)
+    : CommandBase, IExportRtModelByQueryCommand
 {
-    private readonly ILogger<ExportRtModelCommand> _logger;
-    private readonly IRtSerializer _rtSerializer;
-    private readonly ISystemContext _systemContext;
-
-    public ExportRtModelCommand(ILogger<ExportRtModelCommand> logger, ISystemContext systemContext, IRtSerializer rtSerializer)
-    {
-        _logger = logger;
-        _systemContext = systemContext;
-        _rtSerializer = rtSerializer;
-    }
-
-
     public async Task ExportAsync(string tenantId, OctoObjectId queryId, string filePath,
         CancellationToken? cancellationToken)
     {
-        ITenantContext tenantContext = _systemContext;
-        if (tenantId != _systemContext.TenantId)
-        {
-            tenantContext = await _systemContext.GetChildTenantContextAsync(tenantId);
-        }   
-        
-        var tenantRepository = tenantContext.GetTenantRepository();
+        CheckAndThrowCancellation(cancellationToken);
+
+        var tenantRepository = await systemContext.FindTenantRepositoryAsync(tenantId);
 
         var session = await tenantRepository.GetSessionAsync();
         try
@@ -44,10 +32,7 @@ internal class ExportRtModelCommand : IExportRtModelCommand
             var query = await tenantRepository.GetRtEntityByRtIdAsync(session,
                 new RtEntityId(SystemCkIds.ModelId, SystemCkIds.QueryTypeId, queryId));
 
-            if (CheckCancellation(cancellationToken))
-            {
-                throw new OperationCanceledException();
-            }
+            CheckAndThrowCancellation(cancellationToken);
 
             if (query == null)
             {
@@ -86,12 +71,14 @@ internal class ExportRtModelCommand : IExportRtModelCommand
 
             var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync(session, ckTypeId, dataQueryOperation);
 
-            var entityCacheItem = await tenantRepository.GetCkTypeGraphAsync(ckTypeId);
+            var ckTypeGraph = await tenantRepository.GetCkTypeGraphAsync(ckTypeId);
+
+            CheckAndThrowCancellation(cancellationToken);
 
             var model = new RtModelRootDto();
             model.Entities.AddRange(resultSet.Items.Select(entity =>
             {
-                var exEntity = new RtEntityDto
+                var entityDto = new RtEntityDto
                 {
                     RtId = entity.RtId,
                     RtChangedDateTime = entity.RtChangedDateTime,
@@ -100,9 +87,9 @@ internal class ExportRtModelCommand : IExportRtModelCommand
                     CkTypeId = entity.CkTypeId ?? throw OperationFailedException.CkTypeIdUndefined()
                 };
 
-                exEntity.Attributes.AddRange(entity.Attributes.Select(pair =>
+                entityDto.Attributes.AddRange(entity.Attributes.Select(pair =>
                 {
-                    var attributeCacheItem = entityCacheItem.AllAttributes[pair.Key];
+                    var attributeCacheItem = ckTypeGraph.AllAttributes[pair.Key];
                     return new RtAttributeDto
                     {
                         Id = attributeCacheItem.CkAttributeId,
@@ -110,17 +97,19 @@ internal class ExportRtModelCommand : IExportRtModelCommand
                     };
                 }));
 
-                return exEntity;
+                return entityDto;
             }));
 
+            CheckAndThrowCancellation(cancellationToken);
+
             await using var streamWriter = new StreamWriter(filePath);
-            await _rtSerializer.SerializeAsync(streamWriter, model);
+            await rtSerializer.SerializeAsync(streamWriter, model);
 
             await session.CommitTransactionAsync();
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Exporting model failed");
+            logger.LogError(e, "Exporting model failed");
             throw;
         }
     }
@@ -131,15 +120,5 @@ internal class ExportRtModelCommand : IExportRtModelCommand
 
 
         return attributeName;
-    }
-
-    private static bool CheckCancellation(CancellationToken? cancellationToken)
-    {
-        if (cancellationToken != null && cancellationToken.Value.IsCancellationRequested)
-        {
-            return true;
-        }
-
-        return false;
     }
 }
