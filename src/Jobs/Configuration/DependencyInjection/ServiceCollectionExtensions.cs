@@ -16,7 +16,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddOctoCommands(
         this IServiceCollection services)
     {
-        services.AddTransient<IExportRtModelCommand, ExportRtModelCommand>();
+        services.AddTransient<IExportRtModelByQueryCommand, ExportRtModelByQueryByQueryCommand>();
+        services.AddTransient<IExportRtModelByDeepGraphCommand, ExportRtModelByDeepGraphCommand>();
         services.AddTransient<IImportCkModelCommand, ImportCkModelCommand>();
         services.AddTransient<IImportRtModelCommand, ImportRtModelCommand>();
 

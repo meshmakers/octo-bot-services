@@ -6,10 +6,12 @@ using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 
 namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 
+// ReSharper disable once ClassNeverInstantiated.Global
 internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
     IDistributedConsumer<ImportCkCommandRequest>,
     IDistributedConsumer<ImportRtCommandRequest>,
-    IDistributedConsumer<ExportRtCommandRequest>
+    IDistributedConsumer<ExportRtByQueryCommandRequest>,
+    IDistributedConsumer<ExportRtByDeepGraphCommandRequest>
 {
     public async Task ConsumeAsync(IDistributedContext<ImportCkCommandRequest> context)
     {
@@ -27,10 +29,19 @@ internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
         await context.RespondAsync(new JobCreatedResponse(id));
     }
 
-    public async Task ConsumeAsync(IDistributedContext<ExportRtCommandRequest> context)
+    public async Task ConsumeAsync(IDistributedContext<ExportRtByQueryCommandRequest> context)
     {
         var id = backgroundJobClient.Enqueue<IExportModelJob>(job =>
-            job.ExportRtAsync(context.Message.TenantId, context.Message.QueryId, BotCancellationToken.Null));
+            job.ExportRtModelByQueryAsync(context.Message.TenantId, context.Message.QueryId, BotCancellationToken.Null));
+        
+        await context.RespondAsync(new JobCreatedResponse(id));  
+    }
+
+    public async Task ConsumeAsync(IDistributedContext<ExportRtByDeepGraphCommandRequest> context)
+    {
+        var id = backgroundJobClient.Enqueue<IExportModelJob>(job =>
+            job.ExportRtModelByDeepGraphAsync(context.Message.TenantId, context.Message.OriginRtIds,
+                context.Message.OriginCkTypeId, BotCancellationToken.Null));
         
         await context.RespondAsync(new JobCreatedResponse(id));  
     }

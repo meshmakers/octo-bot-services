@@ -82,7 +82,8 @@ try
 
             c.AddCommandConsumer<ModelCommandsConsumer, ImportCkCommandRequest>(QueueNames.ImportCkCommand);
             c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>(QueueNames.ImportRtCommand);
-            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtCommandRequest>(QueueNames.ExportRtCommand);
+            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByQueryCommandRequest>(QueueNames.ExportRtByQueryCommand);
+            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByDeepGraphCommandRequest>(QueueNames.ExportRtByDeepGraphCommand);
             c.AddCommandConsumer<RecurringJobConsumer, RemoveRecurringJobsByScheduleGroupRequest>(QueueNames
                 .RemoveRecurringJobsByScheduleGroupCommand);
             c.AddCommandClient<CreateIdentityDataCommandRequest>(QueueNames.CreateIdentityDataCommand);
