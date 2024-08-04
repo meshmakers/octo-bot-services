@@ -1,8 +1,8 @@
-using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
@@ -12,7 +12,7 @@ internal class ExportRtModelByDeepGraphCommand(
     ISystemContext systemContext,
     IRtSerializer rtSerializer) : CommandBase, IExportRtModelByDeepGraphCommand
 {
-    public async Task ExportAsync(string tenantId, IEnumerable<OctoObjectId> originRtIds, CkId<CkTypeId> originCkTypeId,
+    public async Task ExportAsync(string tenantId, ExportRtByDeepGraphCommandRequest rtByDeepGraphCommandRequest,
         string filePath,
         CancellationToken? cancellationToken)
     {
@@ -22,8 +22,11 @@ internal class ExportRtModelByDeepGraphCommand(
         var session = await tenantRepository.GetSessionAsync();
         try
         {
+            session.StartTransaction();
+            
             var dataQueryOperation = DataQueryOperation.Create();
-            var r = await tenantRepository.GetRtDeepGraphAsync(session, originRtIds, originCkTypeId,
+            var r = await tenantRepository.GetRtDeepGraphAsync(session,
+                rtByDeepGraphCommandRequest.OriginRtIds, rtByDeepGraphCommandRequest.OriginCkTypeId,
                 dataQueryOperation);
 
             CheckAndThrowCancellation(cancellationToken);

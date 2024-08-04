@@ -1,7 +1,7 @@
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
-using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -34,20 +34,22 @@ public class ExportModelJob : IExportModelJob
 
 
     /// <inheritdoc />
-    public async Task<string> ExportRtModelByQueryAsync(string tenantId, OctoObjectId queryId,
+    public async Task<string> ExportRtModelByQueryAsync(ExportRtByQueryCommandRequest rtByQueryCommandRequest,
         IBotCancellationToken? cancellationToken)
     {
         try
         {
-            _logger.LogError("Preparing output file for query \'{QueryId}\' of tenant \'{TenantId}\'", queryId, tenantId);
+            _logger.LogError("Preparing output file for query \'{QueryId}\' of tenant \'{TenantId}\'",
+                rtByQueryCommandRequest.QueryId, rtByQueryCommandRequest.TenantId);
             var tempFile = Path.GetTempFileName();
 
             _logger.LogError("Starting export of file \'{TempFile}\'", tempFile);
 
-            await _exportRtModelByQueryCommand.ExportAsync(tenantId, queryId, tempFile,
+            await _exportRtModelByQueryCommand.ExportAsync(rtByQueryCommandRequest.TenantId,
+                rtByQueryCommandRequest.QueryId, tempFile,
                 cancellationToken?.ShutdownToken);
 
-            var key = await CacheFileToDistributedCache(tenantId, tempFile);
+            var key = await CacheFileToDistributedCache(rtByQueryCommandRequest.TenantId, tempFile);
 
             _logger.LogError("Export of file \'{TempFile}\' completed", tempFile);
 
@@ -62,20 +64,20 @@ public class ExportModelJob : IExportModelJob
 
 
     /// <inheritdoc />
-    public async Task<string> ExportRtModelByDeepGraphAsync(string tenantId, IEnumerable<OctoObjectId> originRtIds, CkId<CkTypeId> originCkTypeId,
+    public async Task<string> ExportRtModelByDeepGraphAsync(ExportRtByDeepGraphCommandRequest rtByDeepGraphCommandRequest,
         IBotCancellationToken? cancellationToken)
     {
         try
         {
-            _logger.LogError("Preparing output file for deep graph of tenant \'{TenantId}\'", tenantId);
+            _logger.LogError("Preparing output file for deep graph of tenant \'{TenantId}\'", rtByDeepGraphCommandRequest.TenantId);
             var tempFile = Path.GetTempFileName();
 
             _logger.LogError("Starting export of file \'{TempFile}\'", tempFile);
 
-            await _rtModelByDeepGraphCommand.ExportAsync(tenantId, originRtIds, originCkTypeId, tempFile,
+            await _rtModelByDeepGraphCommand.ExportAsync(rtByDeepGraphCommandRequest.TenantId, rtByDeepGraphCommandRequest, tempFile,
                 cancellationToken?.ShutdownToken);
 
-            var key = await CacheFileToDistributedCache(tenantId, tempFile);
+            var key = await CacheFileToDistributedCache(rtByDeepGraphCommandRequest.TenantId, tempFile);
 
             _logger.LogError("Export of file \'{TempFile}\' completed", tempFile);
 
