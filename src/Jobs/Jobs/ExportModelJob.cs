@@ -92,9 +92,10 @@ public class ExportModelJob : IExportModelJob
 
     private async Task<string> CacheFileToDistributedCache(string tenantId, string tempFile)
     {
-        using var streamReader = new StreamReader(tempFile);
         await using var memoryStream = new MemoryStream();
-        await streamReader.BaseStream.PackFileToZipAsync("RtEntities.json", memoryStream);
+        using var streamReader = new StreamReader(tempFile);
+        await streamReader.BaseStream.PackFileToZipAsync("RtEntities.json", memoryStream, true);
+        memoryStream.Position = 0;
         return await _distributedCache.CreateStreamAsync(tenantId, memoryStream, "application/zip", "RtEntities.zip",
             TimeSpan.FromHours(1));
     }
