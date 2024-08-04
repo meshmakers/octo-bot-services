@@ -32,7 +32,7 @@ internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
     public async Task ConsumeAsync(IDistributedContext<ExportRtByQueryCommandRequest> context)
     {
         var id = backgroundJobClient.Enqueue<IExportModelJob>(job =>
-            job.ExportRtModelByQueryAsync(context.Message.TenantId, context.Message.QueryId, BotCancellationToken.Null));
+            job.ExportRtModelByQueryAsync(context.Message, BotCancellationToken.Null));
         
         await context.RespondAsync(new JobCreatedResponse(id));  
     }
@@ -40,8 +40,7 @@ internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
     public async Task ConsumeAsync(IDistributedContext<ExportRtByDeepGraphCommandRequest> context)
     {
         var id = backgroundJobClient.Enqueue<IExportModelJob>(job =>
-            job.ExportRtModelByDeepGraphAsync(context.Message.TenantId, context.Message.OriginRtIds,
-                context.Message.OriginCkTypeId, BotCancellationToken.Null));
+            job.ExportRtModelByDeepGraphAsync(context.Message, BotCancellationToken.Null));
         
         await context.RespondAsync(new JobCreatedResponse(id));  
     }
