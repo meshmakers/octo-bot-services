@@ -39,11 +39,11 @@ public class ExportModelJob : IExportModelJob
     {
         try
         {
-            _logger.LogError("Preparing output file for query \'{QueryId}\' of tenant \'{TenantId}\'",
+            _logger.LogInformation("Preparing output file for query \'{QueryId}\' of tenant \'{TenantId}\'",
                 rtByQueryCommandRequest.QueryId, rtByQueryCommandRequest.TenantId);
             var tempFile = Path.GetTempFileName();
 
-            _logger.LogError("Starting export of file \'{TempFile}\'", tempFile);
+            _logger.LogInformation("Starting export of file \'{TempFile}\'", tempFile);
 
             await _exportRtModelByQueryCommand.ExportAsync(rtByQueryCommandRequest.TenantId,
                 rtByQueryCommandRequest.QueryId, tempFile,
@@ -51,7 +51,7 @@ public class ExportModelJob : IExportModelJob
 
             var key = await CacheFileToDistributedCache(rtByQueryCommandRequest.TenantId, tempFile);
 
-            _logger.LogError("Export of file \'{TempFile}\' completed", tempFile);
+            _logger.LogInformation("Export of file \'{TempFile}\' completed", tempFile);
 
             return key;
         }
@@ -69,17 +69,17 @@ public class ExportModelJob : IExportModelJob
     {
         try
         {
-            _logger.LogError("Preparing output file for deep graph of tenant \'{TenantId}\'", rtByDeepGraphCommandRequest.TenantId);
+            _logger.LogInformation("Preparing output file for deep graph of tenant \'{TenantId}\'", rtByDeepGraphCommandRequest.TenantId);
             var tempFile = Path.GetTempFileName();
 
-            _logger.LogError("Starting export of file \'{TempFile}\'", tempFile);
+            _logger.LogInformation("Starting export of file \'{TempFile}\'", tempFile);
 
             await _rtModelByDeepGraphCommand.ExportAsync(rtByDeepGraphCommandRequest.TenantId, rtByDeepGraphCommandRequest, tempFile,
                 cancellationToken?.ShutdownToken);
 
             var key = await CacheFileToDistributedCache(rtByDeepGraphCommandRequest.TenantId, tempFile);
 
-            _logger.LogError("Export of file \'{TempFile}\' completed", tempFile);
+            _logger.LogInformation("Export of file \'{TempFile}\' completed", tempFile);
 
             return key;
         }
