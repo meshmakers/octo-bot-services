@@ -1,3 +1,4 @@
+using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.Runtime.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
@@ -10,6 +11,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Commands;
 internal class ExportRtModelByDeepGraphCommand(
     ILogger<ExportRtModelByDeepGraphCommand> logger,
     ISystemContext systemContext,
+    ICkCacheService ckCacheService,
     IRtSerializer rtSerializer) : CommandBase, IExportRtModelByDeepGraphCommand
 {
     public async Task ExportAsync(string tenantId, ExportRtByDeepGraphCommandRequest rtByDeepGraphCommandRequest,
@@ -23,23 +25,25 @@ internal class ExportRtModelByDeepGraphCommand(
         try
         {
             session.StartTransaction();
-            
+
             var dataQueryOperation = DataQueryOperation.Create();
-            var r = await tenantRepository.GetRtDeepGraphAsync(session,
+            var resultSet = await tenantRepository.GetRtDeepGraphAsync(session,
                 rtByDeepGraphCommandRequest.OriginRtIds, rtByDeepGraphCommandRequest.OriginCkTypeId,
                 dataQueryOperation);
 
             CheckAndThrowCancellation(cancellationToken);
 
-            var groupedByCkType = r.Items.GroupBy(x => x.Id.CkTypeId);
+            var itemsDictionary = resultSet.Items.ToDictionary(k => k.Id.RtId, v => v);
+            var groupedByCkType = resultSet.Items.GroupBy(x => x.Id.CkTypeId);
             var model = new RtModelRootDto();
             foreach (var grouping in groupedByCkType)
             {
-                var s = await tenantRepository.GetRtEntitiesByIdAsync(session, grouping.Key, grouping.Select(x => x.Id.RtId).ToList(), dataQueryOperation);
-                
+                var s = await tenantRepository.GetRtEntitiesByIdAsync(session, grouping.Key,
+                    grouping.Select(x => x.Id.RtId).ToList(), dataQueryOperation);
+
                 CheckAndThrowCancellation(cancellationToken);
 
-                var ckTypeGraph = await tenantRepository.GetCkTypeGraphAsync(grouping.Key);
+                var ckTypeGraph = ckCacheService.GetCkType(tenantId, grouping.Key);
 
                 foreach (var rtEntity in s.Items)
                 {
@@ -54,20 +58,53 @@ internal class ExportRtModelByDeepGraphCommand(
 
                     entityDto.Attributes.AddRange(rtEntity.Attributes.Select(pair =>
                     {
-                        var attributeCacheItem = ckTypeGraph.AllAttributes[pair.Key];
+                        var typeAttributeGraph = ckTypeGraph.AllAttributesByName[pair.Key];
                         return new RtAttributeDto
                         {
-                            Id = attributeCacheItem.CkAttributeId,
+                            Id = typeAttributeGraph.CkAttributeId,
                             Value = pair.Value
                         };
                     }));
-                    
+
+                    if (itemsDictionary.TryGetValue(rtEntity.RtId, out var item))
+                    {
+                        entityDto.Associations = new List<RtAssociationDto>();
+
+                        foreach (var associationItem in item.Associations)
+                        {
+                            var roleId = associationItem.AssociationRoleId ??
+                                         throw OperationFailedException.AssociationRoleIdUndefined();
+                            var ckAssociationRoleGraph = ckCacheService.GetCkAssociationRole(tenantId, roleId);
+
+                            var associationDto = new RtAssociationDto
+                            {
+                                RoleId = roleId,
+                                TargetRtId = associationItem.TargetRtId,
+                                TargetCkTypeId = associationItem.TargetCkTypeId ??
+                                                 throw OperationFailedException.CkTypeIdUndefined(),
+                                TargetCkAttributeIds = associationItem.TargetCkAttributeIds
+                            };
+
+                            associationDto.Attributes.AddRange(associationItem.Attributes.Select(pair =>
+                            {
+                                var typeAttributeGraph = ckAssociationRoleGraph.AllAttributesByName[pair.Key];
+                                return new RtAttributeDto
+                                {
+                                    Id = typeAttributeGraph.CkAttributeId,
+                                    Value = pair.Value
+                                };
+                            }));
+
+                            entityDto.Associations.Add(associationDto);
+                        }
+                    }
+
                     model.Entities.Add(entityDto);
                 }
             }
 
             CheckAndThrowCancellation(cancellationToken);
-            
+
             await using var streamWriter = new StreamWriter(filePath);
             await rtSerializer.SerializeAsync(streamWriter, model);
 
