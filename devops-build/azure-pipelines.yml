@@ -67,9 +67,19 @@ stages:
                 '**/*Tests.csproj'
                 !'**/*SystemTests.csproj'
               testRunTitle: 'CI'
+          - task: DotNetCoreCLI@2
+            condition: eq(variables.generateDocumentation, 'true')
+            displayName: 'Build with Generate Docs'
+            inputs:
+              command: 'generateDocs'
+              projects: |
+                '**/*CkModel.csproj'
+                !'**/*CkModelTests.csproj'
+              arguments: '--configuration $(buildConfiguration)'
+              testRunTitle: 'GD'
           - task: CopyFiles@2
             condition: eq(variables.generateDocumentation, 'true')
-            displayName: 'Copy Files from bin/**/documentation/**/*.* [Where model documentation is generated to appropriate structure in staging directory]to $(build.artifactstagingdirectory)'
+            displayName: 'Copy Files from $(Build.SourcesDirectory) [Where model documentation is generated to appropriate structure in staging directory]to $(build.artifactstagingdirectory)'
             inputs:
               SourceFolder: $(Build.SourcesDirectory)
               Contents: |
