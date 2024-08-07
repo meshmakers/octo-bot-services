@@ -67,7 +67,7 @@ stages:
                 '**/*Tests.csproj'
                 !'**/*SystemTests.csproj'
               testRunTitle: 'CI'
-          - task: CopyFiles@0
+          - task: CopyFiles@2
             displayName: 'Copy Files from bin/**/documentation/**/*.* [Where model documentation is generated to appropriate structure in staging directory]to $(build.artifactstagingdirectory)'
             inputs:
               SourceFolder: $(Build.SourcesDirectory)
