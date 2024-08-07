@@ -73,7 +73,7 @@ stages:
             inputs:
               SourceFolder: $(Build.SourcesDirectory)
               Contents: |
-                $(Build.Repository.LocalPath)/**
+                $(OctoCkCompileOutputCompilerFolder)
               TargetFolder: $(build.artifactstagingdirectory)
             
           - task: PowerShell@2
