@@ -85,7 +85,7 @@ stages:
             inputs:
               SourceFolder: $(Build.SourcesDirectory)
               Contents: |
-                src/SystemBotCkModel/bin/**/octo-ck-libraries/**/*.md
+                **/*.md
               TargetFolder: $(build.artifactstagingdirectory)
           - task: PublishBuildArtifacts@1
             displayName: 'Publish Artifact: local'
