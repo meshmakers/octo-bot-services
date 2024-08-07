@@ -81,11 +81,11 @@ stages:
               IsRelease: ${{ variables.isRelease }}
           - task: CopyFiles@2
             condition: eq(variables.generateDocumentation, 'true')
-            displayName: 'Copy Files from $(Build.SourcesDirectory) src/**/SystemBotCkModel/bin/**/octo-ck-libraries/**/*.md to $(build.artifactstagingdirectory)'
+            displayName: 'Copy Files from $(Build.SourcesDirectory) src/SystemBotCkModel/bin/**/octo-ck-libraries/**/*.md to $(build.artifactstagingdirectory)'
             inputs:
               SourceFolder: $(Build.SourcesDirectory)
               Contents: |
-                **/*.md
+                src/SystemBotCKModel/**/*.md
               TargetFolder: $(build.artifactstagingdirectory)
           - task: PublishBuildArtifacts@1
             displayName: 'Publish Artifact: local'
