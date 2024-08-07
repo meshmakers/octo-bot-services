@@ -67,25 +67,6 @@ stages:
                 '**/*Tests.csproj'
                 !'**/*SystemTests.csproj'
               testRunTitle: 'CI'
-          - task: DotNetCoreCLI@2
-            condition: eq(variables.generateDocumentation, 'true')
-            displayName: 'Build with Generate Docs'
-            inputs:
-              command: 'OctoGenerateCkDocumentation'
-              projects: |
-                '**/*CkModel.csproj'
-                !'**/*CkModelTests.csproj'
-              arguments: '--configuration $(buildConfiguration)'
-              testRunTitle: 'GD'
-          - task: CopyFiles@2
-            condition: eq(variables.generateDocumentation, 'true')
-            displayName: 'Copy Files from $(Build.SourcesDirectory) [Where model documentation is generated to appropriate structure in staging directory]to $(build.artifactstagingdirectory)'
-            inputs:
-              SourceFolder: $(Build.SourcesDirectory)
-              Contents: |
-                $(OctoCkCompileOutputCompilerFolder)
-              TargetFolder: $(build.artifactstagingdirectory)
-            
           - task: PowerShell@2
             displayName: 'Create versioninfo file'
             inputs:
@@ -98,6 +79,14 @@ stages:
               Repository: meshmakers/octo-mesh-bot-services
               Dockerfile: src/BotServices/Dockerfile
               IsRelease: ${{ variables.isRelease }}
+          - task: CopyFiles@2
+            condition: eq(variables.generateDocumentation, 'true')
+            displayName: 'Copy Files from $(Build.SourcesDirectory) [Where model documentation is generated to appropriate structure in staging directory]to $(build.artifactstagingdirectory)'
+            inputs:
+              SourceFolder: $(Build.SourcesDirectory)
+              Contents: |
+                bin/**/SystemBotCkModel/**/*.md
+              TargetFolder: $(build.artifactstagingdirectory)
           - task: PublishBuildArtifacts@1
             displayName: 'Publish Artifact: local'
             inputs:
