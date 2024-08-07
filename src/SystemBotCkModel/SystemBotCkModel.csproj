@@ -4,6 +4,7 @@
         <Configurations>Debug;Release;DebugL</Configurations>
         <Platforms>AnyCPU</Platforms>
         <OctoPublishCkModel>true</OctoPublishCkModel>
+        <OctoGenerateCkDocumentation>true</OctoGenerateCkDocumentation>
     </PropertyGroup>
 
     <ItemGroup>
