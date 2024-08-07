@@ -68,7 +68,7 @@ stages:
                 !'**/*SystemTests.csproj'
               testRunTitle: 'CI'
           - task: CopyFiles@2
-            condition: eq(variables["generateDocumentation"], 'true')
+            condition: eq(variables.generateDocumentation, 'true')
             displayName: 'Copy Files from bin/**/documentation/**/*.* [Where model documentation is generated to appropriate structure in staging directory]to $(build.artifactstagingdirectory)'
             inputs:
               SourceFolder: $(Build.SourcesDirectory)
