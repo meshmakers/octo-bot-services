@@ -73,7 +73,7 @@ stages:
             inputs:
               SourceFolder: $(Build.SourcesDirectory)
               Contents: |
-                bin/**/octo-ck-libraries/**/*.*
+                $(Build.Repository.LocalPath)/**
               TargetFolder: $(build.artifactstagingdirectory)
             
           - task: PowerShell@2
