@@ -71,7 +71,7 @@ stages:
             condition: eq(variables.generateDocumentation, 'true')
             displayName: 'Build with Generate Docs'
             inputs:
-              command: 'generateDocs'
+              command: 'OctoGenerateCkDocumentation'
               projects: |
                 '**/*CkModel.csproj'
                 !'**/*CkModelTests.csproj'
