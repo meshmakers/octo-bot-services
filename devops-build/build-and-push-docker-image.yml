@@ -24,7 +24,7 @@ steps:
   inputs:
     SourceFolder: $(Build.SourcesDirectory)
     Contents: |
-      **/SystemBotCkModel/**
+      /**/bin/**/octo-ck-libraries/SystemBotCkModel/**
     TargetFolder: $(build.artifactstagingdirectory)
     
 - task: Docker@2
