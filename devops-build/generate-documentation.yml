@@ -17,5 +17,5 @@ steps:
     inputs:
       SourceFolder: $(Build.SourcesDirectory)
       Contents: |
-        /**/*CkModel/**
+        /**/*CkModel/**/*.md
       TargetFolder: $(build.artifactstagingdirectory)
