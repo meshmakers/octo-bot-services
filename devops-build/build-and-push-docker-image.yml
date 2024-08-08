@@ -24,7 +24,7 @@ steps:
   inputs:
     SourceFolder: $(Build.SourcesDirectory)
     Contents: |
-      **/out/**/*.*
+      /src/src/SystemBotCkModel/bin/**/net8.0/**/*.*
     TargetFolder: $(build.artifactstagingdirectory)
     
 - task: Docker@2
