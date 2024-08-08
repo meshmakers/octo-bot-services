@@ -60,20 +60,6 @@ stages:
           - template: setversion.yml
           - template: download-ca.yml
           - task: DotNetCoreCLI@2
-            displayName: 'Generate Documentation'
-            inputs:
-              command: 'build'
-              projects: '**/SystemBotCkModel.csproj'
-              arguments: '--configuration Release /p:OctoGenerateCkDocumentation=true'
-          - task: CopyFiles@2
-            condition: eq(variables.generateDocumentation, 'true')
-            displayName: 'Copy Files from $(Build.SourcesDirectory)/**/SystemBotCkModel/**/*.md to $(build.artifactstagingdirectory)'
-            inputs:
-              SourceFolder: $(Build.SourcesDirectory)
-              Contents: |
-                /**/bin/**/octo-ck-libraries/SystemBotCkModel/**
-              TargetFolder: $(build.artifactstagingdirectory)
-          - task: DotNetCoreCLI@2
             displayName: 'Test'
             inputs:
               command: 'test'
@@ -92,7 +78,10 @@ stages:
             parameters:
               Repository: meshmakers/octo-mesh-bot-services
               Dockerfile: src/BotServices/Dockerfile
-              IsRelease: ${{ variables.isRelease }}          
+              IsRelease: ${{ variables.isRelease }}   
+          - template: generate-documentation.yml
+            parameters:
+              GenerateDocumentation: ${{ variables.generateDocumentation }}
           - task: PublishBuildArtifacts@1
             displayName: 'Publish Artifact: local'
             inputs:
