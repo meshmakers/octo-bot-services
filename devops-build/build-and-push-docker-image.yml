@@ -20,11 +20,11 @@ steps:
       
 - task: CopyFiles@2
   condition: eq(variables.generateDocumentation, 'true')
-  displayName: 'Copy Files from $(Build.SourcesDirectory)/**/SystemBotCKModel/**/*.* to $(build.artifactstagingdirectory)'
+  displayName: 'Copy Files from $(Build.SourcesDirectory)/**/SystemBotCkModel/**/*.* to $(build.artifactstagingdirectory)'
   inputs:
     SourceFolder: $(Build.SourcesDirectory)
     Contents: |
-      **/SystemBotCKModel/**/*.*
+      **/SystemBotCkModel/**/*.*
     TargetFolder: $(build.artifactstagingdirectory)
     
 - task: Docker@2
