@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Meshmakers.Common.Shared;
+using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using NLog;
@@ -13,19 +14,23 @@ public class ImportModelJob : IImportModelJob
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly IDistributedCacheService _distributedCacheService;
+    private readonly ICompressionService _compressionService;
     private readonly IImportCkModelCommand _importCkModelCommand;
     private readonly IImportRtModelCommand _importRtModelCommand;
 
     /// <summary>
     ///     Constructor
     /// </summary>
-    /// <param name="distributedCacheService"></param>
-    /// <param name="importCkModelCommand">Redis distributed cache for file caching</param>
-    /// <param name="importRtModelCommand"></param>
-    public ImportModelJob(IDistributedCacheService distributedCacheService, IImportCkModelCommand importCkModelCommand,
+    /// <param name="distributedCacheService">Service for distributed caching</param>
+    /// <param name="compressionService">Service for compressing and decompressing files</param>
+    /// <param name="importCkModelCommand">Command to import CK model</param>
+    /// <param name="importRtModelCommand">Command to import RT model</param>
+    public ImportModelJob(IDistributedCacheService distributedCacheService, ICompressionService compressionService,
+        IImportCkModelCommand importCkModelCommand,
         IImportRtModelCommand importRtModelCommand)
     {
         _distributedCacheService = distributedCacheService;
+        _compressionService = compressionService;
         _importCkModelCommand = importCkModelCommand;
         _importRtModelCommand = importRtModelCommand;
     }
@@ -102,23 +107,33 @@ public class ImportModelJob : IImportModelJob
 
         var tempFile = Path.GetTempFileName();
 
-        if (cacheStream.ContentType.ToLower() == "application/zip")
+        if (cacheStream.ContentType.ToLower() == JobConstants.MimeTypeZip)
         {
-            await cacheStream.Stream.ExtractFileFromZipAsync(cacheStream.ContentType, ".json", tempFile);
-        }
-        else if (cacheStream.ContentType.ToLower() == "application/json" || cacheStream.ContentType.ToLower() == "text/yaml")
-        {
-            await using (var streamWriter = new StreamWriter(tempFile))
+            string contentType = JobConstants.MimeTypeJson;
+            await _compressionService.ExtractFileFromZipAsync(cacheStream.Stream, cacheStream.ContentType, files =>
             {
-                await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
-            }
-        }
-        else
-        {
-            throw new JobFailedException("File type is not supported.");
+                var compressedFiles = files as CompressedFile[] ?? files.ToArray();
+                var jsonFile = compressedFiles.FirstOrDefault(x => Path.GetExtension(x.Name).ToLower() == ".json");
+                if (jsonFile == null)
+                {
+                    contentType = "text/yaml";
+                    return compressedFiles.FirstOrDefault(x => Path.GetExtension(x.Name).ToLower() == ".yaml");
+                 
+                }
+
+                return null;
+            }, tempFile);
+            return new Tuple<string, string>(tempFile, contentType);
         }
 
-        return new Tuple<string, string>(tempFile, cacheStream.ContentType);
+        if (cacheStream.ContentType.ToLower() == JobConstants.MimeTypeJson || cacheStream.ContentType.ToLower() == JobConstants.MiemTypeYaml)
+        {
+            await using var streamWriter = new StreamWriter(tempFile);
+            await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
+            return new Tuple<string, string>(tempFile, cacheStream.ContentType);
+        }
+
+        throw new JobFailedException("File type is not supported.");
     }
 
     private async Task ClearCache(string tenantId, string key)

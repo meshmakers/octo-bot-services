@@ -1,4 +1,5 @@
 using Meshmakers.Common.Shared;
+using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
@@ -13,6 +14,7 @@ public class ExportModelJob : IExportModelJob
 {
     private readonly ILogger<ExportModelJob> _logger;
     private readonly IDistributedCacheService _distributedCache;
+    private readonly ICompressionService _compressionService;
     private readonly IExportRtModelByQueryCommand _exportRtModelByQueryCommand;
     private readonly IExportRtModelByDeepGraphCommand _rtModelByDeepGraphCommand;
 
@@ -21,13 +23,15 @@ public class ExportModelJob : IExportModelJob
     /// </summary>
     /// <param name="logger">Logger instance</param>
     /// <param name="distributedCache">Distributed cache for file caching</param>
+    /// <param name="compressionService">Service for compressing and decompressing files</param>
     /// <param name="exportRtModelByQueryCommand">Command to export runtime model by query</param>
     /// <param name="rtModelByDeepGraphCommand">Command to export runtime model by deep graph</param>
-    public ExportModelJob(ILogger<ExportModelJob> logger, IDistributedCacheService distributedCache, 
+    public ExportModelJob(ILogger<ExportModelJob> logger, IDistributedCacheService distributedCache, ICompressionService compressionService,
         IExportRtModelByQueryCommand exportRtModelByQueryCommand, IExportRtModelByDeepGraphCommand rtModelByDeepGraphCommand)
     {
         _logger = logger;
         _distributedCache = distributedCache;
+        _compressionService = compressionService;
         _exportRtModelByQueryCommand = exportRtModelByQueryCommand;
         _rtModelByDeepGraphCommand = rtModelByDeepGraphCommand;
     }
@@ -92,11 +96,12 @@ public class ExportModelJob : IExportModelJob
 
     private async Task<string> CacheFileToDistributedCache(string tenantId, string tempFile)
     {
-        await using var memoryStream = new MemoryStream();
+        await using var zipStream = new MemoryStream();
         using var streamReader = new StreamReader(tempFile);
-        await streamReader.BaseStream.PackFileToZipAsync("RtEntities.json", memoryStream, true);
-        memoryStream.Position = 0;
-        return await _distributedCache.CreateStreamAsync(tenantId, memoryStream, "application/zip", "RtEntities.zip",
+
+        await _compressionService.PackFileToZipAsync(zipStream, streamReader.BaseStream, "RtEntities.yaml", true);
+        zipStream.Position = 0;
+        return await _distributedCache.CreateStreamAsync(tenantId, zipStream, "application/zip", "RtEntities.zip",
             TimeSpan.FromHours(1));
     }
 }
