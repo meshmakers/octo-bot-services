@@ -79,14 +79,7 @@ stages:
               Repository: meshmakers/octo-mesh-bot-services
               Dockerfile: src/BotServices/Dockerfile
               IsRelease: ${{ variables.isRelease }}
-          - task: CopyFiles@2
-            condition: eq(variables.generateDocumentation, 'true')
-            displayName: 'Copy Files from $(Build.SourcesDirectory) src/SystemBotCkModel/bin/**/octo-ck-libraries/**/*.md to $(build.artifactstagingdirectory)'
-            inputs:
-              SourceFolder: $(Build.SourcesDirectory)
-              Contents: |
-                src/SystemBotCKModel/bin/Release/net8.0/octo-ck-libraries/SystemBotCkModel/out/System/Bot/*.*
-              TargetFolder: $(build.artifactstagingdirectory)
+          
           - task: PublishBuildArtifacts@1
             displayName: 'Publish Artifact: local'
             inputs:
