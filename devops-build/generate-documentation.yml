@@ -4,7 +4,7 @@ parameters:
 
 steps:
   - task: DotNetCoreCLI@2
-    condition: eq(parameters.GenerateDocumentation, 'true')
+    condition: ${{ eq(parameters.GenerateDocumentation, 'true') }}
     displayName: 'Generate Documentation'
     inputs:
       command: 'build'
@@ -12,7 +12,7 @@ steps:
       arguments: '--configuration Release /p:OctoGenerateCkDocumentation=true'
       
   - task: CopyFiles@2
-    condition: eq(parameters.GenerateDocumentation, 'true')
+    condition: ${{ eq(parameters.GenerateDocumentation, 'true') }}
     displayName: 'Copy Files from $(Build.SourcesDirectory)/**/bin/**/octo-ck-libraries/SystemBotCkModel/** to $(build.artifactstagingdirectory)'
     inputs:
       SourceFolder: $(Build.SourcesDirectory)
