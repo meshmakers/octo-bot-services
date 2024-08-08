@@ -18,15 +18,6 @@ steps:
     tags: |
       $(Build.BuildNumber)
       
-- task: CopyFiles@2
-  condition: eq(variables.generateDocumentation, 'true')
-  displayName: 'Copy Files from $(Build.SourcesDirectory)/**/SystemBotCkModel/**/*.md to $(build.artifactstagingdirectory)'
-  inputs:
-    SourceFolder: $(Build.SourcesDirectory)
-    Contents: |
-      /**/bin/**/octo-ck-libraries/SystemBotCkModel/**
-    TargetFolder: $(build.artifactstagingdirectory)
-    
 - task: Docker@2
   condition: ${{ eq(parameters.IsRelease, true) }}
   displayName: Push to public ${{ parameters.Repository }}
