@@ -17,5 +17,5 @@ steps:
     inputs:
       SourceFolder: $(Build.SourcesDirectory)
       Contents: |
-        /**/bin/**/octo-ck-libraries/SystemBotCkModel/**
+        /**/*CkModel/**
       TargetFolder: $(build.artifactstagingdirectory)
