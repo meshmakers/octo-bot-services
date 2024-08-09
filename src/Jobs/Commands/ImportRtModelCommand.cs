@@ -9,6 +9,7 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
 using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
+using Meshmakers.Octo.Sdk.ServiceClient;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
@@ -76,7 +77,7 @@ internal class ImportRtModelCommand(
             session.StartTransaction();
             await using (var stream = File.OpenRead(filePath))
             {
-                if (contentType.ToLower() == "text/yaml")
+                if (contentType.ToLower() == MimeTypes.MimeTypeYaml)
                 {
                     OperationResult operationResult = new();
                     var rtModelRootDto = await _rtYamlSerializer.DeserializeAsync(stream, filePath, operationResult);
