@@ -1,8 +1,8 @@
-using System.ComponentModel;
-using Meshmakers.Common.Shared;
+using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
-using NLog;
+using Meshmakers.Octo.Sdk.ServiceClient;
+using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
@@ -11,21 +11,27 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// </summary>
 public class ImportModelJob : IImportModelJob
 {
-    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private readonly ILogger<ImportModelJob>  _logger;
     private readonly IDistributedCacheService _distributedCacheService;
+    private readonly ICompressionService _compressionService;
     private readonly IImportCkModelCommand _importCkModelCommand;
     private readonly IImportRtModelCommand _importRtModelCommand;
 
     /// <summary>
     ///     Constructor
     /// </summary>
-    /// <param name="distributedCacheService"></param>
-    /// <param name="importCkModelCommand">Redis distributed cache for file caching</param>
-    /// <param name="importRtModelCommand"></param>
-    public ImportModelJob(IDistributedCacheService distributedCacheService, IImportCkModelCommand importCkModelCommand,
+    /// <param name="logger">Instance of the logger</param>
+    /// <param name="distributedCacheService">Service for distributed caching</param>
+    /// <param name="compressionService">Service for compressing and decompressing files</param>
+    /// <param name="importCkModelCommand">Command to import CK model</param>
+    /// <param name="importRtModelCommand">Command to import RT model</param>
+    public ImportModelJob(ILogger<ImportModelJob> logger, IDistributedCacheService distributedCacheService, ICompressionService compressionService,
+        IImportCkModelCommand importCkModelCommand,
         IImportRtModelCommand importRtModelCommand)
     {
+        _logger = logger;
         _distributedCacheService = distributedCacheService;
+        _compressionService = compressionService;
         _importCkModelCommand = importCkModelCommand;
         _importRtModelCommand = importRtModelCommand;
     }
@@ -35,29 +41,28 @@ public class ImportModelJob : IImportModelJob
     /// </summary>
     /// <param name="tenantId">The corresponding tenant id</param>
     /// <param name="key">The key definition in redis</param>
-    /// <param name="cancellationToken">An cancellation token to abort the job</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
-    [DisplayName("Importing ConstructionKit Metadata to data source '{0}'")]
     public async Task ImportCkAsync(string tenantId, string key,
         IBotCancellationToken? cancellationToken)
     {
         try
         {
-            Logger.Info($"Reading input file from cache for CK import to '{tenantId}'");
+            _logger.LogInformation("Reading input file from cache for CK import to \'{TenantId}\'", tenantId);
             var tempFile = await GetTempFile(tenantId, key);
 
-            Logger.Info($"Starting import of file '{tempFile}'");
+            _logger.LogInformation("Starting import of file \'{TempFile}\'", tempFile);
 
             await _importCkModelCommand.ImportAsync(tenantId, tempFile.Item1,
                 cancellationToken?.ShutdownToken);
 
             await ClearCache(tenantId, key);
 
-            Logger.Info($"Import of file '{tempFile}' completed.");
+            _logger.LogInformation("Import of file \'{TempFile}\' completed", tempFile);
         }
         catch (Exception e)
         {
-            Logger.Error(e, "Import failed with error.");
+            _logger.LogError(e, "Import failed with error");
             throw;
         }
     }
@@ -67,27 +72,26 @@ public class ImportModelJob : IImportModelJob
     /// </summary>
     /// <param name="tenantId">The corresponding tenant</param>
     /// <param name="key">The key definition in redis</param>
-    /// <param name="cancellationToken">An cancellation token to abort the job</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
-    [DisplayName("Importing Runtime Metadata to data source '{0}'")]
     public async Task ImportRtAsync(string tenantId, string key, IBotCancellationToken? cancellationToken)
     {
         try
         {
-            Logger.Info($"Reading input file from cache for RT import to '{tenantId}'");
+            _logger.LogInformation("Reading input file from cache for RT import to \'{TenantId}\'", tenantId);
             var tempFile = await GetTempFile(tenantId, key);
 
-            Logger.Info($"Starting import of file '{tempFile}'");
+            _logger.LogInformation("Starting import of file \'{TempFile}\'", tempFile);
 
             await _importRtModelCommand.Import(tenantId, tempFile.Item1, tempFile.Item2, cancellationToken?.ShutdownToken);
 
             await ClearCache(tenantId, key);
 
-            Logger.Info($"Import of file '{tempFile}' completed.");
+            _logger.LogInformation("Import of file \'{TempFile}\' completed", tempFile);
         }
         catch (Exception e)
         {
-            Logger.Error(e, "Import failed with error.");
+            _logger.LogError(e, "Import failed with error");
             throw;
         }
     }
@@ -97,28 +101,38 @@ public class ImportModelJob : IImportModelJob
         var cacheStream = await _distributedCacheService.GetCacheStreamByIdAsync(tenantId, key);
         if (cacheStream == null)
         {
-            throw new JobFailedException("No value in distribute cache found.");
+            throw JobFailedException.CacheStreamNotFound(tenantId, key);
         }
 
         var tempFile = Path.GetTempFileName();
 
-        if (cacheStream.ContentType.ToLower() == "application/zip")
+        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeZip)
         {
-            await cacheStream.Stream.ExtractFileFromZipAsync(cacheStream.ContentType, ".json", tempFile);
-        }
-        else if (cacheStream.ContentType.ToLower() == "application/json" || cacheStream.ContentType.ToLower() == "text/yaml")
-        {
-            await using (var streamWriter = new StreamWriter(tempFile))
+            string contentType = MimeTypes.MimeTypeJson;
+            await _compressionService.ExtractFileFromZipAsync(cacheStream.Stream, cacheStream.ContentType, files =>
             {
-                await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
-            }
-        }
-        else
-        {
-            throw new JobFailedException("File type is not supported.");
+                var compressedFiles = files as CompressedFile[] ?? files.ToArray();
+                var jsonFile = compressedFiles.FirstOrDefault(x => Path.GetExtension(x.Name).ToLower() == ".json");
+                if (jsonFile == null)
+                {
+                    contentType = MimeTypes.MimeTypeYaml;
+                    return compressedFiles.FirstOrDefault(x => Path.GetExtension(x.Name).ToLower() == ".yaml");
+                 
+                }
+
+                return null;
+            }, tempFile);
+            return new Tuple<string, string>(tempFile, contentType);
         }
 
-        return new Tuple<string, string>(tempFile, cacheStream.ContentType);
+        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeJson || cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeYaml)
+        {
+            await using var streamWriter = new StreamWriter(tempFile);
+            await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
+            return new Tuple<string, string>(tempFile, cacheStream.ContentType);
+        }
+
+        throw JobFailedException.ContentTypeNotSupported(cacheStream.ContentType);
     }
 
     private async Task ClearCache(string tenantId, string key)

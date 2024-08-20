@@ -35,7 +35,7 @@ using NLog;
 using NLog.Web;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
-// NLog: setup the logger first to catch all errors
+// NLog: set up the logger first to catch all errors
 var nLogFactory = LogManager.Setup().RegisterNLogWeb().LoadConfigurationFromFile("nlog.config").LogFactory;
 var logger = nLogFactory.GetCurrentClassLogger();
 
