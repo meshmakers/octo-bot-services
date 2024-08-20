@@ -10,12 +10,12 @@ steps:
       command: 'build'
       projects: '**/SystemBotCkModel.csproj'
       arguments: '--configuration Release /p:OctoGenerateCkDocumentation=true'
-      
+
   - task: CopyFiles@2
     condition: ${{ eq(parameters.GenerateDocumentation, 'true') }}
-    displayName: 'Copy Files from $(Build.SourcesDirectory)/**/*CkModel/**/out/**/*.md to $(build.artifactstagingdirectory)'
+    displayName: 'Copy Files from $(Build.SourcesDirectory)/**/octo-ck-libraries/**/out/**/*.md to $(build.artifactstagingdirectory)'
     inputs:
       SourceFolder: $(Build.SourcesDirectory)
       Contents: |
-        /**/*CkModel/**/out/**/*.md
+        /**/octo-ck-libraries/**/out/**/*.md
       TargetFolder: $(build.artifactstagingdirectory)
