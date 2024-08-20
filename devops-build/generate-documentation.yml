@@ -13,7 +13,7 @@ steps:
       
   - task: CopyFiles@2
     condition: ${{ eq(parameters.GenerateDocumentation, 'true') }}
-    displayName: 'Copy Files from $(Build.SourcesDirectory)/**/bin/**/octo-ck-libraries/SystemBotCkModel/** to $(build.artifactstagingdirectory)'
+    displayName: 'Copy Files from $(Build.SourcesDirectory)/**/*CkModel/**/out/**/*.md to $(build.artifactstagingdirectory)'
     inputs:
       SourceFolder: $(Build.SourcesDirectory)
       Contents: |
