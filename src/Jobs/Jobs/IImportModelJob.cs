@@ -1,4 +1,4 @@
-using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Hangfire;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
@@ -12,8 +12,9 @@ public interface IImportModelJob
     /// </summary>
     /// <param name="tenantId">The corresponding tenant id</param>
     /// <param name="key">The key definition in redis</param>
-    /// <param name="cancellationToken">An cancellation token to abort the job</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
+    [JobDisplayName("Importing ConstructionKit Metadata to data source '{0}'")]
     Task ImportCkAsync(string tenantId, string key,
         IBotCancellationToken? cancellationToken);
 
@@ -22,7 +23,8 @@ public interface IImportModelJob
     /// </summary>
     /// <param name="tenantId">The corresponding tenant</param>
     /// <param name="key">The key definition in redis</param>
-    /// <param name="cancellationToken">An cancellation token to abort the job</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
+    [JobDisplayName("Importing Runtime Metadata to data source '{0}'")]
     Task ImportRtAsync(string tenantId, string key, IBotCancellationToken? cancellationToken);
 }

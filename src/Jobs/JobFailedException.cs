@@ -20,4 +20,14 @@ public class JobFailedException : Exception
     public JobFailedException(string message, Exception? inner) : base(message, inner)
     {
     }
+
+    internal static Exception ContentTypeNotSupported(string contentType)
+    {
+        return new JobFailedException($"File type '{contentType}' is not supported.");
+    }
+
+    internal static Exception CacheStreamNotFound(string tenantId, string key)
+    {
+        return new JobFailedException($"No value of key '{key} in distribute cache for tenant '{tenantId}' found.");
+    }
 }
