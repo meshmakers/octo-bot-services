@@ -49,14 +49,6 @@ stages:
                 '**/*Tests.csproj'
                 !'**/*SystemTests.csproj'
               testRunTitle: 'CI'
-          - task: CopyFiles@0
-            displayName: 'Copy Files from bin/**/documentation/**/*.* [Where model documentation is generated to appropriate structure in staging directory]to $(build.artifactstagingdirectory)'
-            inputs:
-              SourceFolder: $(Build.SourcesDirectory)
-              Contents: |
-                bin/**/octo-ck-libraries/**/*.*
-              TargetFolder: $(build.artifactstagingdirectory)
-            condition: and(eq(variables["generateDocumentation"], 'true'))
           - task: PowerShell@2
             displayName: 'Create versioninfo file'
             inputs:
