@@ -61,9 +61,11 @@ stages:
               Repository: meshmakers/octo-mesh-bot-services
               Dockerfile: src/BotServices/Dockerfile
               IsRelease: ${{ variables.isRelease }}   
-          - template: generate-documentation.yml
-            parameters:
-              GenerateDocumentation: ${{ variables.generateDocumentation }}
+          - ${{ if eq(variables.generateDocumentation, true) }}:
+              - template: generate-documentation.yml
+                parameters:
+                  ConstructionKits:
+                    - '**/SystemBotCkModel.csproj'
           - task: PublishBuildArtifacts@1
             displayName: 'Publish Artifact: local'
             inputs:
