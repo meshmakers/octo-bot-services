@@ -16,27 +16,23 @@ using SystemBotCkModel.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
-internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorServiceBase
+internal class DefaultConfigurationCreatorService(
+    ILoggerFactory loggerFactory,
+    IDiagnosticsService diagnosticsService,
+    ISystemContext systemContext,
+    IJobCreatorService jobCreatorService,
+    ICommandClient<CreateIdentityDataCommandRequest> commandClient,
+    IOptions<OctoBotServicesOptions> octoBotServicesOptions)
+    : DefaultConfigurationCreatorServiceBase(loggerFactory.CreateLogger<DefaultConfigurationCreatorServiceBase>())
 {
-    private readonly ILogger<DefaultConfigurationCreatorService> _logger;
-    private readonly ICommandClient<CreateIdentityDataCommandRequest> _commandClient;
+    private readonly ILogger<DefaultConfigurationCreatorService> _logger = loggerFactory.CreateLogger<DefaultConfigurationCreatorService>();
 
-    private readonly OctoBotServicesOptions _octoBotServicesOptions;
-    private readonly ISystemContext _systemContext;
-    private readonly IJobCreatorService _jobCreatorService;
-
-    public DefaultConfigurationCreatorService(ILoggerFactory loggerFactory, ISystemContext systemContext,
-        IJobCreatorService jobCreatorService,
-        ICommandClient<CreateIdentityDataCommandRequest> commandClient,
-        IOptions<OctoBotServicesOptions> octoBotServicesOptions)
-        : base(loggerFactory.CreateLogger<DefaultConfigurationCreatorServiceBase>())
+    public override async Task InitializeAsync()
     {
-        _logger = loggerFactory.CreateLogger<DefaultConfigurationCreatorService>();
-        _commandClient = commandClient;
+        // Reconfigure the log level based on the configuration
+        await diagnosticsService.ReconfigureLogLevelAsync(octoBotServicesOptions.Value.MinLogLevel);
 
-        _systemContext = systemContext;
-        _jobCreatorService = jobCreatorService;
-        _octoBotServicesOptions = octoBotServicesOptions.Value;
+        await base.InitializeAsync();
     }
 
     protected override async Task SetupTenantAsync(string tenantId)
@@ -44,7 +40,7 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         // Do nothing if the system tenant is not existing.
         // Identity Service is creating the system tenant currently.
         // We wait for a PosTenantCreated event to create the default configuration.
-        if (!await _systemContext.IsSystemTenantExistingAsync())
+        if (!await systemContext.IsSystemTenantExistingAsync())
         {
             return;
         }
@@ -54,7 +50,7 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         await ImportCkModelAsync(tenantId);
 
         // Identity configuration is next
-        if (tenantId != _systemContext.TenantId)
+        if (tenantId != systemContext.TenantId)
         {
             // Currently we only support the system tenant.
             return;
@@ -62,29 +58,29 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         
         _logger.LogInformation("Setting up default identity data for tenant '{TenantId}'", tenantId);
 
-        using var session = await _systemContext.GetAdminSessionAsync();
+        using var session = await systemContext.GetAdminSessionAsync();
         session.StartTransaction();
 
         var botServiceConfiguration =
-            await _systemContext.GetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
+            await systemContext.GetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
                 new DefaultConfigurationVersion { Version = -1 });
         if (botServiceConfiguration == null ||
             botServiceConfiguration.Version < BotServiceConstants.BotServiceSchemaVersionValue)
         {
             _logger.LogInformation("Creating identity data for tenant '{TenantId}'", tenantId);
 
-            CreateIdentityDataCommandRequest createIdentityDataCommandRequest = new(_systemContext.TenantId);
+            CreateIdentityDataCommandRequest createIdentityDataCommandRequest = new(systemContext.TenantId);
             CreateApiScopes(createIdentityDataCommandRequest);
             CreateApiResources(createIdentityDataCommandRequest);
             CreateClients(createIdentityDataCommandRequest);
 
             _logger.LogInformation("Creating identity data for tenant '{TenantId}'", tenantId);
-            var r = await _commandClient.GetResponseWithRetry<EnumCommandResponse<CreateIdentityDataResult>>(
+            var r = await commandClient.GetResponseWithRetry<EnumCommandResponse<CreateIdentityDataResult>>(
                 createIdentityDataCommandRequest);
             _logger.LogInformation("Create identity data response: {Response}", r.Response);
             if (r.Response == CreateIdentityDataResult.Success)
             {
-                await _systemContext.SetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
+                await systemContext.SetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
                     new DefaultConfigurationVersion { Version = BotServiceConstants.BotServiceSchemaVersionValue });
             }
             else if (r.Response != CreateIdentityDataResult.FailedTenantHasNoIdentityCk)
@@ -102,15 +98,15 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         await session.CommitTransactionAsync();
 
         // Create jobs
-        _jobCreatorService.DeleteJobs(tenantId);
-        _jobCreatorService.CreateJobs(tenantId);
+        jobCreatorService.DeleteJobs(tenantId);
+        jobCreatorService.CreateJobs(tenantId);
 
         _logger.LogInformation("Setup default configuration for tenant '{TenantId}' completed", tenantId);
     }
 
     private async Task ImportCkModelAsync(string tenantId)
     {
-        var tenantContext = await _systemContext.FindTenantContextAsync(tenantId);
+        var tenantContext = await systemContext.FindTenantContextAsync(tenantId);
 
         if (!await tenantContext.IsCkModelExistingAsync(SystemBotCkIds.ModelId))
         {
@@ -169,7 +165,7 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
         {
             new(CommonConstants.BotServicesClientId,
                 BotTexts.Backend_BotServices_UserSchema_BotServices_DisplayName,
-                _octoBotServicesOptions.PublicUrl)
+                octoBotServicesOptions.Value.PublicUrl)
             {
                 AllowedGrantTypes = [OidcConstants.GrantTypes.Implicit],
 
@@ -177,11 +173,11 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
 
                 RedirectUris =
                 [
-                    _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/") + "signin-oidc"
+                    octoBotServicesOptions.Value.PublicUrl.EnsureEndsWith("/") + "signin-oidc"
                 ],
 
-                PostLogoutRedirectUris = [_octoBotServicesOptions.PublicUrl.EnsureEndsWith("/")],
-                AllowedCorsOrigins = [_octoBotServicesOptions.PublicUrl.TrimEnd('/')],
+                PostLogoutRedirectUris = [octoBotServicesOptions.Value.PublicUrl.EnsureEndsWith("/")],
+                AllowedCorsOrigins = [octoBotServicesOptions.Value.PublicUrl.TrimEnd('/')],
                 AllowOfflineAccess = true,
                 AllowedScopes =
                 [
@@ -193,17 +189,17 @@ internal class DefaultConfigurationCreatorService : DefaultConfigurationCreatorS
             },
             new(CommonConstants.OctoBotServicesSwaggerClientId,
                 BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName,
-                _octoBotServicesOptions.PublicUrl)
+                octoBotServicesOptions.Value.PublicUrl)
             {
                 AllowedGrantTypes = [OidcConstants.GrantTypes.AuthorizationCode],
 
                 RedirectUris =
                 [
-                    _octoBotServicesOptions.PublicUrl.EnsureEndsWith("/swagger/oauth2-redirect.html")
+                    octoBotServicesOptions.Value.PublicUrl.EnsureEndsWith("/swagger/oauth2-redirect.html")
                 ],
 
-                PostLogoutRedirectUris = [_octoBotServicesOptions.PublicUrl.EnsureEndsWith("/")],
-                AllowedCorsOrigins = [_octoBotServicesOptions.PublicUrl.TrimEnd('/')],
+                PostLogoutRedirectUris = [octoBotServicesOptions.Value.PublicUrl.EnsureEndsWith("/")],
+                AllowedCorsOrigins = [octoBotServicesOptions.Value.PublicUrl.TrimEnd('/')],
                 AllowedScopes =
                 [
                     CommonConstants.Scopes.OpenId,
