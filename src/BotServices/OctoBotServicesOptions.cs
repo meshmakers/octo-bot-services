@@ -1,3 +1,5 @@
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+
 namespace Meshmakers.Octo.Backend.BotServices;
 
 /// <summary>
@@ -16,6 +18,7 @@ public class OctoBotServicesOptions
         AuthorityUrl = "https://localhost:5003";
         PublicUrl = "https://localhost:5009";
         PublicAdminPanelUrl = "https://localhost:5005";
+        MinLogLevel = LogLevelDto.Warn;
     }
 
     /// <summary>
@@ -57,4 +60,9 @@ public class OctoBotServicesOptions
     ///     (public) base address of the dashboard
     /// </summary>
     public string PublicAdminPanelUrl { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the minimal log level to be logged
+    /// </summary>
+    public LogLevelDto MinLogLevel { get; set; }
 }
