@@ -38,7 +38,7 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
     ///     Aggregates all aggregatable attributes
     /// </summary>
     /// <param name="tenantId">The corresponding data source</param>
-    /// <param name="cancellationToken">An cancellation token to abort the job</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
     [DisplayName("Aggregates all attributes of data source '{0}'")]
     public async Task Run(string tenantId, IBotCancellationToken? cancellationToken)
@@ -51,6 +51,7 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
             {
                 return;
             }
+
             var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
 
             using var session = await tenantRepository.GetSessionAsync();
@@ -58,7 +59,8 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
 
             var dataOperation = DataQueryOperation.Create();
             var configurationResult =
-                await tenantRepository.GetRtEntitiesByTypeAsync<RtAttributeAggregateConfiguration>(session, dataOperation);
+                await tenantRepository.GetRtEntitiesByTypeAsync<RtAttributeAggregateConfiguration>(session,
+                    dataOperation);
 
             if (!configurationResult.Items.Any())
             {
@@ -71,60 +73,73 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
             //     .GetRtAssociationTargetsAsync<RtAttributeAggregateConfiguration, RtEntity>(session, originEntities,
             //         SystemBotCkIds.Configures, GraphDirections.Outbound, null, dataOperation);
 
-            await _distributionEventHubService.PublishAsync(new PreUpdateTenant(tenantId));
-
-            foreach (var configurationRtEntity in configurationResult.Items)
+            var correlationId = Guid.NewGuid();
+            try
             {
-                cancellationToken?.ThrowIfCancellationRequested();
+                await _distributionEventHubService.PublishAsync(new PreUpdateTenant(tenantId, correlationId,
+                    DateTime.Now));
 
-                var rtAssociations = await tenantRepository.GetRtAssociationsAsync(session, configurationRtEntity.RtId,
-                    GraphDirections.Outbound, SystemBotCkIds.Configures);
-                var rtAssociation = rtAssociations.FirstOrDefault();
-                if (rtAssociation == null)
+                foreach (var configurationRtEntity in configurationResult.Items)
                 {
-                    continue;
+                    cancellationToken?.ThrowIfCancellationRequested();
+
+                    var rtAssociations = await tenantRepository.GetRtAssociationsAsync(session,
+                        configurationRtEntity.RtId,
+                        GraphDirections.Outbound, SystemBotCkIds.Configures);
+                    var rtAssociation = rtAssociations.FirstOrDefault();
+                    if (rtAssociation == null)
+                    {
+                        continue;
+                    }
+
+                    if (!configurationRtEntity.IsAutoCompleteEnabled)
+                    {
+                        continue;
+                    }
+
+                    CkId<CkAttributeId>? attributeId = null;
+                    if (!rtAssociation.Attributes.TryGetValue(SystemBotCkIds.SelectedAttributeIdAttribute,
+                            out var attributeValue))
+                    {
+                        continue;
+                    }
+
+                    if (attributeValue is string s1)
+                    {
+                        attributeId = s1;
+                    }
+
+                    cancellationToken?.ThrowIfCancellationRequested();
+
+                    var ckTypeGraph = _ckCacheService.GetCkType(tenantId,
+                        rtAssociation.TargetCkTypeId ?? throw OperationFailedException.CkTypeIdUndefined());
+                    if (attributeId == null ||
+                        !ckTypeGraph.AllAttributes.TryGetValue(attributeId, out var attributeCacheItem))
+                    {
+                        continue;
+                    }
+
+                    var autoCompleteTexts = await tenantRepository.ExtractAutoCompleteValuesAsync(session,
+                        rtAssociation.TargetCkTypeId ?? throw OperationFailedException.CkTypeIdUndefined(),
+                        attributeCacheItem.AttributeName, configurationRtEntity.AutoCompleteFilter,
+                        configurationRtEntity.AutoCompleteLimit);
+
+                    cancellationToken?.ThrowIfCancellationRequested();
+
+                    await tenantRepository.UpdateAutoCompleteTexts(session, ckTypeGraph.CkTypeId,
+                        attributeCacheItem.AttributeName, autoCompleteTexts.Select(x => x.Text));
                 }
 
-                if (!configurationRtEntity.IsAutoCompleteEnabled)
-                {
-                    continue;
-                }
+                await session.CommitTransactionAsync();
 
-                CkId<CkAttributeId>? attributeId = null;
-                if (!rtAssociation.Attributes.TryGetValue(SystemBotCkIds.SelectedAttributeIdAttribute, out var attributeValue))
-                {
-                    continue;
-                }
 
-                if (attributeValue is string s1)
-                {
-                    attributeId = s1;
-                }
-
-                cancellationToken?.ThrowIfCancellationRequested();
-
-                var ckTypeGraph = _ckCacheService.GetCkType(tenantId, rtAssociation.TargetCkTypeId ?? throw OperationFailedException.CkTypeIdUndefined());
-                if (attributeId == null || !ckTypeGraph.AllAttributes.TryGetValue(attributeId, out var attributeCacheItem))
-                {
-                    continue;
-                }
-
-                var autoCompleteTexts = await tenantRepository.ExtractAutoCompleteValuesAsync(session,
-                    rtAssociation.TargetCkTypeId ?? throw OperationFailedException.CkTypeIdUndefined(),
-                    attributeCacheItem.AttributeName, configurationRtEntity.AutoCompleteFilter,
-                    configurationRtEntity.AutoCompleteLimit);
-
-                cancellationToken?.ThrowIfCancellationRequested();
-
-                await tenantRepository.UpdateAutoCompleteTexts(session, ckTypeGraph.CkTypeId,
-                    attributeCacheItem.AttributeName, autoCompleteTexts.Select(x => x.Text));
+                Logger.Info($"Aggregation of attribute values of data source '{tenantId}' completed.");
             }
-
-            await session.CommitTransactionAsync();
-
-            await _distributionEventHubService.PublishAsync(new PosUpdateTenant(tenantId));
-
-            Logger.Info($"Aggregation of attribute values of data source '{tenantId}' completed.");
+            finally
+            {
+                await _distributionEventHubService.PublishAsync(new PosUpdateTenant(tenantId, correlationId,
+                    DateTime.Now));
+            }
         }
         catch (Exception e)
         {
