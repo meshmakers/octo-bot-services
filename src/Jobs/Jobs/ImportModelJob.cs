@@ -126,11 +126,18 @@ public class ImportModelJob : IImportModelJob
             return new Tuple<string, string>(tempFile, contentType);
         }
 
-        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeJson || cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeYaml)
+        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeJson ||
+            cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeYaml ||
+            cacheStream.ContentType.ToLower() == MimeTypes.Unknown)
         {
+            var contentType = cacheStream.ContentType;
+            if (cacheStream.ContentType.ToLower() == MimeTypes.Unknown)
+            {
+                contentType = MimeTypes.MimeTypeYaml;
+            }
             await using var streamWriter = new StreamWriter(tempFile);
             await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
-            return new Tuple<string, string>(tempFile, cacheStream.ContentType);
+            return new Tuple<string, string>(tempFile, contentType);
         }
 
         throw JobFailedException.ContentTypeNotSupported(cacheStream.ContentType);
