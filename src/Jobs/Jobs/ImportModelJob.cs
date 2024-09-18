@@ -106,7 +106,8 @@ public class ImportModelJob : IImportModelJob
 
         var tempFile = Path.GetTempFileName();
 
-        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeZip)
+        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeZip ||
+            cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeXZipCompressed)
         {
             string contentType = MimeTypes.MimeTypeJson;
             await _compressionService.ExtractFileFromZipAsync(cacheStream.Stream, cacheStream.ContentType, files =>
