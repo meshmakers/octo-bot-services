@@ -18,7 +18,7 @@ public class OctoBotServicesOptions
         AuthorityUrl = "https://localhost:5003";
         PublicUrl = "https://localhost:5009";
         PublicAdminPanelUrl = "https://localhost:5005";
-        MinLogLevel = LogLevelDto.Debug;
+        MinLogLevel = LogLevelDto.Info;
     }
 
     /// <summary>
