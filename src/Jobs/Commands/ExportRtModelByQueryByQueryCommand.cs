@@ -89,7 +89,7 @@ internal class ExportRtModelByQueryByQueryCommand(
 
                 entityDto.Attributes.AddRange(entity.Attributes.Select(pair =>
                 {
-                    var typeAttributeGraph = ckTypeGraph.AllAttributes[pair.Key];
+                    var typeAttributeGraph = ckTypeGraph.AllAttributesByName[pair.Key];
                     return new RtAttributeDto
                     {
                         Id = typeAttributeGraph.CkAttributeId,
