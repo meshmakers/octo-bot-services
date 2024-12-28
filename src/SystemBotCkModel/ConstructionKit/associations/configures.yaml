@@ -1,10 +1,10 @@
 $schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
 associationRoles:
 - id: Configures
-  inboundName: Configures
-  outboundName: ConfiguredBy
-  inboundMultiplicity: One
-  outboundMultiplicity: N
+  inboundName: ConfiguredBy
+  inboundMultiplicity: N
+  outboundName: Configures
+  outboundMultiplicity: One
   attributes:
     - id: ${thisModel}/SelectedAttributeId
       name: SelectedAttributeId
