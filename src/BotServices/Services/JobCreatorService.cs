@@ -2,23 +2,11 @@ using Hangfire;
 using Hangfire.Storage;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
-using Meshmakers.Octo.ConstructionKit.Contracts;
-using Meshmakers.Octo.Runtime.Contracts.MongoDb;
-using Meshmakers.Octo.Services.Infrastructure;
-using Meshmakers.Octo.Services.Notifications.Generated.System.Notification.v1;
-using SystemBotCkModel.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
 internal class JobCreatorService : IJobCreatorService
 {
-    private readonly ISystemContext _systemContext;
-
-    public JobCreatorService(ISystemContext systemContext)
-    {
-        _systemContext = systemContext;
-    }
-    
     public void CreateJobs(string tenantId)
     {
         // Create new jobs
@@ -26,23 +14,18 @@ internal class JobCreatorService : IJobCreatorService
             job => job.Run(tenantId, BotCancellationToken.Null), "*/15 * * * *");
         RecurringJob.AddOrUpdate<IAttributeValueAggregatorJob>($"{tenantId}_AttributeValueAggregate",
             job => job.Run(tenantId, BotCancellationToken.Null), Cron.Daily);
-        RecurringJob.AddOrUpdate<IEMailSenderJob>($"{tenantId}_Notification_EMail_Sender",
-            job => job.SendEMail(tenantId, BotCancellationToken.Null), Cron.Minutely);
     }
 
     public void DeleteJobs(string tenantId)
     {
-        using (var connection = JobStorage.Current.GetConnection())
+        using var connection = JobStorage.Current.GetConnection();
+        // Clean old jobs
+        foreach (var recurringJob in connection.GetRecurringJobs())
         {
-            // Clean old jobs
-            foreach (var recurringJob in connection.GetRecurringJobs())
+            if (recurringJob.Id.StartsWith($"{tenantId}_ServiceHook") ||
+                recurringJob.Id.StartsWith($"{tenantId}_AttributeValueAggregate"))
             {
-                if (recurringJob.Id.StartsWith($"{tenantId}_ServiceHook") ||
-                    recurringJob.Id.StartsWith($"{tenantId}_AttributeValueAggregate") ||
-                    recurringJob.Id.StartsWith($"{tenantId}_Notification_EMail_Sender"))
-                {
-                    RecurringJob.RemoveIfExists(recurringJob.Id);
-                }
+                RecurringJob.RemoveIfExists(recurringJob.Id);
             }
         }
     }
