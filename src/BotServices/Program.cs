@@ -11,9 +11,7 @@ using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Hangfire;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
-using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts;
-using Meshmakers.Octo.Communication.Contracts.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Extensions;
 using Meshmakers.Octo.Services.Common;
@@ -22,7 +20,6 @@ using Meshmakers.Octo.Services.Common.Cors;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Infrastructure.Services;
-using Meshmakers.Octo.Services.Notifications;
 using Meshmakers.Octo.Services.Observability;
 using Meshmakers.Octo.Services.Swagger.Configuration;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -48,28 +45,22 @@ try
     builder.AddObservability()
         .AddSystemContextHealthCheck();
 
-    var services = builder.Services;
-
     JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
     builder.Services.Configure<OctoBotServicesOptions>(options =>
         builder.Configuration.GetSection("Bot").Bind(options));
     builder.Services.Configure<OctoSystemConfiguration>(options => builder.Configuration.GetSection("System").Bind(options));
-    builder.Services.Configure<EMailOptions>(options => builder.Configuration.GetSection("EMail").Bind(options));
 
     builder.Services.AddSingleton<CorsPolicyProvider>();
     builder.Services.AddSingleton<ICorsPolicyProvider>(provider => provider.GetRequiredService<CorsPolicyProvider>());
 
     builder.Services.AddTransient<IJobCreatorService, JobCreatorService>();
-    builder.Services.AddSingleton<INotificationRepository, EntityNotificationRepository>();
-    builder.Services.AddSingleton<IEMailSender, EMailSender>();
     builder.Services.AddCors();
 
     builder.Services.AddScoped<IDefaultConfigurationCreatorService, DefaultConfigurationCreatorService>();
 
     builder.Services.AddTransient<IImportModelJob, ImportModelJob>();
     builder.Services.AddTransient<IExportModelJob, ExportModelJob>();
-    builder.Services.AddTransient<IEMailSenderJob, EMailSenderJob>();
     builder.Services.AddTransient<IServiceHookJob, ServiceHookJob>();
     builder.Services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
 
@@ -96,6 +87,7 @@ try
         .AddMongoDbRuntimeRepository();
 
     builder.Services.AddOctoCommands();
+    builder.Services.AddOctoNotification();
 
     builder.Services.ConfigureOptions<ConfigureIdentityServerAuthenticationOptions>();
     builder.Services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
