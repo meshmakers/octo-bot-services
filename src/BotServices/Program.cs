@@ -91,7 +91,7 @@ try
 
     builder.Services.ConfigureOptions<ConfigureIdentityServerAuthenticationOptions>();
     builder.Services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
-    builder.Services.ConfigureOptions<ConfigureOctoSwaggerOptions>();
+    builder.Services.ConfigureOptions<ConfigureOctoOpenApiOptions>();
     builder.Services.ConfigureOptions<ConfigureDistributionEventHubOptions>();
 
     builder.Services.AddAuthentication(authenticationOptions =>
@@ -164,7 +164,6 @@ try
 
     builder.Services.AddOctoApiVersioningAndDocumentation(options =>
     {
-        options.AddXmlDocAssembly<Program>();
         options.Scopes = new Dictionary<string, string>
         {
             {
@@ -182,7 +181,7 @@ try
 
         options.ClientId = CommonConstants.OctoBotServicesSwaggerClientId;
         options.AppName = BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName;
-    });
+    }).AddVersion();
 
     // Hangfire is used to handle background jobs and scheduled jobs
     builder.Services.AddHangfire((serviceProvider, config) =>
