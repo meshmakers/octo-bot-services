@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using Asp.Versioning;
 using Hangfire;
 using Hangfire.Storage.Monitoring;
 using IdentityModel;
