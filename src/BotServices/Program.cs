@@ -204,6 +204,7 @@ try
             Password = systemOptions.Value.AdminUserPassword,
             AuthenticationSource = systemOptions.Value.AuthenticationDatabaseName,
             UseTls = systemOptions.Value.UseTls,
+            DirectConnection = systemOptions.Value.UseDirectConnection,
             AllowInsecureTls = systemOptions.Value.AllowInsecureTls
         };
 
