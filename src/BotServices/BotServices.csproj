@@ -10,7 +10,7 @@
         <OutputType>Exe</OutputType>
         <RootNamespace>Meshmakers.Octo.Backend.BotServices</RootNamespace>
         <StartupObject />
-        <UserSecretsId>04bcde24-0d21-4346-8459-3bca58abec32</UserSecretsId>
+        <UserSecretsId>173d8e91-b831-4e8a-a43f-672c57e6a4da</UserSecretsId>
         <OutputPath>..\..\bin\$(Configuration)\</OutputPath>
         <DocumentationFile>..\..\bin\$(Configuration)\$(AssemblyName).xml</DocumentationFile>
         <NoWarn>1701;1702;CS8002</NoWarn>
