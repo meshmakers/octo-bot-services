@@ -31,7 +31,7 @@
         <value>Readonly access to bot API</value>
     </data>
     <data name="Backend_BotServices_UserSchema_Swagger_DisplayName" xml:space="preserve">
-        <value>Octo Services Swagger UI</value>
+        <value>OctoMesh Bot Services Swagger UI</value>
     </data>
     <data name="Backend_BotServices_UserSchema_BotServices_DisplayName" xml:space="preserve">
         <value>Bot Services UI</value>

@@ -93,7 +93,7 @@ try
     builder.Services.AddOctoCommands();
     builder.Services.AddOctoNotification();
 
-    builder.Services.ConfigureOptions<ConfigureIdentityServerAuthenticationOptions>();
+    builder.Services.ConfigureOptions<ConfigureJwtBearerOptions>();
     builder.Services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
     builder.Services.ConfigureOptions<ConfigureOctoOpenApiOptions>();
     builder.Services.ConfigureOptions<ConfigureDistributionEventHubOptions>();
@@ -192,7 +192,7 @@ try
         options.ApiTitle = "Octo Services API";
         options.ApiDescription = "Octo Mesh Bot builder.Services.";
 
-        options.ClientId = CommonConstants.OctoBotServicesSwaggerClientId;
+        options.ClientId = CommonConstants.BotServicesSwaggerClientId;
         options.AppName = BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName;
     }).AddVersion();
 

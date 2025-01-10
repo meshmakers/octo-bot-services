@@ -3,15 +3,9 @@ using Microsoft.Extensions.Options;
 
 namespace Meshmakers.Octo.Backend.BotServices.Configuration;
 
-internal class ConfigureOpenIdConnectOptions : IConfigureNamedOptions<OpenIdConnectOptions>
+internal class ConfigureOpenIdConnectOptions(IOptions<OctoBotServicesOptions> octoBotServicesOptions)
+    : IConfigureNamedOptions<OpenIdConnectOptions>
 {
-    private readonly IOptions<OctoBotServicesOptions> _octoBotServicesOptions;
-
-    public ConfigureOpenIdConnectOptions(IOptions<OctoBotServicesOptions> octoBotServicesOptions)
-    {
-        _octoBotServicesOptions = octoBotServicesOptions;
-    }
-
     public void Configure(OpenIdConnectOptions options)
     {
         Configure(Options.DefaultName, options);
@@ -19,6 +13,6 @@ internal class ConfigureOpenIdConnectOptions : IConfigureNamedOptions<OpenIdConn
 
     public void Configure(string? name, OpenIdConnectOptions options)
     {
-        options.Authority = _octoBotServicesOptions.Value.AuthorityUrl;
+        options.Authority = octoBotServicesOptions.Value.AuthorityUrl;
     }
 }

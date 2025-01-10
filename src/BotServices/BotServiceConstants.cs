@@ -22,7 +22,14 @@ internal static class BotServiceConstants
     /// </summary>
     public const string AuthenticatedUserPolicy = "AuthenticatedUserPolicy";
 
+    /// <summary>
+    ///     Policy for job api read only authorization
+    /// </summary>
     public const string JobApiReadOnlyPolicy = "JobApiReadOnlyPolicy";
+    
+    /// <summary>
+    ///     Policy for job api read write authorization
+    /// </summary>
     public const string JobApiReadWritePolicy = "JobApiReadWritePolicy";
 
     /// <summary>
