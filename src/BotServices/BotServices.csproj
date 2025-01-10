@@ -16,6 +16,7 @@
         <NoWarn>1701;1702;CS8002</NoWarn>
         <Configurations>Debug;Release;DebugL</Configurations>
         <Platforms>AnyCPU</Platforms>
+        <CopyDocumentationFilesFromPackages>true</CopyDocumentationFilesFromPackages>
     </PropertyGroup>
 
     <ItemGroup>
