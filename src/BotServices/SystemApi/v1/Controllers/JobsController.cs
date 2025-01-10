@@ -40,6 +40,8 @@ public class JobsController : ControllerBase
     // GET: system/Jobs?id=abc
     [HttpGet]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [ProducesResponseType(typeof(JobDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult Get([Required] string id)
     {
         try
@@ -68,6 +70,8 @@ public class JobsController : ControllerBase
     [HttpGet]
     [Route("download")]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> DownloadExportRtResult(string tenantId, string id)
     {
         try
@@ -100,6 +104,8 @@ public class JobsController : ControllerBase
     /// <returns></returns>
     [HttpDelete("{id}")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult Delete([Required] string id)
     {
         var result = BackgroundJob.Delete(id);

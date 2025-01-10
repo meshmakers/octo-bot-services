@@ -12,6 +12,7 @@ using Meshmakers.Octo.Backend.BotServices.Hangfire;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Communication.Contracts;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Extensions;
 using Meshmakers.Octo.Services.Common;
@@ -49,7 +50,8 @@ try
 
     builder.Services.Configure<OctoBotServicesOptions>(options =>
         builder.Configuration.GetSection("Bot").Bind(options));
-    builder.Services.Configure<OctoSystemConfiguration>(options => builder.Configuration.GetSection("System").Bind(options));
+    builder.Services.Configure<OctoSystemConfiguration>(options =>
+        builder.Configuration.GetSection("System").Bind(options));
 
     builder.Services.AddSingleton<CorsPolicyProvider>();
     builder.Services.AddSingleton<ICorsPolicyProvider>(provider => provider.GetRequiredService<CorsPolicyProvider>());
@@ -73,8 +75,10 @@ try
 
             c.AddCommandConsumer<ModelCommandsConsumer, ImportCkCommandRequest>(QueueNames.ImportCkCommand);
             c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>(QueueNames.ImportRtCommand);
-            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByQueryCommandRequest>(QueueNames.ExportRtByQueryCommand);
-            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByDeepGraphCommandRequest>(QueueNames.ExportRtByDeepGraphCommand);
+            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByQueryCommandRequest>(
+                QueueNames.ExportRtByQueryCommand);
+            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByDeepGraphCommandRequest>(QueueNames
+                .ExportRtByDeepGraphCommand);
             c.AddCommandConsumer<RecurringJobConsumer, RemoveRecurringJobsByScheduleGroupRequest>(QueueNames
                 .RemoveRecurringJobsByScheduleGroupCommand);
             c.AddCommandClient<CreateIdentityDataCommandRequest>(QueueNames.CreateIdentityDataCommand);
@@ -176,6 +180,15 @@ try
             }
         };
 
+        options.PolicyScopeMapping = new Dictionary<string, IEnumerable<string>>
+        {
+            { BotServiceConstants.JobApiReadOnlyPolicy, [CommonConstants.BotApiReadOnly] },
+            { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.BotApiFullAccess] }
+        };
+        
+        options.XmlDocDataTransferObjectAssemblies = [typeof(JobDto).Assembly];
+        options.XmlDocOperationAssemblies = [typeof(Program).Assembly];
+
         options.ApiTitle = "Octo Services API";
         options.ApiDescription = "Octo Mesh Bot builder.Services.";
 
@@ -238,7 +251,7 @@ try
 
 
     var app = builder.Build();
-    
+
     app.MapObservability();
 
     if (app.Environment.IsDevelopment())
