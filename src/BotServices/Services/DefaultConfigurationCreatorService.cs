@@ -187,7 +187,7 @@ internal class DefaultConfigurationCreatorService(
                     JwtClaimTypes.Role
                 ]
             },
-            new(CommonConstants.OctoBotServicesSwaggerClientId,
+            new(CommonConstants.BotServicesSwaggerClientId,
                 BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName,
                 octoBotServicesOptions.Value.PublicUrl)
             {
