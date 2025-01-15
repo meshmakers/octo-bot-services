@@ -66,9 +66,10 @@ stages:
               testRunTitle: 'CI'
           - template: build-and-push-docker-image.yml
             parameters:
+              ContainerRegistry: $(DockerRegistryPublicConnection)
               Repository: meshmakers/octo-mesh-bot-services
               Dockerfile: src/BotServices/Dockerfile
-              IsRelease: ${{ variables.isRelease }}   
+              PrivateRegistry: $(DockerRegistryPrivateUri)
           - template: handle-artifacts.yml
             parameters:
               constructionKitLibraryPaths:
