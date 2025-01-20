@@ -80,5 +80,17 @@ namespace BotServices.Resources {
                 return ResourceManager.GetString("Backend_BotServices_UserSchema_BotServices_DisplayName", resourceCulture);
             }
         }
+        
+        public static string ApiName {
+            get {
+                return ResourceManager.GetString("ApiName", resourceCulture);
+            }
+        }
+        
+        public static string ApiDescription {
+            get {
+                return ResourceManager.GetString("ApiDescription", resourceCulture);
+            }
+        }
     }
 }

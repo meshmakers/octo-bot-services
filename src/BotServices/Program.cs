@@ -189,8 +189,8 @@ try
         options.XmlDocDataTransferObjectAssemblies = [typeof(JobDto).Assembly];
         options.XmlDocOperationAssemblies = [typeof(Program).Assembly];
 
-        options.ApiTitle = "Octo Services API";
-        options.ApiDescription = "Octo Mesh Bot builder.Services.";
+        options.ApiTitle = BotTexts.ApiName;
+        options.ApiDescription = BotTexts.ApiDescription;
 
         options.ClientId = CommonConstants.BotServicesSwaggerClientId;
         options.AppName = BotTexts.Backend_BotServices_UserSchema_Swagger_DisplayName;

@@ -36,4 +36,10 @@
     <data name="Backend_BotServices_UserSchema_BotServices_DisplayName" xml:space="preserve">
         <value>Bot Services UI</value>
     </data>
+    <data name="ApiName" xml:space="preserve">
+        <value>OctoMesh Bot Services System API</value>
+    </data>
+    <data name="ApiDescription" xml:space="preserve">
+        <value>API to manage jobs of the Bot Services</value>
+    </data>
 </root>
