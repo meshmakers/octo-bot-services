@@ -41,7 +41,7 @@ internal class ExportRtModelByQueryByQueryCommand(
 
             var dataQueryOperation = DataQueryOperation.Create();
 
-            var sortingDtoList = query.GetAttributeStringValueOrDefault("Sorting")?.Deserialize<ICollection<SortDto>>();
+            var sortingDtoList = query.GetRtRecordAttributeValuesOrDefault<RtSortOrderItemRecord>("Sorting");
             if (sortingDtoList != null)
             {
                 foreach (var sortDto in sortingDtoList)
@@ -50,8 +50,7 @@ internal class ExportRtModelByQueryByQueryCommand(
                 }
             }
 
-            var fieldFilterDtoList =
-                query.GetAttributeStringValueOrDefault("FieldFilter")?.Deserialize<ICollection<FieldFilterDto>>();
+            var fieldFilterDtoList = query.GetRtRecordAttributeValuesOrDefault<RtFieldFilterRecord>("FieldFilter");
             if (fieldFilterDtoList != null)
             {
                 foreach (var fieldFilterDto in fieldFilterDtoList)
