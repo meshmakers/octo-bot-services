@@ -84,7 +84,7 @@ public class ImportModelJob : IImportModelJob
 
             _logger.LogInformation("Starting import of file \'{TempFile}\'", tempFile);
 
-            await _importRtModelCommand.Import(tenantId, tempFile.Item1, tempFile.Item2, cancellationToken?.ShutdownToken);
+            await _importRtModelCommand.ImportAsync(tenantId, tempFile.Item1, tempFile.Item2, cancellationToken?.ShutdownToken);
 
             await ClearCache(tenantId, key);
 
