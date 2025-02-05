@@ -76,7 +76,7 @@ public class ServiceHookJob : IServiceHookJob
 
                 foreach (var f in fieldFilters)
                 {
-                    dataQueryOperation = dataQueryOperation.FieldFilter(TransformAttributeName(f.AttributeName),
+                    dataQueryOperation = dataQueryOperation.FieldFilter(TransformAttributeName(f.AttributePath),
                         (FieldFilterOperator)f.Operator,
                         f.ComparisonValue);
                 }

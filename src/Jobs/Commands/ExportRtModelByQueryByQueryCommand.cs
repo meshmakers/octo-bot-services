@@ -46,7 +46,7 @@ internal class ExportRtModelByQueryByQueryCommand(
             {
                 foreach (var sortDto in sortingDtoList)
                 {
-                    dataQueryOperation.SortOrder(sortDto.AttributeName.ToPascalCase(), (SortOrders)sortDto.SortOrder);
+                    dataQueryOperation.SortOrder(sortDto.AttributePath.ToPascalCase(), (SortOrders)sortDto.SortOrder);
                 }
             }
 
@@ -55,7 +55,7 @@ internal class ExportRtModelByQueryByQueryCommand(
             {
                 foreach (var fieldFilterDto in fieldFilterDtoList)
                 {
-                    dataQueryOperation.FieldFilter(TransformAttributeName(fieldFilterDto.AttributeName),
+                    dataQueryOperation.FieldFilter(TransformAttributeName(fieldFilterDto.AttributePath),
                         (FieldFilterOperator)fieldFilterDto.Operator, fieldFilterDto.ComparisonValue);
                 }
             }
