@@ -1,6 +1,7 @@
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Exchange;
 using Meshmakers.Octo.Sdk.ServiceClient;
 using Microsoft.Extensions.Logging;
 

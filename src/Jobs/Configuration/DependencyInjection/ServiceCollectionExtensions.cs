@@ -20,7 +20,6 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IExportRtModelByQueryCommand, ExportRtModelByQueryByQueryCommand>();
         services.AddTransient<IExportRtModelByDeepGraphCommand, ExportRtModelByDeepGraphCommand>();
         services.AddTransient<IImportCkModelCommand, ImportCkModelCommand>();
-        services.AddTransient<IImportRtModelCommand, ImportRtModelCommand>();
         services.AddTransient<ICompressionService, CompressionService>();
 
         return services;
