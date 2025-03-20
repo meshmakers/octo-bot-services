@@ -25,7 +25,7 @@ internal class DefaultConfigurationCreatorService(
     IOptions<OctoBotServicesOptions> octoBotServicesOptions)
     : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
         BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
-        BotServiceConstants.BotServiceSchemaVersionKey, BotServiceConstants.BotServiceSchemaVersionValue)
+        BotServiceConstants.BotServiceSchemaVersionKey, true, BotServiceConstants.BotServiceSchemaVersionValue)
 {
     public override async Task InitializeAsync()
     {
