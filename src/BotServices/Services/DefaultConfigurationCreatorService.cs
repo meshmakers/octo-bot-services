@@ -4,8 +4,8 @@ using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts;
-using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v1;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands.Payloads;
 using Meshmakers.Octo.Services.Infrastructure;
@@ -17,16 +17,16 @@ using SystemBotCkModel.Generated.System.Bot.v1;
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
 internal class DefaultConfigurationCreatorService(
-    ILoggerFactory loggerFactory,
+    ILogger<DefaultConfigurationCreatorService> logger,
     IDiagnosticsService diagnosticsService,
     ISystemContext systemContext,
     IJobCreatorService jobCreatorService,
-    ICommandClient<CreateIdentityDataCommandRequest> commandClient,
+    ICommandClient<CreateIdentityDataCommandRequest> createIdentityDataCommandClient,
     IOptions<OctoBotServicesOptions> octoBotServicesOptions)
-    : DefaultConfigurationCreatorServiceBase(loggerFactory.CreateLogger<DefaultConfigurationCreatorServiceBase>())
+    : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
+        BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
+        BotServiceConstants.BotServiceSchemaVersionKey, BotServiceConstants.BotServiceSchemaVersionValue)
 {
-    private readonly ILogger<DefaultConfigurationCreatorService> _logger = loggerFactory.CreateLogger<DefaultConfigurationCreatorService>();
-
     public override async Task InitializeAsync()
     {
         // Reconfigure the log level based on the configuration
@@ -35,103 +35,43 @@ internal class DefaultConfigurationCreatorService(
         await base.InitializeAsync();
     }
 
-    protected override async Task SetupTenantAsync(string tenantId)
+    protected override Task StartTenantAsync(string tenantId)
     {
-        // Do nothing if the system tenant is not existing.
-        // Identity Service is creating the system tenant currently.
-        // We wait for a PosTenantCreated event to create the default configuration.
-        if (!await systemContext.IsSystemTenantExistingAsync())
-        {
-            return;
-        }
-
-        _logger.LogInformation("Setting up default configuration for tenant '{TenantId}'", tenantId);
-
-        await ImportCkModelAsync(tenantId);
-
-        // Identity configuration is next
-        if (tenantId != systemContext.TenantId)
-        {
-            // Currently we only support the system tenant.
-            return;
-        }
-        
-        _logger.LogInformation("Setting up default identity data for tenant '{TenantId}'", tenantId);
-
-        using var session = await systemContext.GetAdminSessionAsync();
-        session.StartTransaction();
-
-        var botServiceConfiguration =
-            await systemContext.GetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
-                new DefaultConfigurationVersion { Version = -1 });
-        if (botServiceConfiguration == null ||
-            botServiceConfiguration.Version < BotServiceConstants.BotServiceSchemaVersionValue)
-        {
-            _logger.LogInformation("Creating identity data for tenant '{TenantId}'", tenantId);
-
-            CreateIdentityDataCommandRequest createIdentityDataCommandRequest = new(systemContext.TenantId);
-            CreateApiScopes(createIdentityDataCommandRequest);
-            CreateApiResources(createIdentityDataCommandRequest);
-            CreateClients(createIdentityDataCommandRequest);
-
-            _logger.LogInformation("Creating identity data for tenant '{TenantId}'", tenantId);
-            var r = await commandClient.GetResponseWithRetry<EnumCommandResponse<CreateIdentityDataResult>>(
-                createIdentityDataCommandRequest);
-            _logger.LogInformation("Create identity data response: {Response}", r.Response);
-            if (r.Response == CreateIdentityDataResult.Success)
-            {
-                await systemContext.SetConfigurationAsync(session, BotServiceConstants.BotServiceSchemaVersionKey,
-                    new DefaultConfigurationVersion { Version = BotServiceConstants.BotServiceSchemaVersionValue });
-            }
-            else if (r.Response != CreateIdentityDataResult.FailedTenantHasNoIdentityCk)
-            {
-                _logger.LogInformation("The tenant '{TenantId}' has no identity CK, skipped to create identity data",
-                    tenantId);
-            }
-            else
-            {
-                _logger.LogError("The tenant '{TenantId}' has no identity CK, skipped to create identity data",
-                    tenantId);
-            }
-        }
-
-        await session.CommitTransactionAsync();
-
         // Create jobs
         jobCreatorService.DeleteJobs(tenantId);
         jobCreatorService.CreateJobs(tenantId);
 
-        _logger.LogInformation("Setup default configuration for tenant '{TenantId}' completed", tenantId);
+        return base.StartTenantAsync(tenantId);
     }
 
-    private async Task ImportCkModelAsync(string tenantId)
+    protected override Task StopTenantAsync(string tenantId)
     {
-        var tenantContext = await systemContext.FindTenantContextAsync(tenantId);
+        // Delete jobs
+        jobCreatorService.DeleteJobs(tenantId);
 
-        if (!await tenantContext.IsCkModelExistingAsync(SystemBotCkIds.ModelId))
+        return base.StopTenantAsync(tenantId);
+    }
+
+    protected override async Task ImportCkModelAsync(IOctoAdminSession session, ITenantContext tenantContext)
+    {
+        OperationResult operationResult = new();
+        await tenantContext.ImportCkModelAsync(SystemBotCkIds.ModelId, operationResult);
+        if (operationResult.HasErrors || operationResult.HasFatalErrors)
         {
-            OperationResult operationResult = new();
-            await tenantContext.ImportCkModelAsync(SystemBotCkIds.ModelId, operationResult);
-            if (operationResult.HasErrors || operationResult.HasFatalErrors)
-            {
-                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
-                    operationResult.GetMessages());
-            }
+            throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
+                operationResult.GetMessages());
         }
 
-        if (!await tenantContext.IsCkModelExistingAsync(SystemNotificationCkIds.ModelId))
+        await tenantContext.ImportCkModelAsync(SystemNotificationCkIds.ModelId, operationResult);
+        if (operationResult.HasErrors || operationResult.HasFatalErrors)
         {
-            OperationResult operationResult = new();
-            await tenantContext.ImportCkModelAsync(SystemNotificationCkIds.ModelId, operationResult);
-            if (operationResult.HasErrors || operationResult.HasFatalErrors)
-            {
-                throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
-                    operationResult.GetMessages());
-            }
+            throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
+                operationResult.GetMessages());
         }
     }
 
-    private void CreateApiScopes(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
+
+    protected override void CreateApiScopes(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
         createIdentityDataCommandRequest.ApiScopes = new List<DistApiScopeDto>
         {
@@ -142,7 +82,7 @@ internal class DefaultConfigurationCreatorService(
         };
     }
 
-    private void CreateApiResources(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
+    protected override void CreateApiResources(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
         createIdentityDataCommandRequest.ApiResources = new List<DistApiResourcesDto>
         {
@@ -159,7 +99,7 @@ internal class DefaultConfigurationCreatorService(
         };
     }
 
-    private void CreateClients(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
+    protected override void CreateClients(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
         createIdentityDataCommandRequest.Clients = new List<DistClientDto>
         {

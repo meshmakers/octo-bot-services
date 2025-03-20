@@ -13,6 +13,16 @@ internal static class BotServiceConstants
     public const int BotServiceSchemaVersionValue = 1;
 
     /// <summary>
+    /// Name of the key identity data
+    /// </summary>
+    public const string BotServiceIdentityDataVersionKey = "BotServicesIdentityData";
+
+    /// <summary>
+    /// Expected value of the identity data version
+    /// </summary>
+    public const int BotServiceIdentityDataVersionValue = 1;
+
+    /// <summary>
     ///     The name of the cookie of cookie-based auth
     /// </summary>
     public const string CookieName = "Octo-BotServices";
