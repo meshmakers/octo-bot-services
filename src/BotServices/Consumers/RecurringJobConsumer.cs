@@ -1,7 +1,7 @@
 using Hangfire;
 using Hangfire.Storage;
 using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
-using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
+using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 
 namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 

@@ -1,8 +1,7 @@
-using Meshmakers.Common.Shared;
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
-using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
+using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;

@@ -1,4 +1,4 @@
-using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
+using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
 

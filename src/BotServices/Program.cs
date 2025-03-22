@@ -15,11 +15,10 @@ using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Extensions;
-using Meshmakers.Octo.Services.Common;
-using Meshmakers.Octo.Services.Common.Authorization;
-using Meshmakers.Octo.Services.Common.Cors;
-using Meshmakers.Octo.Services.Common.DistributionEventHub.Commands;
-using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
+using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
+using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
+using Meshmakers.Octo.Services.Infrastructure;
+using Meshmakers.Octo.Services.Infrastructure.Configuration;
 using Meshmakers.Octo.Services.Infrastructure.Services;
 using Meshmakers.Octo.Services.Observability;
 using Meshmakers.Octo.Services.Swagger.Configuration;
@@ -52,9 +51,6 @@ try
         builder.Configuration.GetSection("Bot").Bind(options));
     builder.Services.Configure<OctoSystemConfiguration>(options =>
         builder.Configuration.GetSection("System").Bind(options));
-
-    builder.Services.AddSingleton<CorsPolicyProvider>();
-    builder.Services.AddSingleton<ICorsPolicyProvider>(provider => provider.GetRequiredService<CorsPolicyProvider>());
 
     builder.Services.AddTransient<IJobCreatorService, JobCreatorService>();
     builder.Services.AddCors();
@@ -101,7 +97,7 @@ try
     builder.Services.AddAuthentication(authenticationOptions =>
         {
             authenticationOptions.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-            authenticationOptions.DefaultChallengeScheme = BackendCommon.OidcAuthenticationScheme;
+            authenticationOptions.DefaultChallengeScheme = InfrastructureCommon.OidcAuthenticationScheme;
         })
         .AddCookie(options =>
         {
@@ -114,7 +110,7 @@ try
             options.Cookie.SameSite = SameSiteMode.None;
             options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         })
-        .AddOpenIdConnect(BackendCommon.OidcAuthenticationScheme, options =>
+        .AddOpenIdConnect(InfrastructureCommon.OidcAuthenticationScheme, options =>
         {
             options.ClientId = CommonConstants.BotServicesClientId;
 
@@ -152,14 +148,14 @@ try
         options.AddPolicy(BotServiceConstants.JobApiReadOnlyPolicy, authorizationPolicyBuilder =>
         {
             // require SystemApiFullAccess or SystemApiReadOnly
-            authorizationPolicyBuilder.RequireClaim(BackendCommon.ClaimScope, CommonConstants.BotApiFullAccess,
+            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.BotApiFullAccess,
                 CommonConstants.BotApiReadOnly);
         });
 
         options.AddPolicy(BotServiceConstants.JobApiReadWritePolicy, authorizationPolicyBuilder =>
         {
             // require SystemApiFullAccess
-            authorizationPolicyBuilder.RequireClaim(BackendCommon.ClaimScope, CommonConstants.BotApiFullAccess);
+            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.BotApiFullAccess);
         });
     });
 
@@ -269,7 +265,7 @@ try
     app.UseCors();
 
     // Conversion of request query jwt token to cookie for switch from dashboard to hangfire ui dashboard
-    app.UseMiddleware<CookieBasedAuthorizationMiddleware>();
+    app.UseOctoCookieBasedAuthentication();
 
     app.UseAuthentication();
 
