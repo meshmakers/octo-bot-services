@@ -29,7 +29,6 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Common\Common.csproj" />
         <ProjectReference Include="$(OctoCommonServicesPath)src\Swagger\Swagger.csproj" />
         <ProjectReference Include="..\BotServices.Resources\BotServices.Resources.csproj" />
         <ProjectReference Include="..\Jobs\Jobs.csproj" />

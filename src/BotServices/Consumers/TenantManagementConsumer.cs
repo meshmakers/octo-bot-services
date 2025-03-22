@@ -1,6 +1,6 @@
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
-using Meshmakers.Octo.Services.Common.DistributionEventHub.Messages;
+using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 
 namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 
