@@ -23,7 +23,6 @@ using Meshmakers.Octo.Services.Infrastructure.Services;
 using Meshmakers.Octo.Services.Observability;
 using Meshmakers.Octo.Services.Swagger.Configuration;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;

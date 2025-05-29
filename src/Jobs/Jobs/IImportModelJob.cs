@@ -15,6 +15,7 @@ public interface IImportModelJob
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
     [JobDisplayName("Importing ConstructionKit Metadata to data source '{0}'")]
+    [AutomaticRetry(Attempts = 0)]
     Task ImportCkAsync(string tenantId, string key,
         IBotCancellationToken? cancellationToken);
 
@@ -26,5 +27,6 @@ public interface IImportModelJob
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
     [JobDisplayName("Importing Runtime Metadata to data source '{0}'")]
+    [AutomaticRetry(Attempts = 0)]
     Task ImportRtAsync(string tenantId, string key, IBotCancellationToken? cancellationToken);
 }
