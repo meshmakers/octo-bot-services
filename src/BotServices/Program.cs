@@ -298,13 +298,13 @@ try
         branchedApp.UseHangfireDashboard("/jobs", new DashboardOptions
         {
             AppPath = octoOptions.Value.PublicAdminPanelUrl,
-            Authorization = new[] { new HangfireDashboardAuthorizationFilter() }
+            Authorization = [new HangfireDashboardAuthorizationFilter()]
         });
     });
 
     app.UseStaticFiles();
 
-    app.Run();
+    await app.RunAsync();
 }
 catch (Exception ex)
 {
