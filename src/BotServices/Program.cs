@@ -51,6 +51,18 @@ try
     builder.Services.Configure<OctoSystemConfiguration>(options =>
         builder.Configuration.GetSection("System").Bind(options));
 
+    // additional providers here needed.
+    // allow environment variables to override values from other providers.
+    builder.Configuration.AddEnvironmentVariables("OCTO_").AddCommandLine(args)
+        .AddUserSecrets(typeof(Program).Assembly, true);
+
+
+    builder.Services.ConfigureOptions<ConfigureJwtBearerOptions>();
+    builder.Services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
+    builder.Services.ConfigureOptions<ConfigureOctoOpenApiOptions>();
+    builder.Services.ConfigureOptions<ConfigureDistributionEventHubOptions>();
+
+
     builder.Services.AddTransient<IJobCreatorService, JobCreatorService>();
     builder.Services.AddCors();
 
@@ -87,11 +99,6 @@ try
 
     builder.Services.AddOctoCommands();
     builder.Services.AddOctoNotification();
-
-    builder.Services.ConfigureOptions<ConfigureJwtBearerOptions>();
-    builder.Services.ConfigureOptions<ConfigureOpenIdConnectOptions>();
-    builder.Services.ConfigureOptions<ConfigureOctoOpenApiOptions>();
-    builder.Services.ConfigureOptions<ConfigureDistributionEventHubOptions>();
 
     builder.Services.AddAuthentication(authenticationOptions =>
         {
@@ -239,10 +246,6 @@ try
     builder.Logging.SetMinimumLevel(LogLevel.Trace);
     builder.Host.UseNLog();
 
-    // additional providers here needed.
-    // allow environment variables to override values from other providers.
-    builder.Configuration.AddEnvironmentVariables("OCTO_").AddCommandLine(args)
-        .AddUserSecrets(typeof(Program).Assembly, true);
 
 
     var app = builder.Build();
