@@ -25,6 +25,7 @@ internal class ConfigureDistributionEventHubOptions : IConfigureNamedOptions<Dis
 
     public void Configure(string? name, DistributionEventHubOptions options)
     {
+        options.InstancePrefix = _botServicesOptions.Value.InstancePrefix;
         options.BrokerHost = _botServicesOptions.Value.BrokerHost;
         options.BrokerUser = _botServicesOptions.Value.BrokerUser;
         options.BrokerPassword = _botServicesOptions.Value.BrokerPassword;
