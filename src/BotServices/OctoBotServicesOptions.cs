@@ -18,8 +18,17 @@ public class OctoBotServicesOptions
         AuthorityUrl = "https://localhost:5003";
         PublicUrl = "https://localhost:5009";
         PublicAdminPanelUrl = "https://localhost:5005";
-        MinLogLevel = LogLevelDto.Info;
+#if DEBUGL || DEBUG
+        MinLogLevel = LogLevelDto.Trace;
+#else
+        MinLogLevel = LogLevelDto.Warn;
+#endif
     }
+
+    /// <summary>
+    ///     Gets or sets the prefix for the OctoMesh installation instance.
+    /// </summary>
+    public string? InstancePrefix { get; set; }
 
     /// <summary>
     ///     Gets or sets the RabbitMq host name
