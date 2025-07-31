@@ -28,10 +28,10 @@ public class RepositoryFixupService(
         session.StartTransaction();
 
         logger.LogInformation("Starting repository fixup for tenant {TenantId}...", tenantId);
-        var query = DataQueryOperation.Create();
-        query.FieldEquals(nameof(RtFixup.Enabled), true);
-        query.FieldEquals(nameof(RtFixup.IsApplied), false);
-        query.SortOrder(nameof(RtFixup.Order), SortOrders.Ascending);
+        var query = DataQueryOperation.Create()
+            .FieldEquals(nameof(RtFixup.Enabled), true)
+            .FieldEquals(nameof(RtFixup.IsApplied), false)
+            .SortOrder(nameof(RtFixup.Order), SortOrders.Ascending);
         var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync<RtFixup>(session, query);
         await session.CommitTransactionAsync();
 

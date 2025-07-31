@@ -29,7 +29,6 @@
         <ProjectReference Include="$(OctoConstructionKitPath)src\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj" />
         <ProjectReference Include="$(OctoCommonServicesPath)src\Contracts\Contracts.csproj" />
         <ProjectReference Include="..\RepositoryUpdate\RepositoryUpdate.csproj" />
-        <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj" />
     </ItemGroup>
 
 

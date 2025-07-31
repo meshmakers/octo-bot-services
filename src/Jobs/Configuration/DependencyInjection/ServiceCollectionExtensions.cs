@@ -1,5 +1,6 @@
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
+using Meshmakers.Octo.Backend.Jobs.Jobs;
 
 // ReSharper disable once CheckNamespace
 namespace Microsoft.Extensions.DependencyInjection;
@@ -14,13 +15,20 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <param name="services"></param>
     /// <returns></returns>
-    public static IServiceCollection AddOctoCommands(
+    public static IServiceCollection AddOctoJobs(
         this IServiceCollection services)
     {
         services.AddTransient<IExportRtModelByQueryCommand, ExportRtModelByQueryByQueryCommand>();
         services.AddTransient<IExportRtModelByDeepGraphCommand, ExportRtModelByDeepGraphCommand>();
         services.AddTransient<IImportCkModelCommand, ImportCkModelCommand>();
         services.AddTransient<ICompressionService, CompressionService>();
+
+        services.AddRepositoryUpdate();
+        services.AddTransient<IImportModelJob, ImportModelJob>();
+        services.AddTransient<IExportModelJob, ExportModelJob>();
+        services.AddTransient<IServiceHookJob, ServiceHookJob>();
+        services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
+        services.AddTransient<IRunFixupJob, RunFixupJob>();
 
         return services;
     }

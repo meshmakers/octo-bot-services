@@ -40,7 +40,6 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
     /// <param name="tenantId">The corresponding data source</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
-    [DisplayName("Aggregates all attributes of tenant id '{0}'")]
     public async Task Run(string tenantId, IBotCancellationToken? cancellationToken)
     {
         try

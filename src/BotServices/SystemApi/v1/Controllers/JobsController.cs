@@ -4,6 +4,7 @@ using Hangfire;
 using Hangfire.Storage.Monitoring;
 using IdentityModel;
 using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Services.Contracts.ApiErrors;
@@ -22,14 +23,17 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 public class JobsController : ControllerBase
 {
     private readonly IDistributedCacheService _distributedCache;
+    private readonly IBackgroundJobClient _backgroundJobClient;
 
     /// <summary>
     ///     Constructor
     /// </summary>
     /// <param name="distributedCache"></param>
-    public JobsController(IDistributedCacheService distributedCache)
+    /// <param name="backgroundJobClient"></param>
+    public JobsController(IDistributedCacheService distributedCache, IBackgroundJobClient backgroundJobClient)
     {
         _distributedCache = distributedCache;
+        _backgroundJobClient = backgroundJobClient;
     }
 
     /// <summary>
@@ -57,6 +61,32 @@ public class JobsController : ControllerBase
         catch (Exception)
         {
             return BadRequest();
+        }
+    }
+
+    /// <summary>
+    /// Runs the fixup scripts for the given tenant
+    /// </summary>
+    /// <param name="tenantId">The tenant id</param>
+    /// <returns></returns>
+    // POST: system/jobs/run-fixup-scripts?tenantId=abc
+    [HttpGet]
+    [Route("run-fixup-scripts")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public IActionResult RunFixupScripts(string tenantId)
+    {
+        try
+        {
+            var id = _backgroundJobClient.Enqueue<IRunFixupJob>(job =>
+                job.Run(tenantId, BotCancellationToken.Null));
+
+            return Ok(new FixupScriptCreatedResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerError(e.Message));
         }
     }
 

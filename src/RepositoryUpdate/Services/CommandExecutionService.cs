@@ -21,7 +21,7 @@ public class CommandExecutionService(
         CancellationToken? cancellationToken = null)
     {
         var connectionString = GetConnectionString(databaseName);
-
+        var args = BuildMongoShellArguments();
         if (!File.Exists(scriptPath))
         {
             return CommandResult.Failure($"Script file not found: {scriptPath}");
@@ -29,18 +29,19 @@ public class CommandExecutionService(
 
         logger.LogInformation("Executing MongoDB shell script: {ScriptPath}", scriptPath);
 
-        return await ExecuteCommandAsync("mongosh", $"{connectionString} {scriptPath}", null, null, cancellationToken);
+        return await ExecuteCommandAsync("mongosh", $"{connectionString} {args} {scriptPath}", null, null, cancellationToken);
     }
 
     public async Task<CommandResult> ExecuteMongoShellCommandAsync(string databaseName, string command,
         CancellationToken? cancellationToken = null)
     {
         var connectionString = GetConnectionString(databaseName);
+        var args = BuildMongoShellArguments();
         var escapedCommand = command.Replace("\"", "\\\"");
 
         logger.LogInformation("Executing MongoDB shell command: {Command}", command);
 
-        return await ExecuteCommandAsync("mongosh", $"{connectionString} --eval \"{escapedCommand}\"", null, null,
+        return await ExecuteCommandAsync("mongosh", $"{connectionString} {args} --eval \"{escapedCommand}\"", null, null,
             cancellationToken);
     }
 
@@ -230,7 +231,7 @@ public class CommandExecutionService(
             urlBuilder.AuthenticationSource = systemConfiguration.AuthenticationDatabaseName;
         }
 
-        urlBuilder.ApplicationName = $"OctoMesh-{databaseName}-{_instanceId}-{urlBuilder.Username}";
+        urlBuilder.ApplicationName = $"OctoMeshUpdate-{databaseName}-{_instanceId}-{urlBuilder.Username}";
         urlBuilder.UseTls = systemConfiguration.UseTls;
         urlBuilder.AllowInsecureTls = systemConfiguration.AllowInsecureTls;
         urlBuilder.RetryReads = true;
@@ -297,6 +298,22 @@ public class CommandExecutionService(
             args.Add("--verbose");
         }
 
+        return string.Join(" ", args);
+    }
+
+    private string BuildMongoShellArguments()
+    {
+        var args = new List<string>();
+        // Authentication
+        if (!string.IsNullOrEmpty(systemConfigurationOptions.Value.AdminUser))
+        {
+            args.Add($"--username={systemConfigurationOptions.Value.AdminUser}");
+        }
+
+        if (!string.IsNullOrEmpty(systemConfigurationOptions.Value.AdminUserPassword))
+        {
+            args.Add($"--password={systemConfigurationOptions.Value.AdminUserPassword}");
+        }
         return string.Join(" ", args);
     }
 

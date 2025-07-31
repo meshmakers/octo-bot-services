@@ -5,6 +5,7 @@ using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 
 namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 
+// ReSharper disable once ClassNeverInstantiated.Global
 internal class RecurringJobConsumer : IDistributedConsumer<RemoveRecurringJobsByScheduleGroupRequest>
 {
     public async Task ConsumeAsync(IDistributedContext<RemoveRecurringJobsByScheduleGroupRequest> context)
