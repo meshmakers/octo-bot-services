@@ -29,6 +29,8 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IServiceHookJob, ServiceHookJob>();
         services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
         services.AddTransient<IRunFixupJob, RunFixupJob>();
+        services.AddTransient<IRestoreRepositoryJob, RestoreRepositoryJob>();
+        services.AddTransient<IDumpRepositoryJob, DumpRepositoryJob>();
 
         return services;
     }

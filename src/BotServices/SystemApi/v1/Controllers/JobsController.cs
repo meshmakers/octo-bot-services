@@ -7,6 +7,7 @@ using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Services.Contracts.ApiErrors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,16 +24,19 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 public class JobsController : ControllerBase
 {
     private readonly IDistributedCacheService _distributedCache;
+    private readonly ISystemContext _systemContext;
     private readonly IBackgroundJobClient _backgroundJobClient;
 
     /// <summary>
     ///     Constructor
     /// </summary>
     /// <param name="distributedCache"></param>
+    /// <param name="systemContext"></param>
     /// <param name="backgroundJobClient"></param>
-    public JobsController(IDistributedCacheService distributedCache, IBackgroundJobClient backgroundJobClient)
+    public JobsController(IDistributedCacheService distributedCache, ISystemContext systemContext, IBackgroundJobClient backgroundJobClient)
     {
         _distributedCache = distributedCache;
+        _systemContext = systemContext;
         _backgroundJobClient = backgroundJobClient;
     }
 
@@ -82,7 +86,62 @@ public class JobsController : ControllerBase
             var id = _backgroundJobClient.Enqueue<IRunFixupJob>(job =>
                 job.Run(tenantId, BotCancellationToken.Null));
 
-            return Ok(new FixupScriptCreatedResponseDto(id));
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerError(e.Message));
+        }
+    }
+
+    /// <summary>
+    /// Restores the repository for the given tenant
+    /// </summary>
+    /// <param name="tenantId">The tenant id</param>
+    /// <param name="databaseName">The name of the database to restore</param>
+    /// <param name="file">The file with the gzipped file</param>
+    /// <returns></returns>
+    [HttpPost]
+    [RequestSizeLimit(300_000_000)]
+    [Route("restore-repository")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> RestoreRepositoryAsync(string tenantId, string databaseName, IFormFile file)
+    {
+        try
+        {
+            var cacheKey = await AddFileToCache(_systemContext.TenantId, file);
+
+            var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
+                job.Run(tenantId, databaseName, cacheKey, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerError(e.Message));
+        }
+    }
+
+    /// <summary>
+    /// Dumps the repository for the given tenant
+    /// </summary>
+    /// <param name="tenantId">The tenant id</param>
+    /// <returns></returns>
+    [HttpPost]
+    [Route("dump-repository")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public IActionResult DumpRepository(string tenantId)
+    {
+        try
+        {
+            var id = _backgroundJobClient.Enqueue<IDumpRepositoryJob>(job =>
+                job.Run(tenantId, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
         }
         catch (InvalidOperationException e)
         {
@@ -166,5 +225,14 @@ public class JobsController : ControllerBase
         }
 
         return new Tuple<string, Stream>(cacheStream.ContentType, cacheStream.Stream);
+    }
+
+    private async Task<string> AddFileToCache(string tenantId, IFormFile file)
+    {
+        await using var memoryStream = new MemoryStream();
+        await file.CopyToAsync(memoryStream);
+        memoryStream.Position = 0;
+        var key = await _distributedCache.CreateStreamAsync(tenantId, memoryStream, file.ContentType, file.FileName, TimeSpan.FromHours(1));
+        return key;
     }
 }

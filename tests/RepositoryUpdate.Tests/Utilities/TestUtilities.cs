@@ -21,8 +21,8 @@ public static class TestUtilities
         var testConfig = config ?? new OctoSystemConfiguration
         {
             DatabaseHost = "localhost:27017",
-            DatabaseUser = "testuser",
-            DatabaseUserPassword = "testpass",
+            AdminUser = "octo-system-admin",
+            AdminUserPassword = "OctoAdmin1",
             AuthenticationDatabaseName = "admin",
             UseTls = false,
             AllowInsecureTls = false,

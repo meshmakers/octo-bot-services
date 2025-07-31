@@ -4,7 +4,7 @@ public class MongoDumpOptions
 {
     // Database/Collection
     public required string Database { get; set; }
-    public string Collection { get; set; } = "*";
+    public string? Collection { get; set; }
 
     // Output
     public string? OutputDirectory { get; set; }
