@@ -1,0 +1,29 @@
+"$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
+types:
+  - typeId: Fixup
+    derivedFromCkTypeId: System/Entity
+    isFinal: false
+    isAbstract: false
+    attributes:
+      - id: System/Enabled
+        name: Enabled
+      - id: System/Name
+        name: Name
+      - id: ${thisModel}/Fixup.Order
+        name: Order
+      - id: ${thisModel}/Fixup.Script
+        name: Script
+      - id: ${thisModel}/Fixup.IsApplied
+        name: IsApplied
+      - id: ${thisModel}/Fixup.AppliedAt
+        name: AppliedAt
+        isOptional: true
+      - id: ${thisModel}/Fixup.Output
+        name: Output
+        isOptional: true
+      - id: ${thisModel}/Fixup.Error
+        name: Error
+        isOptional: true
+      - id: ${thisModel}/Fixup.IsSuccess
+        name: IsSuccess
+        isOptional: true

@@ -1,0 +1,87 @@
+using Meshmakers.Octo.Runtime.Contracts;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
+using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
+using Microsoft.Extensions.Logging;
+using SystemBotCkModel.Generated.System.Bot.v1;
+
+namespace RepositoryUpdate.Services;
+
+public class RepositoryFixupService(
+    ILogger<RepositoryFixupService> logger,
+    ISystemContext systemContext,
+    ICommandExecutionService commandExecutionService) : IRepositoryFixupService
+{
+    public async Task FixupRepositoryAsync(string tenantId, CancellationToken? cancellationToken = null)
+    {
+        var tenantContext = await systemContext.FindTenantContextAsync(tenantId);
+
+        if (tenantContext == null)
+        {
+            throw RepositoryUpdateException.TenantContextNotFound(tenantId);
+        }
+
+        // Perform the fixup operations
+        var tenantRepository = tenantContext.GetTenantRepository();
+
+        using var session = await tenantRepository.GetSessionAsync();
+        session.StartTransaction();
+
+        logger.LogInformation("Starting repository fixup for tenant {TenantId}...", tenantId);
+        var query = DataQueryOperation.Create();
+        query.FieldEquals(nameof(RtFixup.Enabled), true);
+        query.FieldEquals(nameof(RtFixup.IsApplied), false);
+        query.SortOrder(nameof(RtFixup.Order), SortOrders.Ascending);
+        var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync<RtFixup>(session, query);
+        await session.CommitTransactionAsync();
+
+        logger.LogInformation("Found {Count} fixups to apply for tenant {TenantId}", resultSet.TotalCount, tenantId);
+
+        foreach (var rtFixup in resultSet.Items)
+        {
+            if (string.IsNullOrWhiteSpace(rtFixup.Script))
+            {
+                continue;
+            }
+
+            if (cancellationToken?.IsCancellationRequested == true)
+            {
+                logger.LogInformation("Fixup job for tenant {TenantId} was cancelled", tenantId);
+                return;
+            }
+
+            logger.LogInformation("Applying fixup {FixupId} for tenant {TenantId}", rtFixup.RtId, tenantId);
+            await ExecuteScriptAsync(rtFixup, tenantContext.DatabaseName, tenantRepository);
+            logger.LogInformation("Fixup {FixupId} applied successfully for tenant {TenantId}", rtFixup.RtId, tenantId);
+        }
+    }
+
+    private async Task ExecuteScriptAsync(RtFixup rtFixup, string databaseName, ITenantRepository tenantRepository,
+        CancellationToken? cancellationToken = null)
+    {
+        IOctoSession session = await tenantRepository.GetSessionAsync();
+        session.StartTransaction();
+        try
+        {
+            // Save Scripts property to the temporary file.
+            var scriptFilePath = Path.ChangeExtension(Path.GetTempFileName(), "ts");
+            await File.WriteAllTextAsync(scriptFilePath, rtFixup.Script);
+
+            var commandResult =
+                await commandExecutionService.ExecuteMongoShellScriptAsync(databaseName, scriptFilePath);
+
+            rtFixup.IsApplied = true;
+            rtFixup.AppliedAt = DateTime.UtcNow;
+            rtFixup.IsSuccess = commandResult.Success;
+            rtFixup.Error = commandResult.Error;
+            rtFixup.Output = commandResult.Output;
+
+            await tenantRepository.UpdateOneRtEntityByIdAsync(session, rtFixup.RtId, rtFixup);
+            await session.CommitTransactionAsync();
+        }
+        catch (Exception e)
+        {
+            throw RepositoryUpdateException.UpdateScriptFailed(rtFixup.RtId, e);
+        }
+    }
+}

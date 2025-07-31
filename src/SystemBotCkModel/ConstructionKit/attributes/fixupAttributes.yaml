@@ -1,0 +1,18 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+attributes:
+- id: Fixup.Order
+  valueType: Int
+- id: Fixup.Script
+  valueType: String
+- id: Fixup.AppliedAt
+  valueType: DateTime
+- id: Fixup.IsApplied
+  valueType: Boolean
+  defaultValues:
+    - true
+- id: Fixup.Output
+  valueType: String
+- id: Fixup.Error
+  valueType: String
+- id: Fixup.IsSuccess
+  valueType: Boolean
