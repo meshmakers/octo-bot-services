@@ -9,14 +9,14 @@ public class MongoDumpOptionsTests
     public void MongoDumpOptions_DefaultConstructor_ShouldHaveDefaultValues()
     {
         // Arrange & Act
-        var options = new MongoDumpOptions()
+        var options = new MongoDumpOptions
         {
             Database = "testdb"
         };
 
         // Assert
         options.Database.Should().BeEquivalentTo("testdb");
-        options.Collection.Should().BeEquivalentTo("*");
+        options.Collection.Should().BeNull();
         options.OutputDirectory.Should().BeNull();
         options.Archive.Should().BeNull();
         options.Gzip.Should().BeFalse();

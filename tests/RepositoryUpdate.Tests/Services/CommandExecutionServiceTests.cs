@@ -147,8 +147,8 @@ public class CommandExecutionServiceTests
         // Assert
         result.Should().NotBeNull();
         result.Command.Should().Contain("mongodump");
-        result.Command.Should().Contain("--db testdb");
-        result.Command.Should().Contain("--out \"/tmp/backup\"");
+        result.Command.Should().Contain("--db=testdb");
+        result.Command.Should().Contain("--out=\"/tmp/backup\"");
     }
 
     [Fact]
@@ -163,8 +163,8 @@ public class CommandExecutionServiceTests
         // Assert
         result.Should().NotBeNull();
         result.Command.Should().Contain("mongodump");
-        result.Command.Should().Contain("--db testdb");
-        result.Command.Should().Contain("--archive \"/tmp/backup.gz\"");
+        result.Command.Should().Contain("--db=testdb");
+        result.Command.Should().Contain("--archive=\"/tmp/backup.gz\"");
         result.Command.Should().Contain("--gzip");
     }
 
@@ -188,9 +188,9 @@ public class CommandExecutionServiceTests
         // Assert
         result.Should().NotBeNull();
         result.Command.Should().Contain("mongodump");
-        result.Command.Should().Contain("--db testdb");
-        result.Command.Should().Contain("--collection testcollection");
-        result.Command.Should().Contain("--archive \"/tmp/backup.gz\"");
+        result.Command.Should().Contain("--db=testdb");
+        result.Command.Should().Contain("--collection=testcollection");
+        result.Command.Should().Contain("--archive=\"/tmp/backup.gz\"");
         result.Command.Should().Contain("--gzip");
         result.Command.Should().Contain("--pretty");
         result.Command.Should().Contain("--verbose");

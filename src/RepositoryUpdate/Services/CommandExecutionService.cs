@@ -246,40 +246,40 @@ public class CommandExecutionService(
         // Connection
         var args = new List<string>
         {
-            $"--uri \"{GetConnectionString(options.Database)}\""
+            $"--uri=\"{GetConnectionString(options.Database)}\""
         };
 
         // Authentication
         if (!string.IsNullOrEmpty(systemConfigurationOptions.Value.AdminUser))
         {
-            args.Add($"--username {systemConfigurationOptions.Value.AdminUser}");
+            args.Add($"--username={systemConfigurationOptions.Value.AdminUser}");
         }
 
         if (!string.IsNullOrEmpty(systemConfigurationOptions.Value.AdminUserPassword))
         {
-            args.Add($"--password {systemConfigurationOptions.Value.AdminUserPassword}");
+            args.Add($"--password={systemConfigurationOptions.Value.AdminUserPassword}");
         }
 
         // Database and Collection
         if (!string.IsNullOrEmpty(options.Database))
         {
-            args.Add($"--db {options.Database}");
+            args.Add($"--db={options.Database}");
         }
 
         if (!string.IsNullOrEmpty(options.Collection))
         {
-            args.Add($"--collection {options.Collection}");
+            args.Add($"--collection={options.Collection}");
         }
 
         // Output
         if (!string.IsNullOrEmpty(options.OutputDirectory))
         {
-            args.Add($"--out \"{options.OutputDirectory}\"");
+            args.Add($"--out=\"{options.OutputDirectory}\"");
         }
 
         if (!string.IsNullOrEmpty(options.Archive))
         {
-            args.Add($"--archive \"{options.Archive}\"");
+            args.Add($"--archive=\"{options.Archive}\"");
         }
 
         // Options

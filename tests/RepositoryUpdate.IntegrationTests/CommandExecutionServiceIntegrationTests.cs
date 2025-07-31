@@ -1,11 +1,13 @@
+using System.Diagnostics;
 using FluentAssertions;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RepositoryUpdate.Models;
 using RepositoryUpdate.Services;
+using Xunit;
 
-namespace RepositoryUpdate.Tests.Integration;
+namespace RepositoryUpdate.IntegrationTests;
 
 /// <summary>
 /// Integration tests that require actual command line tools to be installed.
@@ -24,8 +26,8 @@ public class CommandExecutionServiceIntegrationTests : IDisposable
         var config = new OctoSystemConfiguration
         {
             DatabaseHost = "localhost:27017",
-            DatabaseUser = "testuser",
-            DatabaseUserPassword = "testpass",
+            AdminUser = "octo-system-admin",
+            AdminUserPassword = "REDACTED-LOCAL-DEV-PASSWORD",
             AuthenticationDatabaseName = "admin",
             UseTls = false,
             AllowInsecureTls = false,
@@ -200,8 +202,8 @@ public class CommandExecutionServiceIntegrationTests : IDisposable
         // Assert
         result.Should().NotBeNull();
         result.Command.Should().Contain("mongodump");
-        result.Command.Should().Contain("--db testdb");
-        result.Command.Should().Contain($"--out \"{backupPath}\"");
+        result.Command.Should().Contain("--db=testdb");
+        result.Command.Should().Contain($"--out=\"{backupPath}\"");
     }
 
     [Fact]
@@ -226,7 +228,7 @@ public class CommandExecutionServiceIntegrationTests : IDisposable
         // Assert
         result.Should().NotBeNull();
         result.Command.Should().Contain("mongorestore");
-        result.Command.Should().Contain("--db testdb");
+        result.Command.Should().Contain("--nsInclude=testdb.*");
         result.Command.Should().Contain($"\"{backupPath}\"");
         result.Command.Should().Contain("--dryRun");
     }
@@ -366,8 +368,8 @@ public class CommandExecutionServicePerformanceTests
         var config = new OctoSystemConfiguration
         {
             DatabaseHost = "localhost:27017",
-            DatabaseUser = "testuser",
-            DatabaseUserPassword = "testpass",
+            AdminUser = "octo-system-admin",
+            AdminUserPassword = "REDACTED-LOCAL-DEV-PASSWORD",
             AuthenticationDatabaseName = "admin",
             UseTls = false,
             AllowInsecureTls = false,

@@ -1,3 +1,5 @@
+using RepositoryUpdate.Models;
+
 namespace Meshmakers.Octo.Backend.Jobs;
 
 /// <summary>
@@ -29,5 +31,11 @@ public class JobFailedException : Exception
     internal static Exception CacheStreamNotFound(string tenantId, string key)
     {
         return new JobFailedException($"No value of key '{key} in distribute cache for tenant '{tenantId}' found.");
+    }
+
+    internal static Exception CommandExecutionFailed(CommandResult commandResult, string tenantId, string commandName)
+    {
+        return new JobFailedException(
+            $"Command '{commandName}' failed for tenant '{tenantId}' with exit code {commandResult.ExitCode} and this details: {commandResult}");
     }
 }
