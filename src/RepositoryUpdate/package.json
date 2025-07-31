@@ -1,0 +1,12 @@
+{
+  "name": "mongodb-scripts",
+  "version": "1.0.0",
+  "description": "MongoDB cleanup scripts with IntelliSense",
+  "devDependencies": {
+    "@types/mongodb": "^4.0.7",
+    "typescript": "^5.8.3"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  }
+}
