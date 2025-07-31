@@ -1,0 +1,6 @@
+{
+  "recommendations": [
+    "mongodb.mongodb-vscode",
+    "ms-vscode.vscode-typescript-next"
+  ]
+}
