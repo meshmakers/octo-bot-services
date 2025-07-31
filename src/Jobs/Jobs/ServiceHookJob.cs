@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v1;
@@ -14,29 +13,22 @@ using SystemBotCkModel.Generated.System.Bot.v1;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
-public class ServiceHookJob : IServiceHookJob
+public class ServiceHookJob(ISystemContext systemContext) : IServiceHookJob
 {
     private const string Apikey = "XApiKey";
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-    private readonly ISystemContext _systemContext;
 
-    public ServiceHookJob(ISystemContext systemContext)
-    {
-        _systemContext = systemContext;
-    }
-
-    [DisplayName("Checks for new job schedules '{0}'")]
     public async Task Run(string tenantId, IBotCancellationToken? cancellationToken)
     {
         try
         {
-            if (!await _systemContext.IsSystemTenantExistingAsync())
+            if (!await systemContext.IsSystemTenantExistingAsync())
             {
                 return;
             }
             
             var startDateTime = DateTime.Now;
-            var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
+            var tenantRepository = await systemContext.FindTenantRepositoryAsync(tenantId);
 
             using var session = await tenantRepository.GetSessionAsync();
             session.StartTransaction();

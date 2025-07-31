@@ -14,7 +14,7 @@ public interface IExportModelJob
     /// <param name="rtByQueryCommandRequest">The command request</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns>The key the result file is stored.</returns>
-    [JobDisplayName("Export Runtime Model by query '{1}' from tenant '{0}'")]
+    [JobDisplayName("Export Runtime Model by query '{0}'")]
     [AutomaticRetry(Attempts = 0)]
     Task<string> ExportRtModelByQueryAsync(ExportRtByQueryCommandRequest rtByQueryCommandRequest,
         IBotCancellationToken? cancellationToken);
@@ -25,7 +25,7 @@ public interface IExportModelJob
     /// <param name="rtByDeepGraphCommandRequest">The command request</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns>The key the result file is stored.</returns>
-    [JobDisplayName("Export Runtime Model by deep graph from tenant '{0}'")]
+    [JobDisplayName("Export Runtime Model by deep graph '{0}'")]
     [AutomaticRetry(Attempts = 0)]
     Task<string> ExportRtModelByDeepGraphAsync(ExportRtByDeepGraphCommandRequest rtByDeepGraphCommandRequest,
         IBotCancellationToken? cancellationToken);

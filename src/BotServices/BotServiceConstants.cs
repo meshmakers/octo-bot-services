@@ -10,7 +10,7 @@ internal static class BotServiceConstants
     /// <summary>
     ///     Version of database schema for job service specific data
     /// </summary>
-    public const int BotServiceSchemaVersionValue = 1;
+    public const int BotServiceSchemaVersionValue = 3;
 
     /// <summary>
     /// Name of the key identity data

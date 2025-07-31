@@ -17,7 +17,8 @@ public class CommandExecutionService(
 
     #region MongoDB Shell Operations
 
-    public async Task<CommandResult> ExecuteMongoShellScriptAsync(string databaseName, string scriptPath)
+    public async Task<CommandResult> ExecuteMongoShellScriptAsync(string databaseName, string scriptPath,
+        CancellationToken? cancellationToken = null)
     {
         var connectionString = GetConnectionString(databaseName);
 
@@ -28,33 +29,37 @@ public class CommandExecutionService(
 
         logger.LogInformation("Executing MongoDB shell script: {ScriptPath}", scriptPath);
 
-        return await ExecuteCommandAsync("mongosh", $"{connectionString} {scriptPath}");
+        return await ExecuteCommandAsync("mongosh", $"{connectionString} {scriptPath}", null, null, cancellationToken);
     }
 
-    public async Task<CommandResult> ExecuteMongoShellCommandAsync(string databaseName, string command)
+    public async Task<CommandResult> ExecuteMongoShellCommandAsync(string databaseName, string command,
+        CancellationToken? cancellationToken = null)
     {
         var connectionString = GetConnectionString(databaseName);
         var escapedCommand = command.Replace("\"", "\\\"");
 
         logger.LogInformation("Executing MongoDB shell command: {Command}", command);
 
-        return await ExecuteCommandAsync("mongosh", $"{connectionString} --eval \"{escapedCommand}\"");
+        return await ExecuteCommandAsync("mongosh", $"{connectionString} --eval \"{escapedCommand}\"", null, null,
+            cancellationToken);
     }
 
     #endregion
 
     #region MongoDB Dump/Restore Operations
 
-    public async Task<CommandResult> ExecuteMongoDumpAsync(MongoDumpOptions options)
+    public async Task<CommandResult> ExecuteMongoDumpAsync(MongoDumpOptions options,
+        CancellationToken? cancellationToken = null)
     {
         var args = BuildMongoDumpArguments(options);
 
         logger.LogInformation("Executing mongodump with options: {Options}", args);
 
-        return await ExecuteCommandAsync("mongodump", args);
+        return await ExecuteCommandAsync("mongodump", args, null, null, cancellationToken);
     }
 
-    public async Task<CommandResult> ExecuteMongoRestoreAsync(MongoRestoreOptions options, TimeSpan? timeout = null)
+    public async Task<CommandResult> ExecuteMongoRestoreAsync(MongoRestoreOptions options, TimeSpan? timeout = null,
+        CancellationToken? cancellationToken = null)
     {
         var args = BuildMongoRestoreArguments(options);
 
@@ -62,7 +67,8 @@ public class CommandExecutionService(
 
         // Mongorestore kann hängen - Standard Timeout von 2 Minuten
         var restoreTimeout = timeout ?? TimeSpan.FromMinutes(2);
-        return await ExecuteCommandAsync("mongorestore", args, timeout: restoreTimeout);
+        return await ExecuteCommandAsync("mongorestore", args, timeout: restoreTimeout,
+            cancellationToken: cancellationToken);
     }
 
     #endregion
@@ -70,7 +76,7 @@ public class CommandExecutionService(
     #region Core Command Execution
 
     public async Task<CommandResult> ExecuteCommandAsync(string fileName, string arguments,
-        string? workingDirectory = null, TimeSpan? timeout = null)
+        string? workingDirectory = null, TimeSpan? timeout = null, CancellationToken? cancellationToken = null)
     {
         var timeoutMs = timeout?.TotalMilliseconds ?? 300000; // Default 5 Minuten
 
@@ -102,8 +108,8 @@ public class CommandExecutionService(
 
                 // Bei MongoDB Tools: Info-Level für wichtige Meldungen
                 if (fileName.StartsWith("mongo") && (e.Data.Contains("connected") ||
-                    e.Data.Contains("done dumping") || e.Data.Contains("restored") ||
-                    e.Data.Contains("finished") || e.Data.Contains("writing")))
+                                                     e.Data.Contains("done dumping") || e.Data.Contains("restored") ||
+                                                     e.Data.Contains("finished") || e.Data.Contains("writing")))
                 {
                     logger.LogInformation("MongoDB Tool Output: {Output}", e.Data);
                 }
@@ -119,7 +125,7 @@ public class CommandExecutionService(
 
                 // Bei MongoDB Tools: Warnings als Warning-Level
                 if (fileName.StartsWith("mongo") && (e.Data.Contains("warning") ||
-                    e.Data.Contains("error") || e.Data.Contains("failed")))
+                                                     e.Data.Contains("error") || e.Data.Contains("failed")))
                 {
                     logger.LogWarning("MongoDB Tool Warning/Error: {Error}", e.Data);
                 }
@@ -136,7 +142,7 @@ public class CommandExecutionService(
             process.BeginErrorReadLine();
 
             // Warten mit Timeout
-            var processTask = process.WaitForExitAsync();
+            var processTask = process.WaitForExitAsync(cancellationToken ?? CancellationToken.None);
             var timeoutTask = Task.Delay(TimeSpan.FromMilliseconds(timeoutMs));
 
             var completedTask = await Task.WhenAny(processTask, timeoutTask);
@@ -237,8 +243,10 @@ public class CommandExecutionService(
     private string BuildMongoDumpArguments(MongoDumpOptions options)
     {
         // Connection
-        var args = new List<string> {
-            $"--uri \"{GetConnectionString(options.Database)}\"" };
+        var args = new List<string>
+        {
+            $"--uri \"{GetConnectionString(options.Database)}\""
+        };
 
         // Authentication
         if (!string.IsNullOrEmpty(systemConfigurationOptions.Value.AdminUser))
@@ -295,8 +303,10 @@ public class CommandExecutionService(
     private string BuildMongoRestoreArguments(MongoRestoreOptions options)
     {
         // Connection
-        var args = new List<string> {
-            $"--uri=\"{GetConnectionString(options.Database)}\"" };
+        var args = new List<string>
+        {
+            $"--uri=\"{GetConnectionString(options.Database)}\""
+        };
 
         // Authentication
         if (!string.IsNullOrEmpty(systemConfigurationOptions.Value.AdminUser))

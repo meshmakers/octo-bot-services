@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
@@ -11,5 +13,6 @@ public interface IAttributeValueAggregatorJob
     /// <param name="tenantId">The corresponding data source</param>
     /// <param name="cancellationToken">An cancellation token to abort the job</param>
     /// <returns></returns>
+    [DisplayName("Aggregates all attributes of tenant id '{0}'")]
     Task Run(string tenantId, IBotCancellationToken? cancellationToken);
 }

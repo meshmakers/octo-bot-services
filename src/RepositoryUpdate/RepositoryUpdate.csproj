@@ -8,6 +8,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\octo-common-services\src\octo-construction-kit-engine-mongodb\src\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj" />
+      <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj" />
     </ItemGroup>
 
 </Project>
