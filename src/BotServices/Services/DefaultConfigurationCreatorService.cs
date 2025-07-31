@@ -39,8 +39,8 @@ internal class DefaultConfigurationCreatorService(
     protected override Task StartTenantAsync(string tenantId)
     {
         // Create jobs
-        jobCreatorService.DeleteJobs(tenantId);
-        jobCreatorService.CreateJobs(tenantId);
+        jobCreatorService.DeleteJobs(octoBotServicesOptions.Value.InstancePrefix, tenantId);
+        jobCreatorService.CreateJobs(octoBotServicesOptions.Value.InstancePrefix, tenantId);
 
         return base.StartTenantAsync(tenantId);
     }
@@ -48,7 +48,7 @@ internal class DefaultConfigurationCreatorService(
     protected override Task StopTenantAsync(string tenantId)
     {
         // Delete jobs
-        jobCreatorService.DeleteJobs(tenantId);
+        jobCreatorService.DeleteJobs(octoBotServicesOptions.Value.InstancePrefix, tenantId);
 
         return base.StopTenantAsync(tenantId);
     }

@@ -10,7 +10,6 @@ using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Hangfire;
 using Meshmakers.Octo.Backend.BotServices.Services;
-using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
@@ -68,11 +67,6 @@ try
 
     builder.Services.AddScoped<IDefaultConfigurationCreatorService, DefaultConfigurationCreatorService>();
 
-    builder.Services.AddTransient<IImportModelJob, ImportModelJob>();
-    builder.Services.AddTransient<IExportModelJob, ExportModelJob>();
-    builder.Services.AddTransient<IServiceHookJob, ServiceHookJob>();
-    builder.Services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
-
     builder.Services.AddMemoryCache();
 
     builder.Services.AddOctoServiceInfrastructure("BotService",
@@ -97,8 +91,9 @@ try
     builder.Services.AddRuntimeEngine()
         .AddMongoDbRuntimeRepository();
 
-    builder.Services.AddOctoCommands();
+    builder.Services.AddOctoJobs();
     builder.Services.AddOctoNotification();
+    builder.Services.AddCkModelSystemBot();
 
     builder.Services.AddAuthentication(authenticationOptions =>
         {
