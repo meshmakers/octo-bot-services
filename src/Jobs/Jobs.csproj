@@ -26,8 +26,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="$(OctoConstructionKitPath)src\Runtime.Engine.MongoDb\Runtime.Engine.MongoDb.csproj" />
-        <ProjectReference Include="$(OctoCommonServicesPath)src\Contracts\Contracts.csproj" />
+        <PackageReference Include="Meshmakers.Octo.Services.Contracts" Version="$(OctoVersion)" />
         <ProjectReference Include="..\RepositoryUpdate\RepositoryUpdate.csproj" />
     </ItemGroup>
 
