@@ -65,19 +65,29 @@ public class RepositoryFixupService(
         {
             // Save Scripts property to the temporary file.
             var scriptFilePath = Path.ChangeExtension(Path.GetTempFileName(), "ts");
-            await File.WriteAllTextAsync(scriptFilePath, rtFixup.Script);
+            try
+            {
+                await File.WriteAllTextAsync(scriptFilePath, rtFixup.Script);
 
-            var commandResult =
-                await commandExecutionService.ExecuteMongoShellScriptAsync(databaseName, scriptFilePath);
+                var commandResult =
+                    await commandExecutionService.ExecuteMongoShellScriptAsync(databaseName, scriptFilePath);
 
-            rtFixup.IsApplied = true;
-            rtFixup.AppliedAt = DateTime.UtcNow;
-            rtFixup.IsSuccess = commandResult.Success;
-            rtFixup.Error = commandResult.Error;
-            rtFixup.Output = commandResult.Output;
+                rtFixup.IsApplied = true;
+                rtFixup.AppliedAt = DateTime.UtcNow;
+                rtFixup.IsSuccess = commandResult.Success;
+                rtFixup.Error = commandResult.Error;
+                rtFixup.Output = commandResult.Output;
 
-            await tenantRepository.UpdateOneRtEntityByIdAsync(session, rtFixup.RtId, rtFixup);
-            await session.CommitTransactionAsync();
+                await tenantRepository.UpdateOneRtEntityByIdAsync(session, rtFixup.RtId, rtFixup);
+                await session.CommitTransactionAsync();
+            }
+            finally
+            {
+                if (File.Exists(scriptFilePath))
+                {
+                    File.Delete(scriptFilePath);
+                }
+            }
         }
         catch (Exception e)
         {
