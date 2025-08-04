@@ -15,6 +15,6 @@ public interface IDumpRepositoryJob
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns>The cache key where the dump is stored</returns>
     [DisplayName("Dump repository of tenant '{0}'")]
-    [AutomaticRetry(Attempts = 0)]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     Task<string?> Run(string tenantId, IBotCancellationToken? cancellationToken);
 }
