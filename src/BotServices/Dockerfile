@@ -29,7 +29,7 @@ RUN apt-get update && \
     wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | tee /etc/apt/trusted.gpg.d/server-8.0.asc && \
     echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-8.0.list && \
     apt-get update && \
-    apt-get install -y wget curl unzip mongodb-mongosh
+    apt-get install -y wget curl unzip mongodb-mongosh mongodb-database-tools
 
 WORKDIR /app
 COPY --from=publish /app .
