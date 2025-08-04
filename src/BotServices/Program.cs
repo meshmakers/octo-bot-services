@@ -209,7 +209,8 @@ try
         };
         var mongoUrlBuilder = new MongoUrlBuilder
         {
-            DatabaseName = octoBotServicesOptions.Value.JobDatabaseName,
+            DatabaseName =
+                $"{octoBotServicesOptions.Value.InstancePrefix}-{octoBotServicesOptions.Value.JobDatabaseName}",
             Username = systemOptions.Value.AdminUser,
             Password = systemOptions.Value.AdminUserPassword,
             AuthenticationSource = systemOptions.Value.AuthenticationDatabaseName,
