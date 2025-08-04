@@ -17,6 +17,6 @@ public interface IRestoreRepositoryJob
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
     [DisplayName("Restore repository '{1}' using tenant '{0}'")]
-    [AutomaticRetry(Attempts = 0)]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     Task Run(string tenantId, string databaseName, string cacheKey, IBotCancellationToken? cancellationToken);
 }

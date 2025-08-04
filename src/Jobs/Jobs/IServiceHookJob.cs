@@ -15,6 +15,6 @@ public interface IServiceHookJob
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
     [DisplayName("Checks for new job schedules for tenant '{0}'")]
-    [AutomaticRetry(Attempts = 0)]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     Task Run(string tenantId, IBotCancellationToken? cancellationToken);
 }

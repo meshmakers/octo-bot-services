@@ -15,6 +15,6 @@ public interface IRunFixupJob
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
     [DisplayName("Runs the fixup jobs of tenant '{0}'")]
-    [AutomaticRetry(Attempts = 0)]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     Task Run(string tenantId, IBotCancellationToken? cancellationToken);
 }
