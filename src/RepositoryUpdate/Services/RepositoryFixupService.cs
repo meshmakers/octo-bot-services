@@ -70,7 +70,7 @@ public class RepositoryFixupService(
                 await File.WriteAllTextAsync(scriptFilePath, rtFixup.Script);
 
                 var commandResult =
-                    await commandExecutionService.ExecuteMongoShellScriptAsync(databaseName, scriptFilePath);
+                    await commandExecutionService.ExecuteMongoShellScriptAsync(databaseName, scriptFilePath, cancellationToken);
 
                 rtFixup.IsApplied = true;
                 rtFixup.AppliedAt = DateTime.UtcNow;
