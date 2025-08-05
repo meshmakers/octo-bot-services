@@ -72,8 +72,8 @@ stages:
               command: 'test'
               arguments: '--configuration $(buildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer)'
               projects: |
-                '**/*Tests.csproj'
-                !'**/*SystemTests.csproj'
+                **/*Tests.csproj
+                !**/*SystemTests.csproj
               testRunTitle: 'CI'
           - template: build-and-push-docker-image.yml
             parameters:
