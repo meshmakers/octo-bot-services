@@ -41,7 +41,6 @@ stages:
           - template: update-build-number.yml
           - checkout: self
             clean: true
-            submodules: recursive
           - task: InstallSSHKey@0
             inputs:
               knownHostsEntry: '$(SSHKnownHosts)'
