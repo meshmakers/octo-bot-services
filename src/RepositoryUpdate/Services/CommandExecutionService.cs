@@ -28,7 +28,6 @@ public class CommandExecutionService(
         }
 
         logger.LogInformation("Executing MongoDB shell script: {ScriptPath}", scriptPath);
-
         return await ExecuteCommandAsync("mongosh", $"{connectionString} {args} {scriptPath}", null, null, cancellationToken);
     }
 
@@ -80,6 +79,10 @@ public class CommandExecutionService(
         string? workingDirectory = null, TimeSpan? timeout = null, CancellationToken? cancellationToken = null)
     {
         var timeoutMs = timeout?.TotalMilliseconds ?? 300000; // Default 5 Minuten
+        var workingDirectoryPath = workingDirectory ?? Directory.GetCurrentDirectory();
+        logger.LogInformation("Executing command: {Command}", fileName);
+        logger.LogInformation("Using working-directory: {WorkingDirectory}", workingDirectoryPath);
+        logger.LogDebug("Using args: {Args}", arguments);
 
         var startInfo = new ProcessStartInfo
         {
@@ -89,7 +92,7 @@ public class CommandExecutionService(
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory
+            WorkingDirectory = workingDirectoryPath
         };
 
         var output = new StringBuilder();
@@ -237,6 +240,7 @@ public class CommandExecutionService(
         urlBuilder.RetryReads = true;
         urlBuilder.RetryWrites = true;
         urlBuilder.DirectConnection = systemConfiguration.UseDirectConnection;
+        urlBuilder.DatabaseName = databaseName;
 
         return urlBuilder.ToMongoUrl();
     }
