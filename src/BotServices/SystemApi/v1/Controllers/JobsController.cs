@@ -74,7 +74,7 @@ public class JobsController : ControllerBase
     /// <param name="tenantId">The tenant id</param>
     /// <returns></returns>
     // POST: system/jobs/run-fixup-scripts?tenantId=abc
-    [HttpGet]
+    [HttpPost]
     [Route("run-fixup-scripts")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
