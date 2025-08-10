@@ -7,8 +7,8 @@ using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
-using Meshmakers.Octo.Services.Contracts.ApiErrors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -33,7 +33,8 @@ public class JobsController : ControllerBase
     /// <param name="distributedCache"></param>
     /// <param name="systemContext"></param>
     /// <param name="backgroundJobClient"></param>
-    public JobsController(IDistributedCacheService distributedCache, ISystemContext systemContext, IBackgroundJobClient backgroundJobClient)
+    public JobsController(IDistributedCacheService distributedCache, ISystemContext systemContext,
+        IBackgroundJobClient backgroundJobClient)
     {
         _distributedCache = distributedCache;
         _systemContext = systemContext;
@@ -62,9 +63,9 @@ public class JobsController : ControllerBase
 
             return Ok(CreateJobDto(id, jobDetails));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return BadRequest();
+            return BadRequest(new InternalServerErrorDto(ex.Message));
         }
     }
 
@@ -90,7 +91,11 @@ public class JobsController : ControllerBase
         }
         catch (InvalidOperationException e)
         {
-            return BadRequest(new InternalServerError(e.Message));
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new InternalServerErrorDto(ex.Message));
         }
     }
 
@@ -120,7 +125,7 @@ public class JobsController : ControllerBase
         }
         catch (InvalidOperationException e)
         {
-            return BadRequest(new InternalServerError(e.Message));
+            return BadRequest(new InternalServerErrorDto(e.Message));
         }
     }
 
@@ -145,7 +150,7 @@ public class JobsController : ControllerBase
         }
         catch (InvalidOperationException e)
         {
-            return BadRequest(new InternalServerError(e.Message));
+            return BadRequest(new InternalServerErrorDto(e.Message));
         }
     }
 
@@ -159,6 +164,7 @@ public class JobsController : ControllerBase
     [HttpGet]
     [Route("download")]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> DownloadExportRtResult(string tenantId, string id)
@@ -171,7 +177,7 @@ public class JobsController : ControllerBase
 
             if (job.Result == null)
             {
-                return BadRequest();
+                return NotFound(new NotFoundErrorDto("No result found for the job with id: " + id));
             }
 
             var key = (string)job.Result;
@@ -181,7 +187,7 @@ public class JobsController : ControllerBase
         }
         catch (InvalidOperationException e)
         {
-            return BadRequest(new InternalServerError(e.Message));
+            return BadRequest(new InternalServerErrorDto(e.Message));
         }
     }
 
@@ -197,8 +203,15 @@ public class JobsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult Delete([Required] string id)
     {
-        var result = BackgroundJob.Delete(id);
-        return Ok(result);
+        try
+        {
+            var result = BackgroundJob.Delete(id);
+            return Ok(result);
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
     }
 
     private JobDto CreateJobDto(string id, JobDetailsDto jobDetails)
@@ -232,7 +245,8 @@ public class JobsController : ControllerBase
         await using var memoryStream = new MemoryStream();
         await file.CopyToAsync(memoryStream);
         memoryStream.Position = 0;
-        var key = await _distributedCache.CreateStreamAsync(tenantId, memoryStream, file.ContentType, file.FileName, TimeSpan.FromHours(1));
+        var key = await _distributedCache.CreateStreamAsync(tenantId, memoryStream, file.ContentType, file.FileName,
+            TimeSpan.FromHours(1));
         return key;
     }
 }
