@@ -30,7 +30,7 @@ public class DumpRepositoryJob(
 
             var filePath = Path.ChangeExtension(Path.GetTempFileName(), "tar.gz");
 
-            logger.LogInformation("Running restore command for \'{TenantId}\'", tenantId);
+            logger.LogInformation("Running dump repository command for \'{TenantId}\'", tenantId);
             var r = await commandExecutionService.ExecuteMongoDumpAsync(new MongoDumpOptions
             {
                 Database = tenantContext.DatabaseName,
@@ -48,7 +48,7 @@ public class DumpRepositoryJob(
         }
         catch (Exception e)
         {
-            logger.LogError(e, "Error while restoring database for tenant \'{TenantId}\'", tenantId);
+            logger.LogError(e, "Error while dump repository  database for tenant \'{TenantId}\'", tenantId);
             throw;
         }
     }
