@@ -94,7 +94,8 @@ public class RestoreRepositoryJob(
 
         var tempFile = Path.ChangeExtension(Path.GetTempFileName(), "tar.gz");
 
-        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeGzip)
+        if (cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeGzip ||
+            cacheStream.ContentType.ToLower() == MimeTypes.MimeTypeXGzip)
         {
             var contentType = cacheStream.ContentType;
             await using var streamWriter = new StreamWriter(tempFile);
