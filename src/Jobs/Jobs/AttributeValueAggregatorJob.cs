@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
+using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
@@ -83,9 +84,9 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
                     cancellationToken?.ThrowIfCancellationRequested();
 
                     var rtAssociations = await tenantRepository.GetRtAssociationsAsync(session,
-                        configurationRtEntity.RtId,
+                        configurationRtEntity.ToRtEntityId(),
                         GraphDirections.Outbound, SystemBotCkIds.Configures);
-                    var rtAssociation = rtAssociations.FirstOrDefault();
+                    var rtAssociation = rtAssociations.Items.FirstOrDefault();
                     if (rtAssociation == null)
                     {
                         continue;
