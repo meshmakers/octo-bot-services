@@ -1,7 +1,8 @@
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
-using Meshmakers.Octo.Runtime.Contracts.MongoDb.Exchange;
+using Meshmakers.Octo.Runtime.Contracts.Exchange;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Sdk.ServiceClient;
 using Microsoft.Extensions.Logging;
 
@@ -13,6 +14,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 public class ImportModelJob : IImportModelJob
 {
     private readonly ILogger<ImportModelJob>  _logger;
+    private readonly ISystemContext _systemContext;
     private readonly IDistributedCacheService _distributedCacheService;
     private readonly ICompressionService _compressionService;
     private readonly IImportCkModelCommand _importCkModelCommand;
@@ -22,15 +24,18 @@ public class ImportModelJob : IImportModelJob
     ///     Constructor
     /// </summary>
     /// <param name="logger">Instance of the logger</param>
+    /// <param name="systemContext">System context object</param>
     /// <param name="distributedCacheService">Service for distributed caching</param>
     /// <param name="compressionService">Service for compressing and decompressing files</param>
-    /// <param name="importCkModelCommand">Command to import CK model</param>
-    /// <param name="importRtModelCommand">Command to import RT model</param>
-    public ImportModelJob(ILogger<ImportModelJob> logger, IDistributedCacheService distributedCacheService, ICompressionService compressionService,
+    /// <param name="importCkModelCommand">Command to import a CK model</param>
+    /// <param name="importRtModelCommand">Command to import an RT model</param>
+    public ImportModelJob(ILogger<ImportModelJob> logger, ISystemContext systemContext,
+        IDistributedCacheService distributedCacheService, ICompressionService compressionService,
         IImportCkModelCommand importCkModelCommand,
         IImportRtModelCommand importRtModelCommand)
     {
         _logger = logger;
+        _systemContext = systemContext;
         _distributedCacheService = distributedCacheService;
         _compressionService = compressionService;
         _importCkModelCommand = importCkModelCommand;
@@ -84,7 +89,8 @@ public class ImportModelJob : IImportModelJob
 
             _logger.LogInformation("Starting import of file \'{TempFile}\'", tempFile);
 
-            await _importRtModelCommand.ImportAsync(tenantId, tempFile.Item1, tempFile.Item2, cancellationToken?.ShutdownToken);
+            var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
+            await _importRtModelCommand.ImportAsync(tenantRepository, tempFile.Item1, tempFile.Item2, cancellationToken?.ShutdownToken);
 
             await ClearCache(tenantId, key);
 
