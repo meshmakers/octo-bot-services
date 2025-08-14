@@ -13,7 +13,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// </summary>
 public class ImportModelJob : IImportModelJob
 {
-    private readonly ILogger<ImportModelJob>  _logger;
+    private readonly ILogger<ImportModelJob> _logger;
     private readonly ISystemContext _systemContext;
     private readonly IDistributedCacheService _distributedCacheService;
     private readonly ICompressionService _compressionService;
@@ -73,14 +73,9 @@ public class ImportModelJob : IImportModelJob
         }
     }
 
-    /// <summary>
-    ///     Imports a runtime model
-    /// </summary>
-    /// <param name="tenantId">The corresponding tenant</param>
-    /// <param name="key">The key definition in redis</param>
-    /// <param name="cancellationToken">A cancellation token to abort the job</param>
-    /// <returns></returns>
-    public async Task ImportRtAsync(string tenantId, string key, IBotCancellationToken? cancellationToken)
+    /// <inheritdoc />
+    public async Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
+        IBotCancellationToken? cancellationToken)
     {
         try
         {
@@ -90,7 +85,8 @@ public class ImportModelJob : IImportModelJob
             _logger.LogInformation("Starting import of file \'{TempFile}\'", tempFile);
 
             var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
-            await _importRtModelCommand.ImportAsync(tenantRepository, tempFile.Item1, tempFile.Item2, cancellationToken?.ShutdownToken);
+            await _importRtModelCommand.ImportAsync(tenantRepository, tempFile.Item1, tempFile.Item2, importStrategy,
+                cancellationToken?.ShutdownToken);
 
             await ClearCache(tenantId, key);
 
@@ -125,7 +121,6 @@ public class ImportModelJob : IImportModelJob
                 {
                     contentType = MimeTypes.MimeTypeYaml;
                     return compressedFiles.FirstOrDefault(x => Path.GetExtension(x.Name).ToLower() == ".yaml");
-                 
                 }
 
                 return null;
@@ -142,6 +137,7 @@ public class ImportModelJob : IImportModelJob
             {
                 contentType = MimeTypes.MimeTypeYaml;
             }
+
             await using var streamWriter = new StreamWriter(tempFile);
             await cacheStream.Stream.CopyToAsync(streamWriter.BaseStream);
             return new Tuple<string, string>(tempFile, contentType);

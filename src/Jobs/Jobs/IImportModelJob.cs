@@ -1,4 +1,5 @@
 using Hangfire;
+using Meshmakers.Octo.Runtime.Contracts.Exchange;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
@@ -23,10 +24,11 @@ public interface IImportModelJob
     ///     Imports a runtime model
     /// </summary>
     /// <param name="tenantId">The corresponding tenant</param>
+    /// <param name="importStrategy">The import strategy to use</param>
     /// <param name="key">The key definition in redis</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
     [JobDisplayName("Importing Runtime Metadata to tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
-    Task ImportRtAsync(string tenantId, string key, IBotCancellationToken? cancellationToken);
+    Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key, IBotCancellationToken? cancellationToken);
 }
