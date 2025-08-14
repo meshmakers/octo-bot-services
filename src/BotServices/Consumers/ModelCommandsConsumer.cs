@@ -24,7 +24,7 @@ internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
     public async Task ConsumeAsync(IDistributedContext<ImportRtCommandRequest> context)
     {
         var id = backgroundJobClient.Enqueue<IImportModelJob>(job =>
-            job.ImportRtAsync(context.Message.TenantId, context.Message.CacheFileKey, BotCancellationToken.Null));
+            job.ImportRtAsync(context.Message.TenantId, context.Message.ImportStrategy, context.Message.CacheFileKey, BotCancellationToken.Null));
         
         await context.RespondAsync(new JobCreatedResponse(id));
     }
