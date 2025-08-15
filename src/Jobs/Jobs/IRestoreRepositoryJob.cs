@@ -18,5 +18,6 @@ public interface IRestoreRepositoryJob
     /// <returns></returns>
     [DisplayName("Restore repository '{1}' using tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
     Task Run(string tenantId, string databaseName, string cacheKey, IBotCancellationToken? cancellationToken);
 }
