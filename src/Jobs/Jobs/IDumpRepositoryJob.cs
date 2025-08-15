@@ -16,5 +16,6 @@ public interface IDumpRepositoryJob
     /// <returns>The cache key where the dump is stored</returns>
     [DisplayName("Dump repository of tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
     Task<string?> Run(string tenantId, IBotCancellationToken? cancellationToken);
 }
