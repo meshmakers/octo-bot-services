@@ -2,6 +2,7 @@ using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Sdk.ServiceClient;
 using Microsoft.Extensions.Logging;
+using RepositoryUpdate;
 using RepositoryUpdate.Models;
 using RepositoryUpdate.Services;
 
@@ -27,6 +28,14 @@ public class DumpRepositoryJob(
             }
 
             var tenantContext = await systemContext.FindTenantContextAsync(tenantId);
+
+            if (tenantContext == null)
+            {
+                throw RepositoryUpdateException.TenantContextNotFound(tenantId);
+            }
+
+            logger.LogInformation("Removing all cache streams for tenant \'{TenantId}\'", tenantId);
+            await distributedCache.DeleteAllCacheStreamsAsync(tenantId);
 
             var filePath = Path.ChangeExtension(Path.GetTempFileName(), "tar.gz");
 
