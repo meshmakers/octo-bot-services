@@ -12,7 +12,6 @@ public class OctoBotServicesOptions
     /// </summary>
     public OctoBotServicesOptions()
     {
-        InstancePrefix = "default";
         BrokerHost = "localhost";
         JobDatabaseName = "OctoSystemJobs";
         PrepareJobSchemaIfNecessary = true;
@@ -29,7 +28,7 @@ public class OctoBotServicesOptions
     /// <summary>
     ///     Gets or sets the prefix for the OctoMesh installation instance.
     /// </summary>
-    public string InstancePrefix { get; set; }
+    public string? InstancePrefix { get; set; }
 
     /// <summary>
     ///     Gets or sets the RabbitMq host name
