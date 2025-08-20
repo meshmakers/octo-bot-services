@@ -46,4 +46,9 @@ internal static class BotServiceConstants
     ///     Timespan a cookie is expiring
     /// </summary>
     public static readonly TimeSpan CookieExpireTimeSpan = TimeSpan.FromMinutes(60);
+
+    /// <summary>
+    /// Default prefix for instance name
+    /// </summary>
+    public const string  DefaultInstancePrefix = "default";
 }

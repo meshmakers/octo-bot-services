@@ -10,7 +10,7 @@ namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 /// </summary>
 // ReSharper disable once ClassNeverInstantiated.Global
 internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
-    IDistributedConsumer<PosCreateTenant>, 
+    IDistributedConsumer<PosCreateTenant>,
     IDistributedConsumer<PreDeleteTenant>
 {
     private readonly ILogger<TenantManagementConsumer> _logger;
@@ -36,21 +36,25 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
     {
         _logger.LogInformation("Pre update tenant received: {Text}", context.Message.TenantId);
 
-        _jobCreatorService.DeleteJobs(_options.Value.InstancePrefix, context.Message.TenantId);
-        _jobCreatorService.CreateJobs(_options.Value.InstancePrefix, context.Message.TenantId);
+        _jobCreatorService.DeleteJobs(_options.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix,
+            context.Message.TenantId);
+        _jobCreatorService.CreateJobs(_options.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix,
+            context.Message.TenantId);
 
         return Task.CompletedTask;
     }
-    
+
     public Task ConsumeAsync(IDistributedContext<PosCreateTenant> context)
     {
-        _jobCreatorService.CreateJobs(_options.Value.InstancePrefix, context.Message.TenantId);
+        _jobCreatorService.CreateJobs(_options.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix,
+            context.Message.TenantId);
         return Task.CompletedTask;
     }
-    
+
     public Task ConsumeAsync(IDistributedContext<PreDeleteTenant> context)
     {
-        _jobCreatorService.DeleteJobs(_options.Value.InstancePrefix, context.Message.TenantId);
+        _jobCreatorService.DeleteJobs(_options.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix,
+            context.Message.TenantId);
         return Task.CompletedTask;
     }
 }

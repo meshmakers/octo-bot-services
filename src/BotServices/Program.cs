@@ -209,7 +209,7 @@ try
         };
         var mongoUrlBuilder = new MongoUrlBuilder
         {
-            DatabaseName =
+            DatabaseName = string.IsNullOrWhiteSpace(octoBotServicesOptions.Value.InstancePrefix) ? octoBotServicesOptions.Value.JobDatabaseName :
                 $"{octoBotServicesOptions.Value.InstancePrefix}-{octoBotServicesOptions.Value.JobDatabaseName}",
             Username = systemOptions.Value.AdminUser,
             Password = systemOptions.Value.AdminUserPassword,

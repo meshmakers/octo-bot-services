@@ -25,7 +25,7 @@ internal class DefaultConfigurationCreatorService(
     IOptions<OctoBotServicesOptions> octoBotServicesOptions)
     : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
         BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
-        null,// we don't need migrations here
+        null, // we don't need migrations here
         BotServiceConstants.BotServiceSchemaVersionKey, true, BotServiceConstants.BotServiceSchemaVersionValue)
 {
     public override async Task InitializeAsync()
@@ -39,8 +39,10 @@ internal class DefaultConfigurationCreatorService(
     protected override Task StartTenantAsync(string tenantId)
     {
         // Create jobs
-        jobCreatorService.DeleteJobs(octoBotServicesOptions.Value.InstancePrefix, tenantId);
-        jobCreatorService.CreateJobs(octoBotServicesOptions.Value.InstancePrefix, tenantId);
+        jobCreatorService.DeleteJobs(
+            octoBotServicesOptions.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix, tenantId);
+        jobCreatorService.CreateJobs(
+            octoBotServicesOptions.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix, tenantId);
 
         return base.StartTenantAsync(tenantId);
     }
@@ -48,7 +50,8 @@ internal class DefaultConfigurationCreatorService(
     protected override Task StopTenantAsync(string tenantId)
     {
         // Delete jobs
-        jobCreatorService.DeleteJobs(octoBotServicesOptions.Value.InstancePrefix, tenantId);
+        jobCreatorService.DeleteJobs(
+            octoBotServicesOptions.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix, tenantId);
 
         return base.StopTenantAsync(tenantId);
     }
