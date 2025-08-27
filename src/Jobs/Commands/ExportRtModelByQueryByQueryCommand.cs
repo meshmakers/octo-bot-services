@@ -1,19 +1,20 @@
 using Meshmakers.Common.Shared;
-using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v1;
 using Meshmakers.Octo.Runtime.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
 using Microsoft.Extensions.Logging;
-using RtEntityDto = Meshmakers.Octo.Runtime.Contracts.DataTransferObjects.RtEntityDto;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
 
 internal class ExportRtModelByQueryByQueryCommand(
     ILogger<ExportRtModelByQueryByQueryCommand> logger,
     ISystemContext systemContext,
+    ICkCacheService ckCacheService,
+    IRtEntityToDtoConverter rtEntityToDtoConverter,
     IRtSerializer rtSerializer)
     : CommandBase, IExportRtModelByQueryCommand
 {
@@ -70,34 +71,13 @@ internal class ExportRtModelByQueryByQueryCommand(
 
             var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync(session, ckTypeId, dataQueryOperation);
 
-            var ckTypeGraph = await tenantRepository.GetCkTypeGraphAsync(ckTypeId);
+            // Ensure the cache is loaded for the tenant
+            await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
 
             CheckAndThrowCancellation(cancellationToken);
 
             var model = new RtModelRootDto();
-            model.Entities.AddRange(resultSet.Items.Select(entity =>
-            {
-                var entityDto = new RtEntityDto
-                {
-                    RtId = entity.RtId,
-                    RtChangedDateTime = entity.RtChangedDateTime,
-                    RtCreationDateTime = entity.RtCreationDateTime,
-                    RtWellKnownName = entity.RtWellKnownName,
-                    CkTypeId = entity.CkTypeId ?? throw OperationFailedException.CkTypeIdUndefined()
-                };
-
-                entityDto.Attributes.AddRange(entity.Attributes.Select(pair =>
-                {
-                    var typeAttributeGraph = ckTypeGraph.AllAttributesByName[pair.Key];
-                    return new RtAttributeDto
-                    {
-                        Id = typeAttributeGraph.CkAttributeId,
-                        Value = pair.Value
-                    };
-                }));
-
-                return entityDto;
-            }));
+            model.Entities.AddRange(resultSet.Items.Select(entity => rtEntityToDtoConverter.Convert(tenantId, entity)));
 
             CheckAndThrowCancellation(cancellationToken);
 

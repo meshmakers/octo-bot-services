@@ -14,6 +14,7 @@ internal class ExportRtModelByDeepGraphCommand(
     ILogger<ExportRtModelByDeepGraphCommand> logger,
     ISystemContext systemContext,
     ICkCacheService ckCacheService,
+    IRtEntityToDtoConverter rtEntityToDtoConverter,
     IRtSerializer rtSerializer) : CommandBase, IExportRtModelByDeepGraphCommand
 {
     public async Task ExportAsync(string tenantId, ExportRtByDeepGraphCommandRequest rtByDeepGraphCommandRequest,
@@ -23,6 +24,10 @@ internal class ExportRtModelByDeepGraphCommand(
         CheckAndThrowCancellation(cancellationToken);
 
         var tenantRepository = await systemContext.FindTenantRepositoryAsync(tenantId);
+
+            // Ensure the cache is loaded for the tenant
+        await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
+
         var session = await tenantRepository.GetSessionAsync();
         try
         {
@@ -45,20 +50,12 @@ internal class ExportRtModelByDeepGraphCommand(
 
                 CheckAndThrowCancellation(cancellationToken);
 
-                var ckTypeGraph = ckCacheService.GetCkType(tenantId, grouping.Key);
+                // Ensure the cache is loaded for the tenant
+                await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
 
                 foreach (var rtEntity in s.Items)
                 {
-                    var entityDto = new RtEntityDto
-                    {
-                        RtId = rtEntity.RtId,
-                        RtChangedDateTime = rtEntity.RtChangedDateTime,
-                        RtCreationDateTime = rtEntity.RtCreationDateTime,
-                        RtWellKnownName = rtEntity.RtWellKnownName,
-                        CkTypeId = rtEntity.CkTypeId ?? throw OperationFailedException.CkTypeIdUndefined()
-                    };
-
-                    ConvertAttributes(tenantId, ckTypeGraph, rtEntity, entityDto);
+                    var entityDto = rtEntityToDtoConverter.Convert(tenantId, rtEntity);
 
                     if (itemsDictionary.TryGetValue(rtEntity.RtId, out var item))
                     {
@@ -109,49 +106,5 @@ internal class ExportRtModelByDeepGraphCommand(
             logger.LogError(e, "Exporting model failed");
             throw;
         }
-    }
-
-    private void ConvertAttributes(string tenantId, CkTypeWithAttributesGraph ckTypeWithAttributesGraph, RtTypeWithAttributes rtTypeWithAttributes, RtTypeWithAttributesDto rtTypeWithAttributesDto)
-    {
-        rtTypeWithAttributesDto.Attributes.AddRange(rtTypeWithAttributes.Attributes.Select(pair =>
-        {
-            var typeAttributeGraph = ckTypeWithAttributesGraph.AllAttributesByName[pair.Key];
-
-            var value = pair.Value;
-            if (value is RtRecord rtRecord)
-            {
-                value = ConvertToRtRecordDto(tenantId, rtRecord);
-            }
-            else if (value is IEnumerable<object> rtRecords)
-            {
-                value = rtRecords.Select(listValue =>
-                {
-                    if (listValue is RtRecord rtRecord2)
-                    {
-                        return ConvertToRtRecordDto(tenantId, rtRecord2);
-                    }
-
-                    return listValue;
-                });
-            }
-
-            return new RtAttributeDto
-            {
-                Id = typeAttributeGraph.CkAttributeId,
-                Value = value
-            };
-        }));
-    }
-
-    private RtRecordDto ConvertToRtRecordDto(string tenantId, RtRecord rtRecord)
-    {
-        var rtRecordDto = new RtRecordDto
-        {
-            CkRecordId = rtRecord.CkRecordId
-        };
-
-        var ckRecordGraph = ckCacheService.GetCkRecord(tenantId, rtRecord.CkRecordId);
-        ConvertAttributes(tenantId, ckRecordGraph, rtRecord, rtRecordDto);
-        return rtRecordDto;
     }
 }
