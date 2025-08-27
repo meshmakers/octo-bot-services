@@ -1,7 +1,9 @@
+using Meshmakers.Octo.ConstructionKit.Contracts.DependencyGraph;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.Runtime.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
+using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Microsoft.Extensions.Logging;
@@ -56,15 +58,7 @@ internal class ExportRtModelByDeepGraphCommand(
                         CkTypeId = rtEntity.CkTypeId ?? throw OperationFailedException.CkTypeIdUndefined()
                     };
 
-                    entityDto.Attributes.AddRange(rtEntity.Attributes.Select(pair =>
-                    {
-                        var typeAttributeGraph = ckTypeGraph.AllAttributesByName[pair.Key];
-                        return new RtAttributeDto
-                        {
-                            Id = typeAttributeGraph.CkAttributeId,
-                            Value = pair.Value
-                        };
-                    }));
+                    ConvertAttributes(tenantId, ckTypeGraph, rtEntity, entityDto);
 
                     if (itemsDictionary.TryGetValue(rtEntity.RtId, out var item))
                     {
@@ -115,5 +109,49 @@ internal class ExportRtModelByDeepGraphCommand(
             logger.LogError(e, "Exporting model failed");
             throw;
         }
+    }
+
+    private void ConvertAttributes(string tenantId, CkTypeWithAttributesGraph ckTypeWithAttributesGraph, RtTypeWithAttributes rtTypeWithAttributes, RtTypeWithAttributesDto rtTypeWithAttributesDto)
+    {
+        rtTypeWithAttributesDto.Attributes.AddRange(rtTypeWithAttributes.Attributes.Select(pair =>
+        {
+            var typeAttributeGraph = ckTypeWithAttributesGraph.AllAttributesByName[pair.Key];
+
+            var value = pair.Value;
+            if (value is RtRecord rtRecord)
+            {
+                value = ConvertToRtRecordDto(tenantId, rtRecord);
+            }
+            else if (value is IEnumerable<object> rtRecords)
+            {
+                value = rtRecords.Select(listValue =>
+                {
+                    if (listValue is RtRecord rtRecord2)
+                    {
+                        return ConvertToRtRecordDto(tenantId, rtRecord2);
+                    }
+
+                    return listValue;
+                });
+            }
+
+            return new RtAttributeDto
+            {
+                Id = typeAttributeGraph.CkAttributeId,
+                Value = value
+            };
+        }));
+    }
+
+    private RtRecordDto ConvertToRtRecordDto(string tenantId, RtRecord rtRecord)
+    {
+        var rtRecordDto = new RtRecordDto
+        {
+            CkRecordId = rtRecord.CkRecordId
+        };
+
+        var ckRecordGraph = ckCacheService.GetCkRecord(tenantId, rtRecord.CkRecordId);
+        ConvertAttributes(tenantId, ckRecordGraph, rtRecord, rtRecordDto);
+        return rtRecordDto;
     }
 }
