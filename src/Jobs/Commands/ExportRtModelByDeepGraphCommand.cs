@@ -1,10 +1,10 @@
-using Meshmakers.Octo.ConstructionKit.Contracts.DependencyGraph;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
-using Meshmakers.Octo.Runtime.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
-using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
+using Meshmakers.Octo.Runtime.Contracts.TransportContainer;
+using Meshmakers.Octo.Runtime.Contracts.TransportContainer.DTOs;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Microsoft.Extensions.Logging;
 
@@ -14,7 +14,7 @@ internal class ExportRtModelByDeepGraphCommand(
     ILogger<ExportRtModelByDeepGraphCommand> logger,
     ISystemContext systemContext,
     ICkCacheService ckCacheService,
-    IRtEntityToDtoConverter rtEntityToDtoConverter,
+    IRtEntityToTcDtoConverter rtEntityToDtoConverter,
     IRtSerializer rtSerializer) : CommandBase, IExportRtModelByDeepGraphCommand
 {
     public async Task ExportAsync(string tenantId, ExportRtByDeepGraphCommandRequest rtByDeepGraphCommandRequest,
@@ -42,7 +42,7 @@ internal class ExportRtModelByDeepGraphCommand(
 
             var itemsDictionary = resultSet.Items.ToDictionary(k => k.Id.RtId, v => v);
             var groupedByCkType = resultSet.Items.GroupBy(x => x.Id.CkTypeId);
-            var model = new RtModelRootDto();
+            var model = new RtModelRootTcDto();
             foreach (var grouping in groupedByCkType)
             {
                 var s = await tenantRepository.GetRtEntitiesByIdAsync(session, grouping.Key,
@@ -59,7 +59,7 @@ internal class ExportRtModelByDeepGraphCommand(
 
                     if (itemsDictionary.TryGetValue(rtEntity.RtId, out var item))
                     {
-                        entityDto.Associations = new List<RtAssociationDto>();
+                        entityDto.Associations = new List<RtAssociationTcDto>();
 
                         foreach (var associationItem in item.Associations)
                         {
@@ -67,7 +67,7 @@ internal class ExportRtModelByDeepGraphCommand(
                                          throw OperationFailedException.AssociationRoleIdUndefined();
                             var ckAssociationRoleGraph = ckCacheService.GetCkAssociationRole(tenantId, roleId);
 
-                            var associationDto = new RtAssociationDto
+                            var associationDto = new RtAssociationTcDto
                             {
                                 RoleId = roleId,
                                 TargetRtId = associationItem.TargetRtId,
@@ -79,7 +79,7 @@ internal class ExportRtModelByDeepGraphCommand(
                             associationDto.Attributes.AddRange(associationItem.Attributes.Select(pair =>
                             {
                                 var typeAttributeGraph = ckAssociationRoleGraph.AllAttributesByName[pair.Key];
-                                return new RtAttributeDto
+                                return new RtAttributeTcDto
                                 {
                                     Id = typeAttributeGraph.CkAttributeId,
                                     Value = pair.Value
