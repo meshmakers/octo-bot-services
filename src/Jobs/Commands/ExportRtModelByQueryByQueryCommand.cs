@@ -2,10 +2,11 @@ using Meshmakers.Common.Shared;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v1;
-using Meshmakers.Octo.Runtime.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
+using Meshmakers.Octo.Runtime.Contracts.TransportContainer;
+using Meshmakers.Octo.Runtime.Contracts.TransportContainer.DTOs;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
@@ -14,7 +15,7 @@ internal class ExportRtModelByQueryByQueryCommand(
     ILogger<ExportRtModelByQueryByQueryCommand> logger,
     ISystemContext systemContext,
     ICkCacheService ckCacheService,
-    IRtEntityToDtoConverter rtEntityToDtoConverter,
+    IRtEntityToTcDtoConverter rtEntityToDtoConverter,
     IRtSerializer rtSerializer)
     : CommandBase, IExportRtModelByQueryCommand
 {
@@ -76,7 +77,7 @@ internal class ExportRtModelByQueryByQueryCommand(
 
             CheckAndThrowCancellation(cancellationToken);
 
-            var model = new RtModelRootDto();
+            var model = new RtModelRootTcDto();
             model.Entities.AddRange(resultSet.Items.Select(entity => rtEntityToDtoConverter.Convert(tenantId, entity)));
 
             CheckAndThrowCancellation(cancellationToken);
