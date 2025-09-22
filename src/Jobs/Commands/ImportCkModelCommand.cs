@@ -52,7 +52,7 @@ internal class ImportCkModelCommand(
             var ckCompiledModelRoot =
                 await ckSerializer.DeserializeCompiledModelRootAsync(streamReader, Path.GetFileName(filePath), operationResult);
 
-            if (ckCompiledModelRoot == null || operationResult.HasErrors)
+            if (operationResult.HasErrors)
             {
                 logger.LogError("Import of CK model failed, model cannot be deserialized");
                 operationResult.WriteMessagesToLogger(logger);
