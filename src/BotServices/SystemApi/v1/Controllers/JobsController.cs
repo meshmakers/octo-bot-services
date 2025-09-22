@@ -1,4 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Asp.Versioning;
 using Hangfire;
 using Hangfire.Storage.Monitoring;
@@ -171,19 +174,47 @@ public class JobsController : ControllerBase
     {
         try
         {
-            var job = JobStorage.Current.GetMonitoringApi().SucceededJobs(0, int.MaxValue)
-                .FirstOrDefault(x => x.Key == id)
-                .Value;
+            var jobDetails = JobStorage.Current.GetMonitoringApi().JobDetails(id);
 
-            if (job.Result == null)
+            if (jobDetails == null)
             {
-                return NotFound(new NotFoundErrorDto("No result found for the job with id: " + id));
+                return NotFound(new NotFoundErrorDto("No job found with id: " + id));
             }
 
-            var key = (string)job.Result;
-            var resultTuple = await GetResultStream(tenantId, key.Replace("\"", ""));
+            // Check if the job is in a final state
+            var status = jobDetails.History.FirstOrDefault();
+            if (status is { StateName: "Deleted" })
+            {
+                status = jobDetails.History.Skip(1).FirstOrDefault();
 
-            return new FileStreamResult(resultTuple.Item2, resultTuple.Item1);
+                if (status?.StateName == "Failed")
+                {
+                    var errorMessage = status.Data.TryGetValue("ExceptionMessage", out var value) ? value : null;
+                    return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
+                }
+                return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has been deleted at " + status?.CreatedAt + ". " +
+                                                             "Please check the job status and server logs and try again."));
+            }
+
+            if (status?.StateName == "Failed")
+            {
+                var errorMessage = status.Data.TryGetValue("ExceptionMessage", out var value) ? value : null;
+                return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
+            }
+
+            if (status?.StateName == "Succeeded")
+            {
+                if (!status.Data.TryGetValue("Result", out var result))
+                {
+                    return NotFound(new NotFoundErrorDto("No result found for the job with id: " + id));
+                }
+                var key = result;
+                var resultTuple = await GetResultStream(tenantId, key.Replace("\"", ""));
+
+                return new FileStreamResult(resultTuple.Item2, resultTuple.Item1);
+            }
+
+            return BadRequest(new InternalServerErrorDto("The job with id: " + id + " is not in a final state."));
         }
         catch (InvalidOperationException e)
         {
@@ -216,7 +247,17 @@ public class JobsController : ControllerBase
 
     private JobDto CreateJobDto(string id, JobDetailsDto jobDetails)
     {
+        string? errorMessage = null;
         var status = jobDetails.History.FirstOrDefault();
+        if (status is { StateName: "Deleted" })
+        {
+            status = jobDetails.History.Skip(1).FirstOrDefault();
+        }
+
+        if (status is { StateName: "Failed" } && status.Data.TryGetValue("ExceptionMessage", out var value))
+        {
+            errorMessage = value;
+        }
 
         var jobDto = new JobDto
         {
@@ -224,7 +265,8 @@ public class JobsController : ControllerBase
             CreatedAt = jobDetails.CreatedAt ?? DateTime.MinValue,
             StateChangedAt = status?.CreatedAt,
             Status = status?.StateName,
-            Reason = status?.Reason
+            Reason = status?.Reason,
+            ErrorMessage = errorMessage
         };
         return jobDto;
     }

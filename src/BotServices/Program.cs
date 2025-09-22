@@ -8,7 +8,6 @@ using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
-using Meshmakers.Octo.Backend.BotServices.Hangfire;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
@@ -230,7 +229,7 @@ try
         }
 
         config.UseMongoStorage(mongoUrlBuilder.ToString(), storageOptions);
-        config.UseLogProvider(new NLogProvider());
+        config.UseNLogLogProvider();
     });
 
     // ReSharper disable once StringLiteralTypo
