@@ -6,5 +6,5 @@ associationRoles:
   outboundName: Configures
   outboundMultiplicity: One
   attributes:
-    - id: ${thisModel}/SelectedAttributeId
+    - id: ${this}/SelectedAttributeId
       name: SelectedAttributeId

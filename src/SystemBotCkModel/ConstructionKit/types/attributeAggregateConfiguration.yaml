@@ -5,10 +5,10 @@ types:
   attributes:
   - id: ${System}/Enabled
     name: IsAutoCompleteEnabled
-  - id: ${thisModel}/AutoCompleteFilter
+  - id: ${this}/AutoCompleteFilter
     name: AutoCompleteFilter
-  - id: ${thisModel}/AutoCompleteLimit
+  - id: ${this}/AutoCompleteLimit
     name: AutoCompleteLimit
   associations:
-  - id: ${thisModel}/Configures
+  - id: ${this}/Configures
     targetCkTypeId: ${System}/Entity
