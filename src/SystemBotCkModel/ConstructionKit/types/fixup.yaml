@@ -9,21 +9,21 @@ types:
         name: Enabled
       - id: ${System}/Name
         name: Name
-      - id: ${thisModel}/Fixup.Order
+      - id: ${this}/Fixup.Order
         name: Order
-      - id: ${thisModel}/Fixup.Script
+      - id: ${this}/Fixup.Script
         name: Script
-      - id: ${thisModel}/Fixup.IsApplied
+      - id: ${this}/Fixup.IsApplied
         name: IsApplied
-      - id: ${thisModel}/Fixup.AppliedAt
+      - id: ${this}/Fixup.AppliedAt
         name: AppliedAt
         isOptional: true
-      - id: ${thisModel}/Fixup.Output
+      - id: ${this}/Fixup.Output
         name: Output
         isOptional: true
-      - id: ${thisModel}/Fixup.Error
+      - id: ${this}/Fixup.Error
         name: Error
         isOptional: true
-      - id: ${thisModel}/Fixup.IsSuccess
+      - id: ${this}/Fixup.IsSuccess
         name: IsSuccess
         isOptional: true

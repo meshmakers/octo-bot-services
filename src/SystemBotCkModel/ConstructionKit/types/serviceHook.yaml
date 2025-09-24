@@ -13,10 +13,10 @@ types:
         name: FieldFilter
       - id: ${System}/Name
         name: Name
-      - id: ${thisModel}/ServiceHook.Uri
+      - id: ${this}/ServiceHook.Uri
         name: ServiceHookBaseUri
-      - id: ${thisModel}/ServiceHook.Action
+      - id: ${this}/ServiceHook.Action
         name: ServiceHookAction
-      - id: ${thisModel}/ServiceHook.ApiKey
+      - id: ${this}/ServiceHook.ApiKey
         name: ServiceHookApiKey
         isOptional: true
