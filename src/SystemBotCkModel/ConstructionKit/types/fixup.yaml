@@ -1,13 +1,13 @@
 "$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
 types:
   - typeId: Fixup
-    derivedFromCkTypeId: System/Entity
+    derivedFromCkTypeId: ${System}/Entity
     isFinal: false
     isAbstract: false
     attributes:
-      - id: System/Enabled
+      - id: ${System}/Enabled
         name: Enabled
-      - id: System/Name
+      - id: ${System}/Name
         name: Name
       - id: ${thisModel}/Fixup.Order
         name: Order
