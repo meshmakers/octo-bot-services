@@ -1,6 +1,7 @@
 using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Services;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Microsoft.Extensions.Logging;
 using SystemBotCkModel.Generated.System.Bot.v1;
@@ -10,7 +11,7 @@ namespace RepositoryUpdate.Services;
 public class RepositoryFixupService(
     ILogger<RepositoryFixupService> logger,
     ISystemContext systemContext,
-    ICommandExecutionService commandExecutionService) : IRepositoryFixupService
+    IRepositoryOpsService repositoryOpsService) : IRepositoryFixupService
 {
     public async Task FixupRepositoryAsync(string tenantId, CancellationToken? cancellationToken = null)
     {
@@ -70,7 +71,7 @@ public class RepositoryFixupService(
                 await File.WriteAllTextAsync(scriptFilePath, rtFixup.Script);
 
                 var commandResult =
-                    await commandExecutionService.ExecuteMongoShellScriptAsync(databaseName, scriptFilePath, cancellationToken);
+                    await repositoryOpsService.ExecuteMongoShellScriptAsync(databaseName, scriptFilePath, cancellationToken);
 
                 rtFixup.IsApplied = true;
                 rtFixup.AppliedAt = DateTime.UtcNow;
