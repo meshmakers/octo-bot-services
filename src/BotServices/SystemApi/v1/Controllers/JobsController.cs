@@ -108,6 +108,7 @@ public class JobsController : ControllerBase
     /// <param name="tenantId">The tenant id</param>
     /// <param name="databaseName">The name of the database to restore</param>
     /// <param name="file">The file with the gzipped file</param>
+    /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
     /// <returns></returns>
     [HttpPost]
     [RequestSizeLimit(300_000_000)]
@@ -115,14 +116,15 @@ public class JobsController : ControllerBase
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> RestoreRepositoryAsync(string tenantId, string databaseName, IFormFile file)
+    public async Task<IActionResult> RestoreRepositoryAsync(string tenantId, string databaseName, IFormFile file,
+        string? oldDatabaseName = null)
     {
         try
         {
             var cacheKey = await AddFileToCache(_systemContext.TenantId, file);
 
             var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, cacheKey, BotCancellationToken.Null));
+                job.Run(tenantId, databaseName, cacheKey, oldDatabaseName, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -190,16 +192,20 @@ public class JobsController : ControllerBase
                 if (status?.StateName == "Failed")
                 {
                     var errorMessage = status.Data.TryGetValue("ExceptionMessage", out var value) ? value : null;
-                    return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
+                    return BadRequest(
+                        new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
                 }
-                return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has been deleted at " + status?.CreatedAt + ". " +
+
+                return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has been deleted at " +
+                                                             status?.CreatedAt + ". " +
                                                              "Please check the job status and server logs and try again."));
             }
 
             if (status?.StateName == "Failed")
             {
                 var errorMessage = status.Data.TryGetValue("ExceptionMessage", out var value) ? value : null;
-                return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
+                return BadRequest(
+                    new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
             }
 
             if (status?.StateName == "Succeeded")
@@ -208,6 +214,7 @@ public class JobsController : ControllerBase
                 {
                     return NotFound(new NotFoundErrorDto("No result found for the job with id: " + id));
                 }
+
                 var key = result;
                 var resultTuple = await GetResultStream(tenantId, key.Replace("\"", ""));
 

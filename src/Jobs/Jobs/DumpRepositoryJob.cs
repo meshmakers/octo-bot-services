@@ -3,8 +3,6 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Sdk.ServiceClient;
 using Microsoft.Extensions.Logging;
 using RepositoryUpdate;
-using RepositoryUpdate.Models;
-using RepositoryUpdate.Services;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
@@ -14,8 +12,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 public class DumpRepositoryJob(
     ILogger<RunFixupJob> logger,
     ISystemContext systemContext,
-    IDistributedCacheService distributedCache,
-    ICommandExecutionService commandExecutionService) : IDumpRepositoryJob
+    IDistributedCacheService distributedCache) : IDumpRepositoryJob
 {
     /// <inheritdoc />
     public async Task<string?> Run(string tenantId, IBotCancellationToken? cancellationToken)
@@ -40,12 +37,8 @@ public class DumpRepositoryJob(
             var filePath = Path.ChangeExtension(Path.GetTempFileName(), "tar.gz");
 
             logger.LogInformation("Running dump repository command for \'{TenantId}\'", tenantId);
-            var r = await commandExecutionService.ExecuteMongoDumpAsync(new MongoDumpOptions
-            {
-                Database = tenantContext.DatabaseName,
-                Archive = filePath,
-                Gzip = true
-            }, cancellationToken?.ShutdownToken);
+
+            var r = await systemContext.BackupTenantAsync(tenantId, filePath);
 
             if (r.Success)
             {

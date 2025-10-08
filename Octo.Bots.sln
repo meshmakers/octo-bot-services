@@ -12,10 +12,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepositoryUpdate", "src\Rep
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{63C6F908-BBE6-49B6-82B5-EF5CF6898C0F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepositoryUpdate.Tests", "tests\RepositoryUpdate.Tests\RepositoryUpdate.Tests.csproj", "{E46EA2E9-0799-4267-80E4-0D5DDD2DC941}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepositoryUpdate.IntegrationTests", "tests\RepositoryUpdate.IntegrationTests\RepositoryUpdate.IntegrationTests.csproj", "{B12B0043-DDBD-4880-98F9-03096BD72EB9}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -53,21 +49,7 @@ Global
 		{7E09686D-26E7-42DD-BD1A-653CB47B6665}.Release|Any CPU.Build.0 = Release|Any CPU
 		{7E09686D-26E7-42DD-BD1A-653CB47B6665}.DebugL|Any CPU.ActiveCfg = DebugL|Any CPU
 		{7E09686D-26E7-42DD-BD1A-653CB47B6665}.DebugL|Any CPU.Build.0 = DebugL|Any CPU
-		{E46EA2E9-0799-4267-80E4-0D5DDD2DC941}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E46EA2E9-0799-4267-80E4-0D5DDD2DC941}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E46EA2E9-0799-4267-80E4-0D5DDD2DC941}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E46EA2E9-0799-4267-80E4-0D5DDD2DC941}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E46EA2E9-0799-4267-80E4-0D5DDD2DC941}.DebugL|Any CPU.ActiveCfg = DebugL|Any CPU
-		{E46EA2E9-0799-4267-80E4-0D5DDD2DC941}.DebugL|Any CPU.Build.0 = DebugL|Any CPU
-		{B12B0043-DDBD-4880-98F9-03096BD72EB9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{B12B0043-DDBD-4880-98F9-03096BD72EB9}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{B12B0043-DDBD-4880-98F9-03096BD72EB9}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{B12B0043-DDBD-4880-98F9-03096BD72EB9}.Release|Any CPU.Build.0 = Release|Any CPU
-		{B12B0043-DDBD-4880-98F9-03096BD72EB9}.DebugL|Any CPU.ActiveCfg = DebugL|Any CPU
-		{B12B0043-DDBD-4880-98F9-03096BD72EB9}.DebugL|Any CPU.Build.0 = DebugL|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{E46EA2E9-0799-4267-80E4-0D5DDD2DC941} = {63C6F908-BBE6-49B6-82B5-EF5CF6898C0F}
-		{B12B0043-DDBD-4880-98F9-03096BD72EB9} = {63C6F908-BBE6-49B6-82B5-EF5CF6898C0F}
 	EndGlobalSection
 EndGlobal

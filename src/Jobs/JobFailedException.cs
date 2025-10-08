@@ -1,4 +1,5 @@
-using RepositoryUpdate.Models;
+
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Services;
 
 namespace Meshmakers.Octo.Backend.Jobs;
 

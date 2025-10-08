@@ -14,7 +14,6 @@ public static class ServiceCollectionExtensions
     /// <param name="services"></param>
     public static IServiceCollection AddRepositoryUpdate(this IServiceCollection services)
     {
-        services.AddTransient<ICommandExecutionService, CommandExecutionService>();
         services.AddTransient<IRepositoryFixupService, RepositoryFixupService>();
 
         return services;
