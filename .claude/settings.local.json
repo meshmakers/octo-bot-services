@@ -6,7 +6,8 @@
       "Read(//c/dev/meshmakers/**)",
       "Bash(find:*)",
       "Bash(dotnet build:*)",
-      "mcp__serena"
+      "mcp__serena",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": [],
