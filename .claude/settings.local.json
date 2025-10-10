@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(tree:*)",
+      "Read(//c/dev/meshmakers/**)",
+      "Bash(find:*)",
+      "Bash(dotnet build:*)",
+      "mcp__serena"
+    ],
+    "deny": [],
+    "ask": [],
+    "additionalDirectories": [
+      "c:\\dev\\meshmakers\\octo-construction-kit-engine-mongodb\\",
+      "c:\\dev\\meshmakers\\octo-cli"
+    ]
+  }
+}
