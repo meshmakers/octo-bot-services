@@ -88,7 +88,8 @@ try
         });
 
     builder.Services.AddRuntimeEngine()
-        .AddMongoDbRuntimeRepository();
+        .AddMongoDbRuntimeRepository()
+        .AddTenantComparison();
 
     builder.Services.AddOctoJobs();
     builder.Services.AddOctoNotification();

@@ -31,6 +31,9 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IRunFixupJob, RunFixupJob>();
         services.AddTransient<IRestoreRepositoryJob, RestoreRepositoryJob>();
         services.AddTransient<IDumpRepositoryJob, DumpRepositoryJob>();
+        services.AddTransient<ICompareLiveTenantsJob, CompareLiveTenantsJob>();
+        services.AddTransient<ICompareLiveTenantWithBackupJob, CompareLiveTenantWithBackupJob>();
+        services.AddTransient<ICompareBackupsJob, CompareBackupsJob>();
 
         return services;
     }

@@ -1,12 +1,10 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using Asp.Versioning;
 using Hangfire;
 using Hangfire.Storage.Monitoring;
 using IdentityModel;
 using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Backend.Jobs.DTOs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
@@ -226,6 +224,103 @@ public class JobsController : ControllerBase
         catch (InvalidOperationException e)
         {
             return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+    }
+
+    /// <summary>
+    /// Compares two live tenants
+    /// </summary>
+    /// <param name="request">Comparison request containing source and target tenant IDs and options</param>
+    /// <param name="tenantId">Tenant ID for cache operations</param>
+    /// <returns></returns>
+    [HttpPost]
+    [Route("compare-live-tenants")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public IActionResult CompareLiveTenants([FromBody] CompareLiveTenantsRequest request, [FromQuery] string tenantId)
+    {
+        try
+        {
+            var id = _backgroundJobClient.Enqueue<ICompareLiveTenantsJob>(job =>
+                job.Run(tenantId, request.SourceTenantId, request.TargetTenantId, request.Options, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new InternalServerErrorDto(ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Compares a live tenant with a backup archive
+    /// </summary>
+    /// <param name="request">Comparison request containing tenant ID, backup file and options</param>
+    /// <param name="tenantId">Tenant ID for cache operations</param>
+    /// <returns></returns>
+    [HttpPost]
+    [RequestSizeLimit(300_000_000)]
+    [Route("compare-tenant-with-backup")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CompareTenantWithBackupAsync([FromForm] CompareTenantWithBackupRequest request, [FromQuery] string tenantId)
+    {
+        try
+        {
+            var cacheKey = await AddFileToCache(tenantId, request.BackupFile);
+
+            var id = _backgroundJobClient.Enqueue<ICompareLiveTenantWithBackupJob>(job =>
+                job.Run(tenantId, request.TenantId, cacheKey, request.Options, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new InternalServerErrorDto(ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Compares two backup archives
+    /// </summary>
+    /// <param name="request">Comparison request containing source and target backup files and options</param>
+    /// <param name="tenantId">Tenant ID for cache operations</param>
+    /// <returns></returns>
+    [HttpPost]
+    [RequestSizeLimit(300_000_000)]
+    [Route("compare-backups")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CompareBackupsAsync([FromForm] CompareBackupsRequest request, [FromQuery] string tenantId)
+    {
+        try
+        {
+            var sourceCacheKey = await AddFileToCache(tenantId, request.SourceBackupFile);
+            var targetCacheKey = await AddFileToCache(tenantId, request.TargetBackupFile);
+
+            var id = _backgroundJobClient.Enqueue<ICompareBackupsJob>(job =>
+                job.Run(tenantId, sourceCacheKey, targetCacheKey, request.Options, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new InternalServerErrorDto(ex.Message));
         }
     }
 
