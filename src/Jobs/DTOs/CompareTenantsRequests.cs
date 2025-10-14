@@ -83,6 +83,32 @@ public class CompareBackupsRequest
 }
 
 /// <summary>
+/// Request model for comparing a backup archive with a live tenant
+/// </summary>
+public class CompareBackupWithLiveTenantRequest
+{
+    /// <summary>
+    /// Backup file (.tar.gz)
+    /// </summary>
+    [Required]
+    [JsonPropertyName("backupFile")]
+    public IFormFile BackupFile { get; set; } = null!;
+
+    /// <summary>
+    /// Live tenant identifier
+    /// </summary>
+    [Required]
+    [JsonPropertyName("tenantId")]
+    public string TenantId { get; set; } = null!;
+
+    /// <summary>
+    /// Optional comparison options
+    /// </summary>
+    [JsonPropertyName("options")]
+    public TenantComparisonOptionsDto? Options { get; set; }
+}
+
+/// <summary>
 /// Data transfer object for tenant comparison options
 /// </summary>
 public class TenantComparisonOptionsDto

@@ -34,6 +34,7 @@ public static class ServiceCollectionExtensions
         services.AddTransient<ICompareLiveTenantsJob, CompareLiveTenantsJob>();
         services.AddTransient<ICompareLiveTenantWithBackupJob, CompareLiveTenantWithBackupJob>();
         services.AddTransient<ICompareBackupsJob, CompareBackupsJob>();
+        services.AddTransient<ICompareBackupWithLiveTenantJob, CompareBackupWithLiveTenantJob>();
 
         return services;
     }

@@ -324,6 +324,39 @@ public class JobsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Compares a backup archive with a live tenant
+    /// </summary>
+    /// <param name="request">Comparison request containing backup file, tenant ID and options</param>
+    /// <param name="tenantId">Tenant ID for cache operations</param>
+    /// <returns></returns>
+    [HttpPost]
+    [RequestSizeLimit(300_000_000)]
+    [Route("compare-backup-with-live-tenant")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CompareBackupWithLiveTenantAsync([FromForm] CompareBackupWithLiveTenantRequest request, [FromQuery] string tenantId)
+    {
+        try
+        {
+            var cacheKey = await AddFileToCache(tenantId, request.BackupFile);
+
+            var id = _backgroundJobClient.Enqueue<ICompareBackupWithLiveTenantJob>(job =>
+                job.Run(tenantId, cacheKey, request.TenantId, request.Options, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new InternalServerErrorDto(ex.Message));
+        }
+    }
+
     // DELETE: system/Jobs/abc
     /// <summary>
     ///     Deletes a job
