@@ -12,7 +12,6 @@ public interface ICompareLiveTenantsJob
     /// <summary>
     /// Compares two live tenants and generates a comparison report
     /// </summary>
-    /// <param name="tenantId"></param>
     /// <param name="sourceTenantId">The source tenant ID</param>
     /// <param name="targetTenantId">The target tenant ID</param>
     /// <param name="options">The TenantComparisonOptionsDto</param>
@@ -21,5 +20,5 @@ public interface ICompareLiveTenantsJob
     [DisplayName("Compare live tenants '{0}' and '{1}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
-    Task<string?> Run(string tenantId, string sourceTenantId, string targetTenantId, TenantComparisonOptionsDto? options, IBotCancellationToken? cancellationToken);
+    Task<string?> Run(string sourceTenantId, string targetTenantId, TenantComparisonOptionsDto? options, IBotCancellationToken? cancellationToken);
 }

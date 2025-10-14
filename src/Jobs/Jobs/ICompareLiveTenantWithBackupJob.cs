@@ -12,7 +12,6 @@ public interface ICompareLiveTenantWithBackupJob
     /// <summary>
     /// Compares a live tenant with a backup archive
     /// </summary>
-    /// <param name="tenantId"></param>
     /// <param name="liveTenantId">The live tenant ID</param>
     /// <param name="backupCacheKey">The cache key of the uploaded backup file</param>
     /// <param name="options">The options</param>
@@ -21,6 +20,6 @@ public interface ICompareLiveTenantWithBackupJob
     [DisplayName("Compare live tenant '{0}' with backup")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
-    Task<string?> Run(string tenantId, string liveTenantId, string backupCacheKey, TenantComparisonOptionsDto? options,
+    Task<string?> Run(string liveTenantId, string backupCacheKey, TenantComparisonOptionsDto? options,
         IBotCancellationToken? cancellationToken);
 }

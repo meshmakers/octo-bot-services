@@ -32,7 +32,7 @@ public class CompareBackupWithLiveTenantJob : CompareTenantsJobBase, ICompareBac
     }
 
     /// <inheritdoc />
-    public async Task<string?> Run(string tenantId, string backupCacheKey, string liveTenantId,
+    public async Task<string?> Run(string backupCacheKey, string liveTenantId,
         TenantComparisonOptionsDto? options,
         IBotCancellationToken? cancellationToken)
     {

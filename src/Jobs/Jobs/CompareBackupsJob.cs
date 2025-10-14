@@ -29,7 +29,7 @@ public class CompareBackupsJob : CompareTenantsJobBase,  ICompareBackupsJob
     }
 
     /// <inheritdoc />
-    public async Task<string?> Run(string tenantId, string sourceBackupCacheKey, string targetBackupCacheKey,
+    public async Task<string?> Run(string sourceBackupCacheKey, string targetBackupCacheKey,
         TenantComparisonOptionsDto? options,
         IBotCancellationToken? cancellationToken)
     {

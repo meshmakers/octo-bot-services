@@ -12,7 +12,6 @@ public interface ICompareBackupsJob
     /// <summary>
     /// Compares two backup archives
     /// </summary>
-    /// <param name="tenantId"></param>
     /// <param name="sourceBackupCacheKey">The cache key of the source backup file</param>
     /// <param name="targetBackupCacheKey">The cache key of the target backup file</param>
     /// <param name="options">The options</param>
@@ -21,7 +20,7 @@ public interface ICompareBackupsJob
     [DisplayName("Compare two backup archives")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
-    Task<string?> Run(string tenantId, string sourceBackupCacheKey, string targetBackupCacheKey,
+    Task<string?> Run(string sourceBackupCacheKey, string targetBackupCacheKey,
         TenantComparisonOptionsDto? options,
         IBotCancellationToken? cancellationToken);
 }

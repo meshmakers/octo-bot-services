@@ -30,7 +30,7 @@ public class CompareLiveTenantsJob : CompareTenantsJobBase, ICompareLiveTenantsJ
     }
 
     /// <inheritdoc />
-    public async Task<string?> Run(string tenantId, string sourceTenantId, string targetTenantId,
+    public async Task<string?> Run(string sourceTenantId, string targetTenantId,
         TenantComparisonOptionsDto? options,
         IBotCancellationToken? cancellationToken)
     {
@@ -53,7 +53,7 @@ public class CompareLiveTenantsJob : CompareTenantsJobBase, ICompareLiveTenantsJ
                 cancellationToken?.ShutdownToken ?? CancellationToken.None);
 
             // Serialize the report to JSON and cache it
-            var cacheKey = await CacheReportToDistributedCache(tenantId, report);
+            var cacheKey = await CacheReportToDistributedCache(_systemContext.TenantId, report);
 
             _logger.LogInformation(
                 "Successfully completed comparison of tenants '{SourceTenantId}' and '{TargetTenantId}'",

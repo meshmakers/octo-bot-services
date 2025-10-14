@@ -231,19 +231,18 @@ public class JobsController : ControllerBase
     /// Compares two live tenants
     /// </summary>
     /// <param name="request">Comparison request containing source and target tenant IDs and options</param>
-    /// <param name="tenantId">Tenant ID for cache operations</param>
     /// <returns></returns>
     [HttpPost]
     [Route("compare-live-tenants")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public IActionResult CompareLiveTenants([FromBody] CompareLiveTenantsRequest request, [FromQuery] string tenantId)
+    public IActionResult CompareLiveTenants([FromBody] CompareLiveTenantsRequest request)
     {
         try
         {
             var id = _backgroundJobClient.Enqueue<ICompareLiveTenantsJob>(job =>
-                job.Run(tenantId, request.SourceTenantId, request.TargetTenantId, request.Options, BotCancellationToken.Null));
+                job.Run(request.SourceTenantId, request.TargetTenantId, request.Options, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -261,7 +260,6 @@ public class JobsController : ControllerBase
     /// Compares a live tenant with a backup archive
     /// </summary>
     /// <param name="request">Comparison request containing tenant ID, backup file and options</param>
-    /// <param name="tenantId">Tenant ID for cache operations</param>
     /// <returns></returns>
     [HttpPost]
     [RequestSizeLimit(300_000_000)]
@@ -269,14 +267,14 @@ public class JobsController : ControllerBase
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> CompareTenantWithBackupAsync([FromForm] CompareTenantWithBackupRequest request, [FromQuery] string tenantId)
+    public async Task<IActionResult> CompareTenantWithBackupAsync([FromForm] CompareTenantWithBackupRequest request)
     {
         try
         {
-            var cacheKey = await AddFileToCache(tenantId, request.BackupFile);
+            var cacheKey = await AddFileToCache(_systemContext.TenantId, request.BackupFile);
 
             var id = _backgroundJobClient.Enqueue<ICompareLiveTenantWithBackupJob>(job =>
-                job.Run(tenantId, request.TenantId, cacheKey, request.Options, BotCancellationToken.Null));
+                job.Run(request.TenantId, cacheKey, request.Options, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -294,7 +292,6 @@ public class JobsController : ControllerBase
     /// Compares two backup archives
     /// </summary>
     /// <param name="request">Comparison request containing source and target backup files and options</param>
-    /// <param name="tenantId">Tenant ID for cache operations</param>
     /// <returns></returns>
     [HttpPost]
     [RequestSizeLimit(300_000_000)]
@@ -302,15 +299,15 @@ public class JobsController : ControllerBase
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> CompareBackupsAsync([FromForm] CompareBackupsRequest request, [FromQuery] string tenantId)
+    public async Task<IActionResult> CompareBackupsAsync([FromForm] CompareBackupsRequest request)
     {
         try
         {
-            var sourceCacheKey = await AddFileToCache(tenantId, request.SourceBackupFile);
-            var targetCacheKey = await AddFileToCache(tenantId, request.TargetBackupFile);
+            var sourceCacheKey = await AddFileToCache(_systemContext.TenantId, request.SourceBackupFile);
+            var targetCacheKey = await AddFileToCache(_systemContext.TenantId, request.TargetBackupFile);
 
             var id = _backgroundJobClient.Enqueue<ICompareBackupsJob>(job =>
-                job.Run(tenantId, sourceCacheKey, targetCacheKey, request.Options, BotCancellationToken.Null));
+                job.Run(sourceCacheKey, targetCacheKey, request.Options, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -328,7 +325,6 @@ public class JobsController : ControllerBase
     /// Compares a backup archive with a live tenant
     /// </summary>
     /// <param name="request">Comparison request containing backup file, tenant ID and options</param>
-    /// <param name="tenantId">Tenant ID for cache operations</param>
     /// <returns></returns>
     [HttpPost]
     [RequestSizeLimit(300_000_000)]
@@ -336,14 +332,14 @@ public class JobsController : ControllerBase
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> CompareBackupWithLiveTenantAsync([FromForm] CompareBackupWithLiveTenantRequest request, [FromQuery] string tenantId)
+    public async Task<IActionResult> CompareBackupWithLiveTenantAsync([FromForm] CompareBackupWithLiveTenantRequest request)
     {
         try
         {
-            var cacheKey = await AddFileToCache(tenantId, request.BackupFile);
+            var cacheKey = await AddFileToCache(_systemContext.TenantId, request.BackupFile);
 
             var id = _backgroundJobClient.Enqueue<ICompareBackupWithLiveTenantJob>(job =>
-                job.Run(tenantId, cacheKey, request.TenantId, request.Options, BotCancellationToken.Null));
+                job.Run(cacheKey, request.TenantId, request.Options, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
