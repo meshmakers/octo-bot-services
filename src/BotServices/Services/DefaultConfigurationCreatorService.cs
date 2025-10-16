@@ -26,7 +26,8 @@ internal class DefaultConfigurationCreatorService(
     : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
         BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
         null, // we don't need migrations here
-        BotServiceConstants.BotServiceSchemaVersionKey, true, BotServiceConstants.BotServiceSchemaVersionValue)
+        null, // the service is auto-enabled
+        true)
 {
     public override async Task InitializeAsync()
     {
@@ -59,14 +60,14 @@ internal class DefaultConfigurationCreatorService(
     protected override async Task ImportCkModelAsync(IOctoAdminSession session, ITenantContext tenantContext)
     {
         OperationResult operationResult = new();
-        await tenantContext.ImportCkModelAsync(SystemBotCkIds.ModelId, operationResult);
+        await tenantContext.ImportCkModelAsync(SystemBotCkIds.CkModelId, operationResult);
         if (operationResult.HasErrors || operationResult.HasFatalErrors)
         {
             throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
                 operationResult.GetMessages());
         }
 
-        await tenantContext.ImportCkModelAsync(SystemNotificationCkIds.ModelId, operationResult);
+        await tenantContext.ImportCkModelAsync(SystemNotificationCkIds.CkModelId, operationResult);
         if (operationResult.HasErrors || operationResult.HasFatalErrors)
         {
             throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,

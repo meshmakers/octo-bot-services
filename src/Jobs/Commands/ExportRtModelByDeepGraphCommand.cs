@@ -65,7 +65,7 @@ internal class ExportRtModelByDeepGraphCommand(
                         {
                             var roleId = associationItem.AssociationRoleId ??
                                          throw OperationFailedException.AssociationRoleIdUndefined();
-                            var ckAssociationRoleGraph = ckCacheService.GetCkAssociationRole(tenantId, roleId);
+                            var ckAssociationRoleGraph = ckCacheService.GetRtCkAssociationRole(tenantId, roleId);
 
                             var associationDto = new RtAssociationTcDto
                             {

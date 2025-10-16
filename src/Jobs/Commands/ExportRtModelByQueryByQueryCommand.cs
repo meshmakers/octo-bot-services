@@ -32,7 +32,7 @@ internal class ExportRtModelByQueryByQueryCommand(
             session.StartTransaction();
 
             var query = await tenantRepository.GetRtEntityByRtIdAsync(session,
-                new RtEntityId(SystemCkIds.ModelId, SystemCkIds.QueryTypeId, queryId));
+                new RtEntityId(SystemCkIds.RtCkQueryTypeId, queryId));
 
             CheckAndThrowCancellation(cancellationToken);
 
@@ -68,7 +68,7 @@ internal class ExportRtModelByQueryByQueryCommand(
                 throw CommandExecutionFailedException.QueryCkTypeIdNotSet(queryId);
             }
 
-            var ckTypeId = new CkId<CkTypeId>(ckTypeIdString);
+            var ckTypeId = new RtCkId<CkTypeId>(ckTypeIdString);
 
             var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync(session, ckTypeId, dataQueryOperation);
 

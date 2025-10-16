@@ -85,7 +85,7 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
 
                     var rtAssociations = await tenantRepository.GetRtAssociationsAsync(session,
                         configurationRtEntity.ToRtEntityId(),
-                        GraphDirections.Outbound, SystemBotCkIds.Configures);
+                        GraphDirections.Outbound, SystemBotCkIds.RtCkConfiguresRoleId);
                     var rtAssociation = rtAssociations.Items.FirstOrDefault();
                     if (rtAssociation == null)
                     {
@@ -111,7 +111,7 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
 
                     cancellationToken?.ThrowIfCancellationRequested();
 
-                    var ckTypeGraph = _ckCacheService.GetCkType(tenantId,
+                    var ckTypeGraph = _ckCacheService.GetRtCkType(tenantId,
                         rtAssociation.TargetCkTypeId ?? throw OperationFailedException.CkTypeIdUndefined());
                     if (attributeId == null ||
                         !ckTypeGraph.AllAttributes.TryGetValue(attributeId, out var attributeCacheItem))
