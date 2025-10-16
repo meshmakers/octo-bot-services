@@ -52,13 +52,13 @@ internal class CommandExecutionFailedException : Exception
     }
 
     public static Exception AttributeNotFound<TKey>(CkId<CkAttributeId> modelAttributeId, string elementType, CkId<TKey> ckId)
-        where TKey : IComparable<TKey>, ICkKey
+        where TKey : IComparable<TKey>, ICkElementId
     {
         return new CommandExecutionFailedException($"Attribute '{modelAttributeId}' does not exist at {elementType} '{ckId}'.");
     }
 
     public static Exception RecordNotFound<TKey>(CkId<CkRecordId> ckRecordId, string elementType,  CkId<TKey> ckId)
-        where TKey : IComparable<TKey>, ICkKey
+        where TKey : IComparable<TKey>, ICkElementId
     {
         return new CommandExecutionFailedException($"Record '{ckRecordId}' does not exist at {elementType} '{ckId}'.");
     }
