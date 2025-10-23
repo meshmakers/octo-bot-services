@@ -66,13 +66,6 @@ internal class DefaultConfigurationCreatorService(
             throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
                 operationResult.GetMessages());
         }
-
-        await tenantContext.ImportCkModelAsync(SystemNotificationCkIds.CkModelId, operationResult);
-        if (operationResult.HasErrors || operationResult.HasFatalErrors)
-        {
-            throw InitializationException.ImportCkModelFailed(tenantContext.TenantId,
-                operationResult.GetMessages());
-        }
     }
 
 
