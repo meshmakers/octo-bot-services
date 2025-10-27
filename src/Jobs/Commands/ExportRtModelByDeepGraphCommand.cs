@@ -1,4 +1,3 @@
-using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
@@ -81,7 +80,7 @@ internal class ExportRtModelByDeepGraphCommand(
                                 var typeAttributeGraph = ckAssociationRoleGraph.AllAttributesByName[pair.Key];
                                 return new RtAttributeTcDto
                                 {
-                                    Id = typeAttributeGraph.CkAttributeId,
+                                    Id = typeAttributeGraph.CkAttributeId.ToRtCkId(),
                                     Value = pair.Value
                                 };
                             }));
