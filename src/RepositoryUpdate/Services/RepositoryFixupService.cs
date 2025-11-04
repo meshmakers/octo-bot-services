@@ -29,7 +29,7 @@ public class RepositoryFixupService(
         session.StartTransaction();
 
         logger.LogInformation("Starting repository fixup for tenant {TenantId}...", tenantId);
-        var query = DataQueryOperation.Create()
+        var query = RtEntityQueryOptions.Create()
             .FieldEquals(nameof(RtFixup.Enabled), true)
             .FieldEquals(nameof(RtFixup.IsApplied), false)
             .SortOrder(nameof(RtFixup.Order), SortOrders.Ascending);

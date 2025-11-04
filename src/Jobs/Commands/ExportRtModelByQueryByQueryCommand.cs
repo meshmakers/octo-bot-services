@@ -41,14 +41,14 @@ internal class ExportRtModelByQueryByQueryCommand(
                 throw CommandExecutionFailedException.QueryNotFound(queryId);
             }
 
-            var dataQueryOperation = DataQueryOperation.Create();
+            var queryOptions = RtEntityQueryOptions.Create();
 
             var sortingDtoList = query.GetRtRecordAttributeValuesOrDefault<RtSortOrderItemRecord>("Sorting");
             if (sortingDtoList != null)
             {
                 foreach (var sortDto in sortingDtoList)
                 {
-                    dataQueryOperation.SortOrder(sortDto.AttributePath.ToPascalCase(), (SortOrders)sortDto.SortOrder);
+                    queryOptions.SortOrder(sortDto.AttributePath.ToPascalCase(), (SortOrders)sortDto.SortOrder);
                 }
             }
 
@@ -57,7 +57,7 @@ internal class ExportRtModelByQueryByQueryCommand(
             {
                 foreach (var fieldFilterDto in fieldFilterDtoList)
                 {
-                    dataQueryOperation.FieldFilter(TransformAttributeName(fieldFilterDto.AttributePath),
+                    queryOptions.FieldFilter(TransformAttributeName(fieldFilterDto.AttributePath),
                         (FieldFilterOperator)fieldFilterDto.Operator, fieldFilterDto.ComparisonValue);
                 }
             }
@@ -70,7 +70,7 @@ internal class ExportRtModelByQueryByQueryCommand(
 
             var ckTypeId = new RtCkId<CkTypeId>(ckTypeIdString);
 
-            var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync(session, ckTypeId, dataQueryOperation);
+            var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync(session, ckTypeId, queryOptions);
 
             // Ensure the cache is loaded for the tenant
             await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
