@@ -33,12 +33,12 @@ public class ServiceHookJob(ISystemContext systemContext) : IServiceHookJob
             using var session = await tenantRepository.GetSessionAsync();
             session.StartTransaction();
 
-            var dataQueryQueryOperation = DataQueryOperation.Create()
+            var queryOptions = RtEntityQueryOptions.Create()
                 .FieldFilter(SystemCkIds.EnabledAttribute, FieldFilterOperator.Equals, true);
 
             var serviceHookResultSet =
                 await tenantRepository.GetRtEntitiesByTypeAsync<RtServiceHook>(session,
-                    dataQueryQueryOperation);
+                    queryOptions);
 
             foreach (var serviceHook in serviceHookResultSet.Items)
             {
@@ -58,7 +58,7 @@ public class ServiceHookJob(ISystemContext systemContext) : IServiceHookJob
                     continue;
                 }
 
-                var dataQueryOperation = DataQueryOperation.Create();
+                var entityQueryOptions = RtEntityQueryOptions.Create();
 
                 var fieldFilters = JsonConvert.DeserializeObject<FieldFilterDto[]>(fieldFilter);
                 if (fieldFilters == null)
@@ -68,7 +68,7 @@ public class ServiceHookJob(ISystemContext systemContext) : IServiceHookJob
 
                 foreach (var f in fieldFilters)
                 {
-                    dataQueryOperation = dataQueryOperation.FieldFilter(TransformAttributeName(f.AttributePath),
+                    entityQueryOptions = entityQueryOptions.FieldFilter(TransformAttributeName(f.AttributePath),
                         (FieldFilterOperator)f.Operator,
                         f.ComparisonValue);
                 }
@@ -79,7 +79,7 @@ public class ServiceHookJob(ISystemContext systemContext) : IServiceHookJob
                 }
 
                 var result =
-                    await tenantRepository.GetRtEntitiesByTypeAsync(session, targetCkId, dataQueryOperation,
+                    await tenantRepository.GetRtEntitiesByTypeAsync(session, targetCkId, entityQueryOptions,
                         0, 500);
 
                 Logger.Info(

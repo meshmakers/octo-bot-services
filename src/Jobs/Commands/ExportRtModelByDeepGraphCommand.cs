@@ -32,10 +32,10 @@ internal class ExportRtModelByDeepGraphCommand(
         {
             session.StartTransaction();
 
-            var dataQueryOperation = DataQueryOperation.Create();
+            var queryOptions = RtEntityQueryOptions.Create();
             var resultSet = await tenantRepository.GetRtDeepGraphAsync(session,
                 rtByDeepGraphCommandRequest.OriginRtIds, rtByDeepGraphCommandRequest.OriginCkTypeId,
-                dataQueryOperation);
+                queryOptions);
 
             CheckAndThrowCancellation(cancellationToken);
 
@@ -45,7 +45,7 @@ internal class ExportRtModelByDeepGraphCommand(
             foreach (var grouping in groupedByCkType)
             {
                 var s = await tenantRepository.GetRtEntitiesByIdAsync(session, grouping.Key,
-                    grouping.Select(x => x.Id.RtId).ToList(), dataQueryOperation);
+                    grouping.Select(x => x.Id.RtId).ToList(), queryOptions);
 
                 CheckAndThrowCancellation(cancellationToken);
 
