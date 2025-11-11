@@ -29,7 +29,9 @@ variables:
     value: ${{ eq(variables['Build.SourceBranch'], 'refs/heads/main') }}
   - name: isTest
     value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/heads/test') }}
-
+  - name: OctoLocalCatalogIsEnabled
+    value: 'false'
+    
 stages:
   - stage: Build
     jobs:
@@ -61,7 +63,7 @@ stages:
             inputs:
               command: 'build'
               projects:  $(SolutionFile)
-              arguments: '--configuration $(BuildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer)'
+              arguments: '--configuration $(BuildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer) /p:OctoPublishCatalog="$(OctoPublishCatalog)" /p:OctoPrivateGitHubApiKey=$(GitHubPAT) /p:OctoPublicGitHubApiKey=$(GitHubPAT)'
               publishWebProjects: false
               zipAfterPublish: false
               modifyOutputPath: false
