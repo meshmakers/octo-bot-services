@@ -83,10 +83,10 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
                 {
                     cancellationToken?.ThrowIfCancellationRequested();
 
-                    var associationQueryOptions = RtAssociationQueryOptions.Create(GraphDirections.Outbound);
+                    var associationQueryOptions = RtAssociationExtendedQueryOptions.Create(GraphDirections.Outbound,
+                        SystemBotCkIds.RtCkConfiguresRoleId);
                     var rtAssociations = await tenantRepository.GetRtAssociationsAsync(session,
-                        configurationRtEntity.ToRtEntityId(),
-                        SystemBotCkIds.RtCkConfiguresRoleId, associationQueryOptions);
+                        configurationRtEntity.ToRtEntityId(), associationQueryOptions);
                     var rtAssociation = rtAssociations.Items.FirstOrDefault();
                     if (rtAssociation == null)
                     {
