@@ -1,13 +1,13 @@
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
-using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v1;
+using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v2;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Newtonsoft.Json;
 using NLog;
 using RestSharp;
-using SystemBotCkModel.Generated.System.Bot.v1;
+using SystemBotCkModel.Generated.System.Bot.v2;
 
 #pragma warning disable 1591
 

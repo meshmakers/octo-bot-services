@@ -1,7 +1,7 @@
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
-using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v1;
+using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v2;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
@@ -32,7 +32,7 @@ internal class ExportRtModelByQueryByQueryCommand(
             session.StartTransaction();
 
             var query = await tenantRepository.GetRtEntityByRtIdAsync(session,
-                new RtEntityId(SystemCkIds.RtCkQueryTypeId, queryId));
+                new RtEntityId(SystemCkIds.RtCkSystemQueryTypeId, queryId));
 
             CheckAndThrowCancellation(cancellationToken);
 

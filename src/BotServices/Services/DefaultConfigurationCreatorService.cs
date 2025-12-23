@@ -10,9 +10,9 @@ using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands.Payloads;
 using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Services;
-using Meshmakers.Octo.Services.Notifications.Generated.System.Notification.v1;
+using Meshmakers.Octo.Services.Notifications.Generated.System.Notification.v2;
 using Microsoft.Extensions.Options;
-using SystemBotCkModel.Generated.System.Bot.v1;
+using SystemBotCkModel.Generated.System.Bot.v2;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
 
