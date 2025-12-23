@@ -4,7 +4,7 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Services;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Microsoft.Extensions.Logging;
-using SystemBotCkModel.Generated.System.Bot.v1;
+using SystemBotCkModel.Generated.System.Bot.v2;
 
 namespace RepositoryUpdate.Services;
 
