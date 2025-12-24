@@ -32,7 +32,7 @@ internal class ExportRtModelByQueryByQueryCommand(
             session.StartTransaction();
 
             var query = await tenantRepository.GetRtEntityByRtIdAsync(session,
-                new RtEntityId(SystemCkIds.RtCkSystemQueryTypeId, queryId));
+                new RtEntityId(SystemCkIds.RtCkPersistentQueryTypeId, queryId));
 
             CheckAndThrowCancellation(cancellationToken);
 
