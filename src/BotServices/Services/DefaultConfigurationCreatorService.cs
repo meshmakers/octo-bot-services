@@ -10,7 +10,6 @@ using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands.Payloads;
 using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Services;
-using Meshmakers.Octo.Services.Notifications.Generated.System.Notification.v2;
 using Microsoft.Extensions.Options;
 using SystemBotCkModel.Generated.System.Bot.v2;
 
@@ -25,9 +24,11 @@ internal class DefaultConfigurationCreatorService(
     IOptions<OctoBotServicesOptions> octoBotServicesOptions)
     : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
         BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
-        null, // we don't need migrations here
-        null, // the service is auto-enabled
-        true)
+        null, // migrationService - we don't need migrations here
+        null, // ckModelUpgradeService - we don't need CK model migrations
+        null, // runtimeRepositoryProvider - not needed without CK model migrations
+        null, // serviceEnabledKey - the service is auto-enabled
+        true) // autoEnable
 {
     public override async Task InitializeAsync()
     {
