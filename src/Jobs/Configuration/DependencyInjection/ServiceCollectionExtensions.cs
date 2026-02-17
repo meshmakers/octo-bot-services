@@ -26,7 +26,7 @@ public static class ServiceCollectionExtensions
         services.AddRepositoryUpdate();
         services.AddTransient<IImportModelJob, ImportModelJob>();
         services.AddTransient<IExportModelJob, ExportModelJob>();
-        services.AddTransient<IServiceHookJob, ServiceHookJob>();
+
         services.AddTransient<IAttributeValueAggregatorJob, AttributeValueAggregatorJob>();
         services.AddTransient<IRunFixupJob, RunFixupJob>();
         services.AddTransient<IRestoreRepositoryJob, RestoreRepositoryJob>();
