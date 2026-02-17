@@ -1,19 +1,16 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using BotServices.Resources;
 using IdentityModel;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts;
-using Meshmakers.Octo.ConstructionKit.Models.System.Bot.Generated.System.Bot.v2;
+using Meshmakers.Octo.ConstructionKit.Models.System.Bot.Generated.System.Bot.v3;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands.Payloads;
 using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Services;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
