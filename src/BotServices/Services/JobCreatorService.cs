@@ -10,8 +10,6 @@ internal class JobCreatorService : IJobCreatorService
     public void CreateJobs(string instancePrefix, string tenantId)
     {
         // Create new jobs
-        RecurringJob.AddOrUpdate<IServiceHookJob>($"{instancePrefix}:{tenantId}_ServiceHook",
-            job => job.Run(tenantId, BotCancellationToken.Null), "*/15 * * * *");
         RecurringJob.AddOrUpdate<IAttributeValueAggregatorJob>($"{instancePrefix}:{tenantId}_AttributeValueAggregate",
             job => job.Run(tenantId, BotCancellationToken.Null), Cron.Daily);
     }
@@ -22,8 +20,7 @@ internal class JobCreatorService : IJobCreatorService
         // Clean old jobs
         foreach (var recurringJob in connection.GetRecurringJobs())
         {
-            if (recurringJob.Id.StartsWith($"{instancePrefix}:{tenantId}_ServiceHook") ||
-                recurringJob.Id.StartsWith($"{instancePrefix}:{tenantId}_AttributeValueAggregate"))
+            if (recurringJob.Id.StartsWith($"{instancePrefix}:{tenantId}_AttributeValueAggregate"))
             {
                 RecurringJob.RemoveIfExists(recurringJob.Id);
             }
