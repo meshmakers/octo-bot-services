@@ -92,7 +92,7 @@ try
 
     builder.Services.AddOctoJobs();
     builder.Services.AddOctoNotification();
-    builder.Services.AddCkModelSystemBotV2();
+    builder.Services.AddCkModelSystemBotV3();
 
     builder.Services.AddAuthentication(authenticationOptions =>
         {
