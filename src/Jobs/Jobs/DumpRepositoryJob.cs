@@ -1,18 +1,17 @@
-using Meshmakers.Octo.Common.DistributionEventHub.Services;
+using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
-using Meshmakers.Octo.Sdk.ServiceClient;
 using Microsoft.Extensions.Logging;
 using RepositoryUpdate;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 /// <summary>
-/// Implements a job that runs fixup tasks for a tenant.
+/// Implements a job that dumps a tenant database to a backup file on disk.
 /// </summary>
 public class DumpRepositoryJob(
-    ILogger<RunFixupJob> logger,
+    ILogger<DumpRepositoryJob> logger,
     ISystemContext systemContext,
-    IDistributedCacheService distributedCache) : IDumpRepositoryJob
+    IBackupFileStorageService backupFileStorage) : IDumpRepositoryJob
 {
     /// <inheritdoc />
     public async Task<string?> Run(string tenantId, IBotCancellationToken? cancellationToken)
@@ -31,35 +30,33 @@ public class DumpRepositoryJob(
                 throw RepositoryUpdateException.TenantContextNotFound(tenantId);
             }
 
-            logger.LogInformation("Removing all cache streams for tenant \'{TenantId}\'", tenantId);
-            await distributedCache.DeleteAllCacheStreamsAsync(tenantId);
+            var fileName = backupFileStorage.GenerateDumpFileName(tenantId);
+            var filePath = backupFileStorage.GetDumpFilePath(tenantId, fileName);
 
-            var filePath = Path.ChangeExtension(Path.GetTempFileName(), "tar.gz");
+            // Ensure tenant subdirectory exists
+            var directory = Path.GetDirectoryName(filePath);
+            if (directory != null)
+            {
+                Directory.CreateDirectory(directory);
+            }
 
-            logger.LogInformation("Running dump repository command for \'{TenantId}\'", tenantId);
+            logger.LogInformation("Running dump repository command for '{TenantId}' to '{FilePath}'", tenantId,
+                filePath);
 
             var r = await systemContext.BackupTenantAsync(tenantId, filePath);
 
             if (r.Success)
             {
-                var key = await CacheFileToDistributedCache(tenantId, filePath);
-                return key;
+                logger.LogInformation("Dump completed for tenant '{TenantId}' at '{FilePath}'", tenantId, filePath);
+                return filePath;
             }
 
             throw JobFailedException.CommandExecutionFailed(r, tenantId, "mongodump");
         }
         catch (Exception e)
         {
-            logger.LogError(e, "Error while dump repository  database for tenant \'{TenantId}\'", tenantId);
+            logger.LogError(e, "Error while dumping repository database for tenant '{TenantId}'", tenantId);
             throw;
         }
-    }
-
-    private async Task<string> CacheFileToDistributedCache(string tenantId, string tempFile)
-    {
-        using var streamReader = new StreamReader(tempFile);
-
-        return await distributedCache.CreateStreamAsync(tenantId, streamReader.BaseStream, MimeTypes.MimeTypeGzip, "Dump.tar.gz",
-            TimeSpan.FromHours(1));
     }
 }

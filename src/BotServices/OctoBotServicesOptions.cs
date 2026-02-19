@@ -74,4 +74,24 @@ public class OctoBotServicesOptions
     /// Gets or sets the minimal log level to be logged
     /// </summary>
     public LogLevelDto MinLogLevel { get; set; }
+
+    /// <summary>
+    /// Gets or sets the storage path for tus resumable uploads.
+    /// </summary>
+    public string TusStoragePath { get; set; } = "/data/tus-uploads";
+
+    /// <summary>
+    /// Gets or sets the storage path for database dump files.
+    /// </summary>
+    public string DumpStoragePath { get; set; } = "/data/dumps";
+
+    /// <summary>
+    /// Gets or sets the maximum upload size in bytes (default: 10 GB).
+    /// </summary>
+    public long MaxUploadSizeBytes { get; set; } = 10L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Gets or sets the number of hours to retain temporary files before cleanup (default: 4).
+    /// </summary>
+    public int FileRetentionHours { get; set; } = 4;
 }

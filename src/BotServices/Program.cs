@@ -9,6 +9,9 @@ using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
@@ -27,6 +30,10 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using NLog;
 using NLog.Web;
+using tusdotnet;
+using tusdotnet.Models;
+using tusdotnet.Models.Configuration;
+using tusdotnet.Stores;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 // NLog: set up the logger first to catch all errors
@@ -90,7 +97,14 @@ try
     builder.Services.AddRuntimeEngine()
         .AddMongoDbRuntimeRepository();
 
-    builder.Services.AddOctoJobs();
+    // OctoBotServicesOptions are bound later; read them directly for AddOctoJobs parameters
+    var botOptions = new OctoBotServicesOptions();
+    builder.Configuration.GetSection("Bot").Bind(botOptions);
+
+    builder.Services.AddOctoJobs(
+        tusStoragePath: botOptions.TusStoragePath,
+        dumpStoragePath: botOptions.DumpStoragePath,
+        fileRetentionHours: botOptions.FileRetentionHours);
     builder.Services.AddOctoNotification();
     builder.Services.AddCkModelSystemBotV3();
 
@@ -241,9 +255,14 @@ try
     builder.Logging.SetMinimumLevel(LogLevel.Trace);
     builder.Host.UseNLog();
 
-
+    // Remove Kestrel request body size limit to allow large tus uploads
+    builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = null);
 
     var app = builder.Build();
+
+    // Ensure backup storage directories exist
+    var fileStorage = app.Services.GetRequiredService<IBackupFileStorageService>();
+    fileStorage.EnsureDirectoriesExist();
 
     app.MapObservability();
 
@@ -269,7 +288,8 @@ try
 
     app.UseRouting();
 
-    app.UseCors();
+    app.UseCors(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()
+        .WithExposedHeaders("Upload-Offset", "Upload-Length", "Tus-Resumable", "Location"));
 
     // Conversion of request query jwt token to cookie for switch from dashboard to hangfire ui dashboard
     app.UseOctoCookieBasedAuthentication();
@@ -280,7 +300,41 @@ try
 
     app.UseOctoApiVersioningAndDocumentation();
 
+    // tus.io resumable upload middleware
+    app.MapTus("/system/v1/tus-upload", async httpContext => new DefaultTusConfiguration
+    {
+        Store = new TusDiskStore(fileStorage.TusStoragePath),
+        MaxAllowedUploadSizeInBytesLong = botOptions.MaxUploadSizeBytes,
+        Events = new Events
+        {
+            OnAuthorizeAsync = async ctx =>
+            {
+                // Require authentication via JWT bearer token
+                if (ctx.HttpContext.User.Identity is not { IsAuthenticated: true })
+                {
+                    ctx.FailRequest(System.Net.HttpStatusCode.Unauthorized);
+                    return;
+                }
 
+                // Require the JobApiReadWritePolicy claim
+                var hasClaim = ctx.HttpContext.User.HasClaim(
+                    InfrastructureCommon.ClaimScope, CommonConstants.BotApiFullAccess);
+                if (!hasClaim)
+                {
+                    ctx.FailRequest(System.Net.HttpStatusCode.Forbidden);
+                }
+            },
+            OnBeforeCreateAsync = async ctx =>
+            {
+                // Validate required metadata
+                var metadata = ctx.Metadata;
+                if (!metadata.ContainsKey("tenantId") || !metadata.ContainsKey("databaseName"))
+                {
+                    ctx.FailRequest("Metadata must include 'tenantId' and 'databaseName'");
+                }
+            }
+        }
+    });
 
     app.MapControllers();
     // app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
@@ -301,6 +355,10 @@ try
     });
 
     app.UseStaticFiles();
+
+    // Register recurring cleanup job for stale backup files
+    RecurringJob.AddOrUpdate<ICleanupStaleFilesJob>("cleanup-stale-files",
+        job => job.Run(BotCancellationToken.Null), Cron.Hourly);
 
     await app.RunAsync();
 }
