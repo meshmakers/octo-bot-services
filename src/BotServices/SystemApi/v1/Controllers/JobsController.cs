@@ -1,7 +1,4 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using Asp.Versioning;
 using Hangfire;
 using Hangfire.Storage.Monitoring;
@@ -12,7 +9,6 @@ using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
-using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -28,7 +24,6 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 public class JobsController : ControllerBase
 {
     private readonly IDistributedCacheService _distributedCache;
-    private readonly ISystemContext _systemContext;
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IBackupFileStorageService _backupFileStorage;
 
@@ -36,14 +31,12 @@ public class JobsController : ControllerBase
     ///     Constructor
     /// </summary>
     /// <param name="distributedCache"></param>
-    /// <param name="systemContext"></param>
     /// <param name="backgroundJobClient"></param>
     /// <param name="backupFileStorage"></param>
-    public JobsController(IDistributedCacheService distributedCache, ISystemContext systemContext,
+    public JobsController(IDistributedCacheService distributedCache,
         IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage)
     {
         _distributedCache = distributedCache;
-        _systemContext = systemContext;
         _backgroundJobClient = backgroundJobClient;
         _backupFileStorage = backupFileStorage;
     }
@@ -103,39 +96,6 @@ public class JobsController : ControllerBase
         catch (Exception ex)
         {
             return BadRequest(new InternalServerErrorDto(ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// Restores the repository for the given tenant.
-    /// </summary>
-    /// <param name="tenantId">The tenant id</param>
-    /// <param name="databaseName">The name of the database to restore</param>
-    /// <param name="file">The file with the gzipped file</param>
-    /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
-    /// <returns></returns>
-    [Obsolete("Use restore-from-upload with tus resumable upload instead.")]
-    [HttpPost]
-    [RequestSizeLimit(300_000_000)]
-    [Route("restore-repository")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
-    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> RestoreRepositoryAsync(string tenantId, string databaseName, IFormFile file,
-        string? oldDatabaseName = null)
-    {
-        try
-        {
-            var cacheKey = await AddFileToCache(_systemContext.TenantId, file);
-
-            var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, cacheKey, oldDatabaseName, BotCancellationToken.Null));
-
-            return Ok(new JobResponseDto(id));
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
         }
     }
 
@@ -349,13 +309,4 @@ public class JobsController : ControllerBase
         return new Tuple<string, Stream>(cacheStream.ContentType, cacheStream.Stream);
     }
 
-    private async Task<string> AddFileToCache(string tenantId, IFormFile file)
-    {
-        await using var memoryStream = new MemoryStream();
-        await file.CopyToAsync(memoryStream);
-        memoryStream.Position = 0;
-        var key = await _distributedCache.CreateStreamAsync(tenantId, memoryStream, file.ContentType, file.FileName,
-            TimeSpan.FromHours(1));
-        return key;
-    }
 }
