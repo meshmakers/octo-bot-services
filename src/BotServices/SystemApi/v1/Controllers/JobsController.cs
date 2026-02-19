@@ -8,6 +8,7 @@ using Hangfire.Storage.Monitoring;
 using IdentityModel;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
@@ -29,6 +30,7 @@ public class JobsController : ControllerBase
     private readonly IDistributedCacheService _distributedCache;
     private readonly ISystemContext _systemContext;
     private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IBackupFileStorageService _backupFileStorage;
 
     /// <summary>
     ///     Constructor
@@ -36,12 +38,14 @@ public class JobsController : ControllerBase
     /// <param name="distributedCache"></param>
     /// <param name="systemContext"></param>
     /// <param name="backgroundJobClient"></param>
+    /// <param name="backupFileStorage"></param>
     public JobsController(IDistributedCacheService distributedCache, ISystemContext systemContext,
-        IBackgroundJobClient backgroundJobClient)
+        IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage)
     {
         _distributedCache = distributedCache;
         _systemContext = systemContext;
         _backgroundJobClient = backgroundJobClient;
+        _backupFileStorage = backupFileStorage;
     }
 
     /// <summary>
@@ -103,13 +107,14 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
-    /// Restores the repository for the given tenant
+    /// Restores the repository for the given tenant.
     /// </summary>
     /// <param name="tenantId">The tenant id</param>
     /// <param name="databaseName">The name of the database to restore</param>
     /// <param name="file">The file with the gzipped file</param>
     /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
     /// <returns></returns>
+    [Obsolete("Use restore-from-upload with tus resumable upload instead.")]
     [HttpPost]
     [RequestSizeLimit(300_000_000)]
     [Route("restore-repository")]
@@ -125,6 +130,48 @@ public class JobsController : ControllerBase
 
             var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
                 job.Run(tenantId, databaseName, cacheKey, oldDatabaseName, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+    }
+
+    /// <summary>
+    /// Restores the repository for the given tenant from a tus resumable upload.
+    /// The file must have been uploaded via the tus endpoint at /system/v1/tus-upload first.
+    /// </summary>
+    /// <param name="tusFileId">The tus file ID from the completed upload.</param>
+    /// <param name="tenantId">The tenant id.</param>
+    /// <param name="databaseName">The name of the database to restore.</param>
+    /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
+    /// <returns></returns>
+    [HttpPost]
+    [Route("restore-from-upload")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult RestoreFromUpload(
+        [Required] string tusFileId,
+        [Required] string tenantId,
+        [Required] string databaseName,
+        string? oldDatabaseName = null)
+    {
+        try
+        {
+            // Verify the tus upload file exists on disk
+            var filePath = _backupFileStorage.GetTusUploadFilePath(tusFileId);
+            if (!System.IO.File.Exists(filePath))
+            {
+                return NotFound(new NotFoundErrorDto(
+                    $"Upload file not found for tus file ID '{tusFileId}'. Ensure the upload completed successfully."));
+            }
+
+            var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
+                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -215,8 +262,21 @@ public class JobsController : ControllerBase
                     return NotFound(new NotFoundErrorDto("No result found for the job with id: " + id));
                 }
 
-                var key = result;
-                var resultTuple = await GetResultStream(tenantId, key.Replace("\"", ""));
+                var key = result.Replace("\"", "");
+
+                // New path: result is a file path on disk
+                if (System.IO.File.Exists(key))
+                {
+                    var fileStream = new FileStream(key, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    return new FileStreamResult(fileStream, "application/gzip")
+                    {
+                        FileDownloadName = Path.GetFileName(key),
+                        EnableRangeProcessing = true
+                    };
+                }
+
+                // Fallback: result is a GridFS cache key (backward compatibility)
+                var resultTuple = await GetResultStream(tenantId, key);
 
                 return new FileStreamResult(resultTuple.Item2, resultTuple.Item1);
             }
