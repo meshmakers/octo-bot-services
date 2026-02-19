@@ -78,12 +78,12 @@ public class OctoBotServicesOptions
     /// <summary>
     /// Gets or sets the storage path for tus resumable uploads.
     /// </summary>
-    public string TusStoragePath { get; set; } = "/data/tus-uploads";
+    public string TusStoragePath { get; set; } = Path.Combine(Path.GetTempPath(), "octo-bot", "tus-uploads");
 
     /// <summary>
     /// Gets or sets the storage path for database dump files.
     /// </summary>
-    public string DumpStoragePath { get; set; } = "/data/dumps";
+    public string DumpStoragePath { get; set; } = Path.Combine(Path.GetTempPath(), "octo-bot", "dumps");
 
     /// <summary>
     /// Gets or sets the maximum upload size in bytes (default: 10 GB).

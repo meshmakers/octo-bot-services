@@ -23,7 +23,9 @@ using Meshmakers.Octo.Services.Infrastructure.Configuration;
 using Meshmakers.Octo.Services.Infrastructure.Services;
 using Meshmakers.Octo.Services.Observability;
 using Meshmakers.Octo.Services.Swagger.Configuration;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -309,7 +311,15 @@ try
         {
             OnAuthorizeAsync = async ctx =>
             {
-                // Require authentication via JWT bearer token
+                // The default auth scheme is Cookies, so we must explicitly
+                // authenticate with JWT Bearer for API calls with Bearer tokens.
+                var authResult = await ctx.HttpContext.AuthenticateAsync(
+                    JwtBearerDefaults.AuthenticationScheme);
+                if (authResult.Succeeded)
+                {
+                    ctx.HttpContext.User = authResult.Principal!;
+                }
+
                 if (ctx.HttpContext.User.Identity is not { IsAuthenticated: true })
                 {
                     ctx.FailRequest(System.Net.HttpStatusCode.Unauthorized);
