@@ -291,7 +291,8 @@ try
     app.UseRouting();
 
     app.UseCors(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()
-        .WithExposedHeaders("Upload-Offset", "Upload-Length", "Tus-Resumable", "Location"));
+        .WithExposedHeaders("Upload-Offset", "Upload-Length", "Tus-Resumable", "Location")
+        .SetPreflightMaxAge(TimeSpan.FromHours(1)));
 
     // Conversion of request query jwt token to cookie for switch from dashboard to hangfire ui dashboard
     app.UseOctoCookieBasedAuthentication();
