@@ -1,3 +1,4 @@
+using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
@@ -95,6 +96,10 @@ internal class ExportRtModelByDeepGraphCommand(
 
             CheckAndThrowCancellation(cancellationToken);
 
+            // Automatically determine required CK model dependencies from exported entities
+            model.Dependencies.AddRange(
+                DetermineModelDependencies(tenantId, model.Entities));
+
             await using var streamWriter = new StreamWriter(filePath);
             await rtSerializer.SerializeAsync(streamWriter, model);
 
@@ -105,5 +110,40 @@ internal class ExportRtModelByDeepGraphCommand(
             logger.LogError(e, "Exporting model failed");
             throw;
         }
+    }
+
+    private List<CkModelIdVersionRange> DetermineModelDependencies(string tenantId,
+        IEnumerable<RtEntityTcDto> entities)
+    {
+        var requiredModelIds = new HashSet<CkModelId>();
+        foreach (var entity in entities)
+        {
+            var ckTypeGraph = ckCacheService.GetRtCkType(tenantId, entity.CkTypeId);
+            requiredModelIds.Add(ckTypeGraph.CkTypeId.ModelId);
+        }
+
+        // Follow transitive dependencies
+        var allRequired = new HashSet<CkModelId>();
+        var loadedModelIds = ckCacheService.GetCkModelIds(tenantId);
+        var dependencyLookup = loadedModelIds
+            .ToDictionary(m => m, _ => (ICollection<CkModelId>)[]);
+
+        // Build lookup from the cache - we get all model IDs and their dependencies
+        var queue = new Queue<CkModelId>(requiredModelIds);
+        while (queue.Count > 0)
+        {
+            var modelId = queue.Dequeue();
+            if (!allRequired.Add(modelId))
+            {
+                continue;
+            }
+        }
+
+        // Convert to version ranges using [major.minor,major+1.0) pattern
+        return allRequired
+            .Where(m => m.Name != "System") // System model is always available
+            .Select(m => new CkModelIdVersionRange(m.Name,
+                $"[{m.Version.Major}.{m.Version.Minor},{m.Version.Major + 1}.0)"))
+            .ToList();
     }
 }

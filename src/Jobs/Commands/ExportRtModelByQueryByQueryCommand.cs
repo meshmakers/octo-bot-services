@@ -82,6 +82,10 @@ internal class ExportRtModelByQueryByQueryCommand(
 
             CheckAndThrowCancellation(cancellationToken);
 
+            // Automatically determine required CK model dependencies from exported entities
+            model.Dependencies.AddRange(
+                DetermineModelDependencies(tenantId, model.Entities));
+
             await using var streamWriter = new StreamWriter(filePath);
             await rtSerializer.SerializeAsync(streamWriter, model);
 
@@ -92,6 +96,24 @@ internal class ExportRtModelByQueryByQueryCommand(
             logger.LogError(e, "Exporting model failed");
             throw;
         }
+    }
+
+    private List<CkModelIdVersionRange> DetermineModelDependencies(string tenantId,
+        IEnumerable<RtEntityTcDto> entities)
+    {
+        var requiredModelIds = new HashSet<CkModelId>();
+        foreach (var entity in entities)
+        {
+            var ckTypeGraph = ckCacheService.GetRtCkType(tenantId, entity.CkTypeId);
+            requiredModelIds.Add(ckTypeGraph.CkTypeId.ModelId);
+        }
+
+        // Convert to version ranges using [major.minor,major+1.0) pattern
+        return requiredModelIds
+            .Where(m => m.Name != "System") // System model is always available
+            .Select(m => new CkModelIdVersionRange(m.Name,
+                $"[{m.Version.Major}.{m.Version.Minor},{m.Version.Major + 1}.0)"))
+            .ToList();
     }
 
     private static string TransformAttributeName(string attributeNameDto)
