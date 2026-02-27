@@ -58,7 +58,8 @@ public class DumpRepositoryJobTests
                 .Returns(expectedPath);
 
             var commandResult = new CommandResult { Success = true };
-            _systemContext.BackupTenantAsync("tenant-1", expectedPath).Returns(commandResult);
+            _systemContext.BackupTenantAsync("tenant-1", expectedPath,
+                timeout: TimeSpan.FromHours(1)).Returns(commandResult);
 
             var job = CreateJob();
 
@@ -88,7 +89,8 @@ public class DumpRepositoryJobTests
             _backupFileStorage.GetDumpFilePath("tenant-1", "dump.tar.gz").Returns(dumpPath);
 
             var commandResult = new CommandResult { Success = false, ExitCode = 1 };
-            _systemContext.BackupTenantAsync("tenant-1", dumpPath).Returns(commandResult);
+            _systemContext.BackupTenantAsync("tenant-1", dumpPath,
+                timeout: TimeSpan.FromHours(1)).Returns(commandResult);
 
             var job = CreateJob();
 
@@ -117,7 +119,8 @@ public class DumpRepositoryJobTests
             _backupFileStorage.GetDumpFilePath("tenant-1", "dump.tar.gz").Returns(dumpPath);
 
             var commandResult = new CommandResult { Success = true };
-            _systemContext.BackupTenantAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(commandResult);
+            _systemContext.BackupTenantAsync(Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>()).Returns(commandResult);
 
             var job = CreateJob();
 
@@ -148,13 +151,15 @@ public class DumpRepositoryJobTests
             _backupFileStorage.GetDumpFilePath("tenant-1", "dump.tar.gz").Returns(dumpPath);
 
             var commandResult = new CommandResult { Success = true };
-            _systemContext.BackupTenantAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(commandResult);
+            _systemContext.BackupTenantAsync(Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>()).Returns(commandResult);
 
             var job = CreateJob();
 
             await job.Run("tenant-1", null);
 
-            await _systemContext.Received(1).BackupTenantAsync("tenant-1", dumpPath);
+            await _systemContext.Received(1).BackupTenantAsync("tenant-1", dumpPath,
+                Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>());
         }
         finally
         {

@@ -43,7 +43,8 @@ public class DumpRepositoryJob(
             logger.LogInformation("Running dump repository command for '{TenantId}' to '{FilePath}'", tenantId,
                 filePath);
 
-            var r = await systemContext.BackupTenantAsync(tenantId, filePath);
+            var r = await systemContext.BackupTenantAsync(tenantId, filePath,
+                timeout: TimeSpan.FromHours(1));
 
             if (r.Success)
             {
