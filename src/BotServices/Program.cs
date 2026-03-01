@@ -300,6 +300,7 @@ try
     app.UseAuthentication();
 
     app.UseAuthorization();
+    app.UseOctoTenantAuthorization();
 
     app.UseOctoApiVersioningAndDocumentation();
 
