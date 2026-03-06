@@ -15,7 +15,7 @@ internal static class BotServiceConstants
     /// <summary>
     /// Expected value of the identity data version
     /// </summary>
-    public const int BotServiceIdentityDataVersionValue = 1;
+    public const int BotServiceIdentityDataVersionValue = 2;
 
     /// <summary>
     ///     The name of the cookie of cookie-based auth

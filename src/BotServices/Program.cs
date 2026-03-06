@@ -147,7 +147,7 @@ try
             };
         }).AddJwtBearer(jwt =>
         {
-            jwt.Audience = CommonConstants.BotApi;
+            jwt.Audience = CommonConstants.OctoApi;
             jwt.TokenValidationParameters = new TokenValidationParameters
             {
                 NameClaimType = JwtClaimTypes.Name,
@@ -163,15 +163,15 @@ try
 
         options.AddPolicy(BotServiceConstants.JobApiReadOnlyPolicy, authorizationPolicyBuilder =>
         {
-            // require SystemApiFullAccess or SystemApiReadOnly
-            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.BotApiFullAccess,
-                CommonConstants.BotApiReadOnly);
+            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope,
+                CommonConstants.OctoApiFullAccess,
+                CommonConstants.OctoApiReadOnly);
         });
 
         options.AddPolicy(BotServiceConstants.JobApiReadWritePolicy, authorizationPolicyBuilder =>
         {
-            // require SystemApiFullAccess
-            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.BotApiFullAccess);
+            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope,
+                CommonConstants.OctoApiFullAccess);
         });
     });
 
@@ -183,19 +183,19 @@ try
         options.Scopes = new Dictionary<string, string>
         {
             {
-                CommonConstants.BotApiFullAccess,
-                BotTexts.Backend_BotServices_Api_FullAccess
+                CommonConstants.OctoApiFullAccess,
+                CommonConstants.OctoApiFullAccessDisplayName
             },
             {
-                CommonConstants.BotApiReadOnly,
-                BotTexts.Backend_BotServices_Api_ReadOnlyAccess
+                CommonConstants.OctoApiReadOnly,
+                CommonConstants.OctoApiReadOnlyDisplayName
             }
         };
 
         options.PolicyScopeMapping = new Dictionary<string, IEnumerable<string>>
         {
-            { BotServiceConstants.JobApiReadOnlyPolicy, [CommonConstants.BotApiReadOnly] },
-            { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.BotApiFullAccess] }
+            { BotServiceConstants.JobApiReadOnlyPolicy, [CommonConstants.OctoApiReadOnly] },
+            { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.OctoApiFullAccess] }
         };
         
         options.XmlDocDataTransferObjectAssemblies = [typeof(JobDto).Assembly];
@@ -328,9 +328,9 @@ try
                     return;
                 }
 
-                // Require the JobApiReadWritePolicy claim
+                // Require the OctoApiFullAccess scope for write operations
                 var hasClaim = ctx.HttpContext.User.HasClaim(
-                    InfrastructureCommon.ClaimScope, CommonConstants.BotApiFullAccess);
+                    InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess);
                 if (!hasClaim)
                 {
                     ctx.FailRequest(System.Net.HttpStatusCode.Forbidden);
