@@ -72,30 +72,12 @@ internal class DefaultConfigurationCreatorService(
 
     protected override void CreateApiScopes(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
-        createIdentityDataCommandRequest.ApiScopes = new List<DistApiScopeDto>
-        {
-            new(CommonConstants.BotApiFullAccess,
-                CommonConstants.BotApiFullAccessDisplayName),
-            new(CommonConstants.BotApiReadOnly,
-                CommonConstants.BotApiReadOnlyDisplayName)
-        };
+        // Scopes are now registered centrally by the identity service
     }
 
     protected override void CreateApiResources(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
     {
-        createIdentityDataCommandRequest.ApiResources = new List<DistApiResourcesDto>
-        {
-            new(CommonConstants.BotApi, CommonConstants.BotApiDisplayName)
-            {
-                Description = CommonConstants.BotApiDescription,
-                IsEnabled = true,
-                Scopes = new List<string>
-                {
-                    CommonConstants.BotApiFullAccess,
-                    CommonConstants.BotApiReadOnly
-                }
-            }
-        };
+        // API resources are now registered centrally by the identity service
     }
 
     protected override void CreateClients(CreateIdentityDataCommandRequest createIdentityDataCommandRequest)
@@ -145,8 +127,8 @@ internal class DefaultConfigurationCreatorService(
                     CommonConstants.Scopes.Profile,
                     CommonConstants.Scopes.Email,
                     JwtClaimTypes.Role,
-                    CommonConstants.BotApiFullAccess,
-                    CommonConstants.BotApiReadOnly
+                    CommonConstants.OctoApiFullAccess,
+                    CommonConstants.OctoApiReadOnly
                 ]
             }
         };
