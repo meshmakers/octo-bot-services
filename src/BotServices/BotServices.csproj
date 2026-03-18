@@ -20,13 +20,13 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Hangfire.Mongo" Version="1.12.2" />
+        <PackageReference Include="Hangfire.Mongo" Version="1.13.1" />
         <PackageReference Include="IdentityModel.AspNetCore.OAuth2Introspection" Version="6.2.0" />
-        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.2" />
-        <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.2" />
-        <PackageReference Include="NLog.Web.AspNetCore" Version="6.1.0" />
-        <PackageReference Include="tusdotnet" Version="2.9.0" />
-        <PackageReference Include="Hangfire.AspNetCore" Version="1.8.22" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.5" />
+        <PackageReference Include="NLog.Web.AspNetCore" Version="6.1.2" />
+        <PackageReference Include="tusdotnet" Version="2.11.1" />
+        <PackageReference Include="Hangfire.AspNetCore" Version="1.8.23" />
         <PackageReference Include="Meshmakers.Octo.Services.Swagger" Version="$(OctoVersion)" />
         <PackageReference Include="Meshmakers.Octo.Services.Notifications" Version="$(OctoVersion)" />
         <PackageReference Include="Meshmakers.Octo.Services.Infrastructure" Version="$(OctoVersion)" />
