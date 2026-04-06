@@ -74,6 +74,52 @@ public class ImportModelJob : IImportModelJob
     }
 
     /// <inheritdoc />
+    public async Task ImportCkBatchAsync(string tenantId, List<string> keys,
+        IBotCancellationToken? cancellationToken)
+    {
+        _logger.LogInformation(
+            "Starting sequential batch import of {Count} CK models to '{TenantId}'",
+            keys.Count, tenantId);
+
+        for (var i = 0; i < keys.Count; i++)
+        {
+            var key = keys[i];
+            try
+            {
+                _logger.LogInformation(
+                    "Batch import step {Step}/{Total}: Reading input file from cache for CK import to '{TenantId}'",
+                    i + 1, keys.Count, tenantId);
+
+                var tempFile = await GetTempFile(tenantId, key);
+
+                _logger.LogInformation(
+                    "Batch import step {Step}/{Total}: Starting import of file '{TempFile}'",
+                    i + 1, keys.Count, tempFile);
+
+                await _importCkModelCommand.ImportAsync(tenantId, tempFile.Item1,
+                    cancellationToken?.ShutdownToken);
+
+                await ClearCache(tenantId, key);
+
+                _logger.LogInformation(
+                    "Batch import step {Step}/{Total}: Import of file '{TempFile}' completed",
+                    i + 1, keys.Count, tempFile);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e,
+                    "Batch import step {Step}/{Total}: Import failed with error",
+                    i + 1, keys.Count);
+                throw;
+            }
+        }
+
+        _logger.LogInformation(
+            "Sequential batch import of {Count} CK models to '{TenantId}' completed",
+            keys.Count, tenantId);
+    }
+
+    /// <inheritdoc />
     public async Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
         IBotCancellationToken? cancellationToken)
     {

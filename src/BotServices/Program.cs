@@ -83,6 +83,7 @@ try
             c.AddHangfireMessageScheduler();
 
             c.AddCommandConsumer<ModelCommandsConsumer, ImportCkCommandRequest>(QueueNames.ImportCkCommand);
+            c.AddCommandConsumer<ModelCommandsConsumer, ImportCkBatchCommandRequest>(QueueNames.ImportCkBatchCommand);
             c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>(QueueNames.ImportRtCommand);
             c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByQueryCommandRequest>(
                 QueueNames.ExportRtByQueryCommand);
