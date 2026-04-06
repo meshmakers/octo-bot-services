@@ -9,6 +9,7 @@ namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 // ReSharper disable once ClassNeverInstantiated.Global
 internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
     IDistributedConsumer<ImportCkCommandRequest>,
+    IDistributedConsumer<ImportCkBatchCommandRequest>,
     IDistributedConsumer<ImportRtCommandRequest>,
     IDistributedConsumer<ExportRtByQueryCommandRequest>,
     IDistributedConsumer<ExportRtByDeepGraphCommandRequest>
@@ -18,6 +19,14 @@ internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
         var id = backgroundJobClient.Enqueue<IImportModelJob>(job =>
             job.ImportCkAsync(context.Message.TenantId, context.Message.CacheFileKey, BotCancellationToken.Null));
         
+        await context.RespondAsync(new JobCreatedResponse(id));
+    }
+
+    public async Task ConsumeAsync(IDistributedContext<ImportCkBatchCommandRequest> context)
+    {
+        var id = backgroundJobClient.Enqueue<IImportModelJob>(job =>
+            job.ImportCkBatchAsync(context.Message.TenantId, context.Message.CacheFileKeys, BotCancellationToken.Null));
+
         await context.RespondAsync(new JobCreatedResponse(id));
     }
 
