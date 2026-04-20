@@ -122,12 +122,19 @@ public class JobsController : ControllerBase
     {
         try
         {
-            // Verify the tus upload file exists on disk
+            // Verify the tus upload file exists on disk and has content
             var filePath = _backupFileStorage.GetTusUploadFilePath(tusFileId);
             if (!System.IO.File.Exists(filePath))
             {
                 return NotFound(new NotFoundErrorDto(
                     $"Upload file not found for tus file ID '{tusFileId}'. Ensure the upload completed successfully."));
+            }
+
+            var fileInfo = new FileInfo(filePath);
+            if (fileInfo.Length == 0)
+            {
+                return BadRequest(new InternalServerErrorDto(
+                    $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."));
             }
 
             var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
