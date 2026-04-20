@@ -33,6 +33,13 @@ public class RestoreRepositoryJob(
                     $"Backup file not found at '{filePath}' for tus file ID '{cacheKey}'.");
             }
 
+            var fileInfo = new FileInfo(filePath);
+            if (fileInfo.Length == 0)
+            {
+                throw new JobFailedException(
+                    $"Backup file at '{filePath}' for tus file ID '{cacheKey}' is empty (0 bytes). The upload may not have completed successfully.");
+            }
+
             logger.LogInformation("Running restore command for '{TenantId}' from file '{FilePath}'", tenantId,
                 filePath);
 
