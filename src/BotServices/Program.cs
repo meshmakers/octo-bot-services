@@ -250,7 +250,19 @@ try
     });
 
     // ReSharper disable once StringLiteralTypo
-    builder.Services.AddHangfireServer(options => { options.Queues = ["octosystem", "default"]; });
+    builder.Services.AddHangfireServer(options =>
+    {
+        options.Queues = ["octosystem", "default"];
+        // Hangfire's default poll interval is 15s, which silently floors any
+        // recurring cron faster than ~15s (e.g. the per-second simulator
+        // pipeline triggers) onto that grid. Default to 1s so sub-15s cron
+        // expressions ('* * * * * ?') fire at their real cadence, but read it
+        // from configuration so the storage/MongoDB polling load can be tuned
+        // per environment without a code change.
+        var schedulePollingSeconds =
+            builder.Configuration.GetValue("Hangfire:SchedulePollingIntervalSeconds", 1);
+        options.SchedulePollingInterval = TimeSpan.FromSeconds(schedulePollingSeconds);
+    });
 
 
     // NLog: Setup NLog for Dependency injection
