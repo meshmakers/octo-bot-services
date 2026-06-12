@@ -1,0 +1,115 @@
+# Root-level CI pipeline using shared templates from octo-pipeline-templates.
+#
+# Coexists with devops-build/azure-pipelines.yml during the Phase 1-services
+# pilot. Once parity is verified, def 94 yamlFilename can be flipped to this
+# file and devops-build/ deleted in a follow-up commit. Services-train
+# references def 94 by ID so the train is unaffected by the yamlFilename swap.
+#
+# Bot-specific quirks preserved from the legacy YAML:
+#   - InstallSSHKey (no submodules:recursive — checkout has clean only)
+#   - download-ca — internal CA for dotnet restore
+#   - Build step passes /p:OctoPublishCatalog="$(effectivePublishCatalog)"
+#     and /p:OctoPrivateGitHubApiKey/OctoPublicGitHubApiKey for CK model
+#     catalog publish gating (only main / r* tags push to GitHub catalogs)
+#   - Test passes /p:OctoPublishCkModel=false — Test step must not re-publish CK libs
+#   - SystemTests excluded
+#   - HAS push-nuget — bot publishes Meshmakers.Octo.Bots NuGets
+#   - HAS CK library output: SystemBotCkModel
+
+name: $(MajorVersion).$(MinorVersion).$(date:yyMM).$(DayOfMonth)$(rev:rrr)-$(Build.SourceBranchName)
+
+resources:
+  repositories:
+    - repository: pipelineTemplates
+      type: github
+      name: meshmakers/octo-pipeline-templates
+      endpoint: meshmakers-access-token
+      ref: refs/tags/tpl-v0.3.0
+
+trigger:
+  batch: true
+  branches:
+    include:
+      - dev/*
+      - test/*
+      - main
+  tags:
+    exclude:
+      - '*'
+
+variables:
+  - group: GitSSHGroup
+  - group: ApiKeys-mm-cloud
+  - group: OctoDefault
+  - name: solutionFile
+    value: 'Octo.Bots.sln'
+  - name: artifactsFrameworkVersion
+    value: 'net10.0'
+  - name: buildConfiguration
+    value: 'Release'
+  - name: buildPlatform
+    value: 'Any CPU'
+  - name: isRelease
+    value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/r') }}
+  - name: isMain
+    value: ${{ eq(variables['Build.SourceBranch'], 'refs/heads/main') }}
+  - name: isTest
+    value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/heads/test') }}
+
+stages:
+  - stage: Build
+    jobs:
+      - job: linux
+        displayName: 'Build, test, push Docker image and NuGets'
+        pool:
+          name: meshmakers-ci-agents
+        steps:
+          - template: templates/steps/update-build-number.yml@pipelineTemplates
+          - checkout: self
+            clean: true
+          - task: InstallSSHKey@0
+            displayName: 'Install SSH key'
+            inputs:
+              knownHostsEntry: '$(SSHKnownHosts)'
+              sshPublicKey: '$(SSHPublicKey)'
+              sshPassphrase: '$(SSHPassphrase)'
+              sshKeySecureFile: '$(SSHPrivateKeyFile)'
+          - template: templates/steps/set-version.yml@pipelineTemplates
+          - template: templates/steps/download-ca.yml@pipelineTemplates
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore NuGet packages'
+            inputs:
+              command: 'restore'
+              projects: '$(solutionFile)'
+              restoreArguments: '--force /p:OctoNugetPrivateServer=$(nugetPrivateServer)'
+              noCache: true
+          - task: DotNetCoreCLI@2
+            displayName: 'Build'
+            inputs:
+              command: 'build'
+              projects: '$(solutionFile)'
+              arguments: '--configuration $(buildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer) /p:OctoPublishCatalog="$(effectivePublishCatalog)" /p:OctoPrivateGitHubApiKey=$(GitHubPAT) /p:OctoPublicGitHubApiKey=$(GitHubPAT)'
+              publishWebProjects: false
+              zipAfterPublish: false
+              modifyOutputPath: false
+          - task: DotNetCoreCLI@2
+            displayName: 'Test'
+            inputs:
+              command: 'test'
+              arguments: '--configuration $(buildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer) /p:OctoPublishCkModel=false'
+              projects: |
+                **/*Tests.csproj
+                !**/*SystemTests.csproj
+              testRunTitle: 'CI'
+          - template: templates/steps/build-and-push-docker.yml@pipelineTemplates
+            parameters:
+              publicRegistryServiceConnection: $(DockerRegistryPublicConnection)
+              privateRegistryName: $(DockerRegistryPrivateUri)
+              repository: meshmakers/octo-mesh-bot-services
+              dockerfile: src/BotServices/Dockerfile
+              enableMainLatestTag: true
+          - template: templates/steps/handle-artifacts.yml@pipelineTemplates
+            parameters:
+              constructionKitLibraryPaths:
+                - 'src/SystemBotCkModel/bin/$(buildConfiguration)/$(artifactsFrameworkVersion)/octo-ck-libraries/SystemBotCkModel'
+          - template: templates/steps/push-nuget-package.yml@pipelineTemplates
