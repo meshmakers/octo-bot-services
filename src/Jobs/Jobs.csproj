@@ -25,7 +25,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Meshmakers.Octo.Services.Contracts" Version="$(OctoVersion)" />
+        <PackageReference Include="Meshmakers.Octo.Services.Contracts" Version="$(OctoCoreLibVersion)" />
         <ProjectReference Include="..\RepositoryUpdate\RepositoryUpdate.csproj" />
     </ItemGroup>
 
