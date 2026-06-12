@@ -12,7 +12,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Meshmakers.Octo.Runtime.Engine.MongoDb" Version="$(OctoVersion)" />
+      <PackageReference Include="Meshmakers.Octo.Runtime.Engine.MongoDb" Version="$(OctoCoreLibVersion)" />
       <ProjectReference Include="..\SystemBotCkModel\SystemBotCkModel.csproj" />
     </ItemGroup>
 
