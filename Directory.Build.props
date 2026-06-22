@@ -44,6 +44,6 @@
         <RestoreSources Condition="'$(Configuration)'=='DebugL'">$(OctoRepoRootPath)../nuget;$(RestoreSources)</RestoreSources>
     </PropertyGroup>
     <ItemGroup>
-        <None Include="$(OctoRepoRootPath)README.md" Pack="True" PackagePath="\" Visible="false" />
+        <None Include="$([System.IO.Path]::Combine('$(OctoRepoRootPath)','README.md'))" Pack="True" PackagePath="" Visible="false" />
     </ItemGroup>
 </Project>
