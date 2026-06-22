@@ -17,6 +17,7 @@
         <RepositoryUrl>https://github.com/meshmakers/octo-bot-services</RepositoryUrl>
         <PackageIcon>meshmakers64.png</PackageIcon>
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageProjectUrl>https://www.meshmakers.io</PackageProjectUrl>
         <PackageTags>Octo data mesh iot</PackageTags>
         <TargetFramework>net10.0</TargetFramework>
@@ -42,4 +43,7 @@
         <RestoreSources Condition="'$(OctoNugetPrivateServer)'!=''">$(OctoNugetPrivateServer)</RestoreSources>
         <RestoreSources Condition="'$(Configuration)'=='DebugL'">$(OctoRepoRootPath)../nuget;$(RestoreSources)</RestoreSources>
     </PropertyGroup>
+    <ItemGroup>
+        <None Include="$(OctoRepoRootPath)README.md" Pack="True" PackagePath="\" Visible="false" />
+    </ItemGroup>
 </Project>
