@@ -1,6 +1,6 @@
 # Octo Bot Services
 
-The bot services of OctoMesh: an ASP.NET Core background-processing service that runs the platform's long-running and recurring jobs (model import/export, repository backup/restore, fixups and attribute-value aggregation) on top of Hangfire. The repository also publishes the **System.Bot** construction kit model as a NuGet package.
+The bot services of OctoMesh: an ASP.NET Core background-processing service that runs the platform's long-running and recurring jobs (model import/export, repository backup/restore, fixups and attribute-value aggregation) on top of Hangfire. The repository also publishes two NuGet packages: the **System.Bot** construction kit model and the reusable **Jobs** library.
 
 ## Overview
 
@@ -14,14 +14,14 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 - Attribute-value aggregation for autocomplete (`AttributeValueAggregatorJob`)
 - Hourly cleanup of stale backup/upload files (`CleanupStaleFilesJob`)
 
-## Published package
+## Published packages
 
-`Meshmakers.Octo.ConstructionKit.Models.System.Bot` is the construction kit model `System.Bot-3.1.1` (depending on `System-[2.0,3.0)`). It defines the entity types the bot service operates on:
+The repository produces two NuGet packages (the service host project itself is `IsPackable=false` and ships as a container image):
 
-- **Fixup** - a named, ordered, scriptable migration entity tracking application state (`IsApplied`, `AppliedAt`, `Output`, `Error`, `IsSuccess`).
-- **AttributeAggregateConfiguration** - configures autocomplete value aggregation for a target entity attribute (filter regex, result limit) via the `Configures` association.
-
-The service project itself is not packable (`IsPackable=false`); it is shipped as a container image. Only the CK model and the `Jobs` library are produced as NuGet packages.
+- **Meshmakers.Octo.ConstructionKit.Models.System.Bot** - the construction kit model `System.Bot-3.1.1` (depending on `System-[2.0,3.0)`). It defines the entity types the bot service operates on:
+  - **Fixup** - a named, ordered, scriptable migration entity tracking application state (`IsApplied`, `AppliedAt`, `Output`, `Error`, `IsSuccess`).
+  - **AttributeAggregateConfiguration** - configures autocomplete value aggregation for a target entity attribute (filter regex, result limit) via the `Configures` association.
+- **Meshmakers.Octo.Backend.Jobs** - the reusable Hangfire job and command implementations library consumed by the service.
 
 ## Project structure
 
