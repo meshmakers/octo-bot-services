@@ -18,10 +18,10 @@ WORKDIR /src
 COPY . .
 ENV NUGET_XMLDOC_MODE=none
 WORKDIR "/src/src/BotServices"
-RUN dotnet build "BotServices.csproj" -c Release -p:OctoNugetPrivateServer=${OCTO_PRIVATE_NUGET_SERVICE} -p:OctoVersion=${OCTO_VERSION} -p:OctoCoreLibVersion=${OCTO_CORE_LIB_VERSION} -p:OctoCommVersion=${OCTO_COMM_VERSION}
+RUN dotnet build "BotServices.csproj" -c Release -p:OctoNugetPrivateServer=${OCTO_PRIVATE_NUGET_SERVICE} ${OCTO_VERSION:+-p:OctoVersion=${OCTO_VERSION}} ${OCTO_CORE_LIB_VERSION:+-p:OctoCoreLibVersion=${OCTO_CORE_LIB_VERSION}} ${OCTO_COMM_VERSION:+-p:OctoCommVersion=${OCTO_COMM_VERSION}}
 
 FROM build AS publish
-RUN dotnet publish "BotServices.csproj" -c Release -p:OctoNugetPrivateServer=${OCTO_PRIVATE_NUGET_SERVICE} -p:OctoVersion=${OCTO_VERSION} -p:OctoCoreLibVersion=${OCTO_CORE_LIB_VERSION} -p:OctoCommVersion=${OCTO_COMM_VERSION} -o /app
+RUN dotnet publish "BotServices.csproj" -c Release -p:OctoNugetPrivateServer=${OCTO_PRIVATE_NUGET_SERVICE} ${OCTO_VERSION:+-p:OctoVersion=${OCTO_VERSION}} ${OCTO_CORE_LIB_VERSION:+-p:OctoCoreLibVersion=${OCTO_CORE_LIB_VERSION}} ${OCTO_COMM_VERSION:+-p:OctoCommVersion=${OCTO_COMM_VERSION}} -o /app
 
 FROM base AS final
 
