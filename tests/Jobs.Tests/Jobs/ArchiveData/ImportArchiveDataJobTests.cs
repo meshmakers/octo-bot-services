@@ -5,36 +5,52 @@ using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
-using Meshmakers.Octo.Sdk.ServiceClient.AssetRepositoryServices.StreamData;
+using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Runtime.Contracts.StreamData;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using ArchiveImportMode = Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ArchiveImportMode;
+using EngineArchiveImportMode = Meshmakers.Octo.Runtime.Contracts.StreamData.ArchiveImportMode;
 
 namespace Meshmakers.Octo.Backend.Jobs.Tests.Jobs.ArchiveData;
 
 public class ImportArchiveDataJobTests
 {
+    private const string ArchiveRtId = "665f00000000000000000e21";
+
     private readonly ILogger<ImportArchiveDataJob> _logger = Substitute.For<ILogger<ImportArchiveDataJob>>();
     private readonly IBackupFileStorageService _backupFileStorage = Substitute.For<IBackupFileStorageService>();
-    private readonly IArchiveDataClientFactory _clientFactory = Substitute.For<IArchiveDataClientFactory>();
-    private readonly IStreamDataServicesClient _client = Substitute.For<IStreamDataServicesClient>();
+    private readonly ISystemContext _systemContext = Substitute.For<ISystemContext>();
+    private readonly ITenantContext _tenantContext = Substitute.For<ITenantContext>();
+    private readonly IStreamDataRepository _repository = Substitute.For<IStreamDataRepository>();
+    private readonly IArchiveRuntimeStore _archiveStore = Substitute.For<IArchiveRuntimeStore>();
+    private readonly IRollupArchiveLifecycleService _rollupLifecycle =
+        Substitute.For<IRollupArchiveLifecycleService>();
 
-    private ImportArchiveDataJob CreateJob()
+    private ImportArchiveDataJob CreateJob(ArchiveSnapshot? snapshot)
     {
-        _clientFactory.Create(Arg.Any<string>(), Arg.Any<string>()).Returns(_client);
-        return new ImportArchiveDataJob(_logger, _backupFileStorage, _clientFactory);
+        _systemContext.FindTenantContextAsync("tenant-1").Returns(_tenantContext);
+        _tenantContext.GetStreamDataRepository().Returns(_repository);
+        _tenantContext.GetArchiveRuntimeStore().Returns(_archiveStore);
+        _tenantContext.GetRollupArchiveLifecycleService().Returns(_rollupLifecycle);
+        _archiveStore.GetAsync(Arg.Any<OctoObjectId>()).Returns(snapshot);
+        return new ImportArchiveDataJob(_logger, _systemContext, _backupFileStorage);
     }
 
-    private static ArchiveSchemaDto Schema(string kind = "raw",
-        IReadOnlyList<ArchiveRollupAggregationDto>? rollups = null)
+    private static ArchiveSnapshot Snapshot(
+        IReadOnlyList<CkRollupAggregationSpec>? rollups = null,
+        IReadOnlyList<CkArchiveColumnSpec>? columns = null)
     {
-        return new ArchiveSchemaDto(
-            RtId: "665f00000000000000000e21",
-            RtWellKnownName: "voltage-raw",
-            Kind: kind,
-            TargetCkTypeId: "Sensor",
-            Columns: new[] { new ArchiveColumnDto("voltage", true, false) },
-            RollupAggregations: rollups,
-            PeriodMs: null);
+        return new ArchiveSnapshot(
+            new OctoObjectId(ArchiveRtId),
+            new RtCkId<CkTypeId>("System-1.0.0/Sensor"),
+            CkArchiveStatus.Activated,
+            "voltage-raw",
+            columns ?? new[] { new CkArchiveColumnSpec("voltage", true, false) })
+        {
+            RollupAggregations = rollups
+        };
     }
 
     private static string WriteZip(ArchiveExportMetadata? metadata, string? data, bool includeData = true,
@@ -72,17 +88,17 @@ public class ImportArchiveDataJobTests
     [Test]
     public async Task Run_MatchingSchema_StreamsImportAndDeletesFile()
     {
-        var path = WriteZip(Metadata(Schema()), "{\"rtid\":\"61a\"}\n");
+        var snapshot = Snapshot();
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot)), "{\"rtid\":\"61a\"}\n");
         try
         {
-            _client.GetArchiveSchemaAsync("tenant-1", "arch-1", Arg.Any<CancellationToken>()).Returns(Schema());
+            var job = CreateJob(snapshot);
 
-            var job = CreateJob();
+            await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null);
 
-            await job.Run("tenant-1", "arch-1", path, "tok", ArchiveImportMode.InsertOnly, null);
-
-            await _client.Received(1).ImportArchiveRowsAsync("tenant-1", "arch-1", Arg.Any<Stream>(),
-                ArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
+            await _repository.Received(1).ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                EngineArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
             await _backupFileStorage.Received(1).DeleteFileAsync(path);
         }
         finally
@@ -94,21 +110,25 @@ public class ImportArchiveDataJobTests
     [Test]
     public async Task Run_SchemaMismatch_FailsWithFieldLevelMessageAndDeletesFile()
     {
-        // Export schema has a column the target lacks.
-        var sourceSchema = new ArchiveSchemaDto("id", "voltage-raw", "raw", "Sensor",
-            new[] { new ArchiveColumnDto("voltage", true, false), new ArchiveColumnDto("phase", false, false) },
-            null, null);
+        var snapshot = Snapshot();
+        // Export schema declares a column the target lacks (same CK type, so the column diff surfaces).
+        var sourceSchema = ArchiveSchemaMapper.ToDto(snapshot) with
+        {
+            Columns = new[]
+            {
+                new ArchiveColumnDto("voltage", true, false),
+                new ArchiveColumnDto("phase", false, false)
+            }
+        };
         var path = WriteZip(Metadata(sourceSchema), "{}\n");
         try
         {
-            _client.GetArchiveSchemaAsync("tenant-1", "arch-1", Arg.Any<CancellationToken>()).Returns(Schema());
-
-            var job = CreateJob();
+            var job = CreateJob(snapshot);
 
             JobFailedException? captured = null;
             try
             {
-                await job.Run("tenant-1", "arch-1", path, "tok", ArchiveImportMode.InsertOnly, null);
+                await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null);
             }
             catch (JobFailedException e)
             {
@@ -117,8 +137,9 @@ public class ImportArchiveDataJobTests
 
             await Assert.That(captured).IsNotNull();
             await Assert.That(captured!.Message).Contains("phase");
-            await _client.DidNotReceive().ImportArchiveRowsAsync(Arg.Any<string>(), Arg.Any<string>(),
-                Arg.Any<Stream>(), Arg.Any<ArchiveImportMode>(), Arg.Any<CancellationToken>());
+            await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());
             await _backupFileStorage.Received(1).DeleteFileAsync(path);
         }
         finally
@@ -130,15 +151,14 @@ public class ImportArchiveDataJobTests
     [Test]
     public async Task Run_UnsupportedFormatVersion_Fails()
     {
-        var path = WriteZip(Metadata(Schema(), formatVersion: 99), "{}\n");
+        var snapshot = Snapshot();
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot), formatVersion: 99), "{}\n");
         try
         {
-            _client.GetArchiveSchemaAsync("tenant-1", "arch-1", Arg.Any<CancellationToken>()).Returns(Schema());
-
-            var job = CreateJob();
+            var job = CreateJob(snapshot);
 
             await Assert.That(async () =>
-                    await job.Run("tenant-1", "arch-1", path, "tok", ArchiveImportMode.InsertOnly, null))
+                    await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null))
                 .Throws<JobFailedException>();
         }
         finally
@@ -150,33 +170,51 @@ public class ImportArchiveDataJobTests
     [Test]
     public async Task Run_MissingFile_Fails()
     {
-        var job = CreateJob();
+        var job = CreateJob(Snapshot());
 
         await Assert.That(async () =>
-                await job.Run("tenant-1", "arch-1", "/nonexistent/file.zip", "tok", ArchiveImportMode.InsertOnly, null))
+                await job.Run("tenant-1", ArchiveRtId, "/nonexistent/file.zip", ArchiveImportMode.InsertOnly, null))
             .Throws<JobFailedException>();
 
         await _backupFileStorage.Received(1).DeleteFileAsync("/nonexistent/file.zip");
     }
 
     [Test]
+    public async Task Run_ArchiveNotFound_Fails()
+    {
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(Snapshot())), "{}\n");
+        try
+        {
+            var job = CreateJob(snapshot: null);
+
+            await Assert.That(async () =>
+                    await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null))
+                .Throws<JobFailedException>();
+            await _backupFileStorage.Received(1).DeleteFileAsync(path);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Test]
     public async Task Run_RollupImport_FreezesImportedWindow()
     {
-        var rollups = new[] { new ArchiveRollupAggregationDto("voltage", "avg", "voltage_avg") };
+        var rollups = new[] { new CkRollupAggregationSpec("voltage", CkRollupFunction.Avg, "voltage_avg") };
+        var snapshot = Snapshot(rollups);
         var window = new ArchiveExportWindow(
             new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc),
             new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc));
-        var path = WriteZip(Metadata(Schema("rollup", rollups), window), "{}\n");
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot), window), "{}\n");
         try
         {
-            _client.GetArchiveSchemaAsync("tenant-1", "arch-1", Arg.Any<CancellationToken>())
-                .Returns(Schema("rollup", rollups));
+            var job = CreateJob(snapshot);
 
-            var job = CreateJob();
+            await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.Upsert, null);
 
-            await job.Run("tenant-1", "arch-1", path, "tok", ArchiveImportMode.Upsert, null);
-
-            await _client.Received(1).FreezeRollupArchiveAsync("tenant-1", "arch-1", window.ToUtc);
+            await _rollupLifecycle.Received(1).FreezeAsync(
+                Arg.Is<OctoObjectId>(id => id.ToString() == ArchiveRtId), window.ToUtc);
         }
         finally
         {
@@ -187,17 +225,15 @@ public class ImportArchiveDataJobTests
     [Test]
     public async Task Run_RawImport_DoesNotFreeze()
     {
-        var path = WriteZip(Metadata(Schema()), "{}\n");
+        var snapshot = Snapshot();
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot)), "{}\n");
         try
         {
-            _client.GetArchiveSchemaAsync("tenant-1", "arch-1", Arg.Any<CancellationToken>()).Returns(Schema());
+            var job = CreateJob(snapshot);
 
-            var job = CreateJob();
+            await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null);
 
-            await job.Run("tenant-1", "arch-1", path, "tok", ArchiveImportMode.InsertOnly, null);
-
-            await _client.DidNotReceive().FreezeRollupArchiveAsync(Arg.Any<string>(), Arg.Any<string>(),
-                Arg.Any<DateTime>());
+            await _rollupLifecycle.DidNotReceive().FreezeAsync(Arg.Any<OctoObjectId>(), Arg.Any<DateTime>());
         }
         finally
         {

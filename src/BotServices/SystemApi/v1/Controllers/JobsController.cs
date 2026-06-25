@@ -198,10 +198,8 @@ public class JobsController : ControllerBase
     {
         try
         {
-            var accessToken = GetBearerToken();
-
             var id = _backgroundJobClient.Enqueue<IExportArchiveDataJob>(job =>
-                job.Run(tenantId, archiveRtId, accessToken, fromUtc, toUtc, BotCancellationToken.Null));
+                job.Run(tenantId, archiveRtId, fromUtc, toUtc, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -249,10 +247,8 @@ public class JobsController : ControllerBase
                     $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."));
             }
 
-            var accessToken = GetBearerToken();
-
             var id = _backgroundJobClient.Enqueue<IImportArchiveDataJob>(job =>
-                job.Run(tenantId, archiveRtId, filePath, accessToken, mode, BotCancellationToken.Null));
+                job.Run(tenantId, archiveRtId, filePath, mode, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -366,26 +362,6 @@ public class JobsController : ControllerBase
         {
             return BadRequest(new InternalServerErrorDto(e.Message));
         }
-    }
-
-    /// <summary>
-    ///     Extracts the raw bearer access token from the inbound <c>Authorization</c> header so it can
-    ///     be forwarded to the archive data jobs (which call the asset-repo StreamData endpoints on the
-    ///     operator's behalf). The request is already authenticated by the JWT bearer scheme.
-    /// </summary>
-    private string GetBearerToken()
-    {
-        var authHeader = Request.Headers.Authorization.ToString();
-        const string bearerPrefix = "Bearer ";
-
-        if (string.IsNullOrWhiteSpace(authHeader) ||
-            !authHeader.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                "No bearer token present on the request. Archive data jobs require the operator's token to call the asset-repo.");
-        }
-
-        return authHeader[bearerPrefix.Length..].Trim();
     }
 
     private JobDto CreateJobDto(string id, JobDetailsDto jobDetails)

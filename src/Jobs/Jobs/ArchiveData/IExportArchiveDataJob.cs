@@ -16,7 +16,6 @@ public interface IExportArchiveDataJob
     /// </summary>
     /// <param name="tenantId">The tenant that owns the archive.</param>
     /// <param name="archiveRtId">Runtime id of the <c>CkArchive</c> entity.</param>
-    /// <param name="accessToken">The operator's bearer token, forwarded so the bot can call asset-repo.</param>
     /// <param name="fromUtc">Inclusive lower bound of the export window (UTC); null for whole archive.</param>
     /// <param name="toUtc">Exclusive upper bound of the export window (UTC); null for whole archive.</param>
     /// <param name="cancellationToken">A cancellation token to abort the job.</param>
@@ -24,6 +23,6 @@ public interface IExportArchiveDataJob
     [DisplayName("Export archive data '{1}' of tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)]
-    Task<string?> Run(string tenantId, string archiveRtId, string accessToken, DateTime? fromUtc, DateTime? toUtc,
+    Task<string?> Run(string tenantId, string archiveRtId, DateTime? fromUtc, DateTime? toUtc,
         IBotCancellationToken? cancellationToken);
 }
