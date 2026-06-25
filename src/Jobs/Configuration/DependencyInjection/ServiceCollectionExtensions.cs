@@ -20,14 +20,12 @@ public static class ServiceCollectionExtensions
     /// <param name="tusStoragePath">The storage path for tus uploads.</param>
     /// <param name="dumpStoragePath">The storage path for database dumps.</param>
     /// <param name="fileRetentionHours">The number of hours to retain temporary files.</param>
-    /// <param name="assetServiceUrl">Base URL of the Asset Repository service (StreamData endpoints for AB#4230 archive data jobs).</param>
     /// <returns></returns>
     public static IServiceCollection AddOctoJobs(
         this IServiceCollection services,
         string tusStoragePath = "/data/tus-uploads",
         string dumpStoragePath = "/data/dumps",
-        int fileRetentionHours = 4,
-        string? assetServiceUrl = null)
+        int fileRetentionHours = 4)
     {
         services.AddTransient<IExportRtModelByQueryCommand, ExportRtModelByQueryByQueryCommand>();
         services.AddTransient<IExportRtModelByDeepGraphCommand, ExportRtModelByDeepGraphCommand>();
@@ -47,9 +45,10 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IRestoreRepositoryJob, RestoreRepositoryJob>();
         services.AddTransient<IDumpRepositoryJob, DumpRepositoryJob>();
 
-        // Archive data export/import (AB#4230). The factory builds a per-job StreamData client
-        // against the asset-repo endpoint, authenticated with the operator's forwarded bearer token.
-        services.AddSingleton<IArchiveDataClientFactory>(_ => new ArchiveDataClientFactory(assetServiceUrl ?? string.Empty));
+        // Archive data export/import (AB#4230). The jobs access the tenant's CrateDB-backed
+        // stream-data repository directly through ISystemContext (registered by the runtime engine /
+        // CrateDb wiring in Program.cs), exactly like Dump/RestoreRepositoryJob access MongoDB
+        // directly — no asset-repo HTTP hop, no forwarded operator token.
         services.AddTransient<IExportArchiveDataJob, ExportArchiveDataJob>();
         services.AddTransient<IImportArchiveDataJob, ImportArchiveDataJob>();
         services.AddTransient<ICleanupStaleFilesJob>(sp =>

@@ -31,6 +31,9 @@
         <PackageReference Include="Meshmakers.Octo.Services.Notifications" Version="$(OctoCoreLibVersion)" />
         <PackageReference Include="Meshmakers.Octo.Services.Infrastructure" Version="$(OctoCoreLibVersion)" />
         <PackageReference Include="Meshmakers.Octo.Services.Observability" Version="$(OctoCoreLibVersion)" />
+        <!-- AB#4230: direct CrateDB stream-data access for the archive data export/import jobs. -->
+        <PackageReference Include="Meshmakers.Octo.Runtime.Engine.CrateDb" Version="$(OctoCoreLibVersion)" />
+        <PackageReference Include="Meshmakers.Octo.ConstructionKit.Models.StreamData" Version="$(OctoCoreLibVersion)" />
         <ProjectReference Include="..\BotServices.Resources\BotServices.Resources.csproj" />
         <ProjectReference Include="..\Jobs\Jobs.csproj" />
     </ItemGroup>

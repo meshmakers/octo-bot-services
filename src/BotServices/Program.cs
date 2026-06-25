@@ -98,7 +98,19 @@ try
         });
 
     builder.Services.AddRuntimeEngine()
-        .AddMongoDbRuntimeRepository();
+        .AddMongoDbRuntimeRepository()
+        // AB#4230: the archive data export/import jobs access the tenant's CrateDB stream-data
+        // store directly (like Dump/RestoreRepositoryJob access MongoDB directly) instead of calling
+        // the asset-repo over HTTP. BotConfigureStreamDataConfiguration supplies the CrateDB
+        // connection from Bot:StreamData* options.
+        .AddCrateDbStreamDataRepository<BotConfigureStreamDataConfiguration>();
+
+    // Register the StreamData CK model descriptor so the archive CK types (CkArchive /
+    // CkRollupArchive) resolve when the jobs read an ArchiveSnapshot from the runtime store.
+    // Same registration as asset-repo Program.cs.
+    builder.Services.AddSingleton<Meshmakers.Octo.Runtime.Contracts.MongoDb.Services.IStreamDataCkModelDescriptor>(
+        _ => new Meshmakers.Octo.Runtime.Contracts.MongoDb.Services.StreamDataCkModelDescriptor(
+            Meshmakers.Octo.ConstructionKit.Models.StreamData.Generated.System.StreamData.v1.SystemStreamDataCkIds.CkModelId));
 
     // OctoBotServicesOptions are bound later; read them directly for AddOctoJobs parameters
     var botOptions = new OctoBotServicesOptions();
@@ -107,8 +119,7 @@ try
     builder.Services.AddOctoJobs(
         tusStoragePath: botOptions.TusStoragePath,
         dumpStoragePath: botOptions.DumpStoragePath,
-        fileRetentionHours: botOptions.FileRetentionHours,
-        assetServiceUrl: botOptions.AssetServiceUrl);
+        fileRetentionHours: botOptions.FileRetentionHours);
     builder.Services.AddOctoNotification();
     builder.Services.AddCkModelSystemBotV3();
 
