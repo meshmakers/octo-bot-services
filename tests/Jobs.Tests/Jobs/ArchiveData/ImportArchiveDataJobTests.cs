@@ -40,12 +40,13 @@ public class ImportArchiveDataJobTests
 
     private static ArchiveSnapshot Snapshot(
         IReadOnlyList<CkRollupAggregationSpec>? rollups = null,
-        IReadOnlyList<CkArchiveColumnSpec>? columns = null)
+        IReadOnlyList<CkArchiveColumnSpec>? columns = null,
+        CkArchiveStatus status = CkArchiveStatus.Disabled)
     {
         return new ArchiveSnapshot(
             new OctoObjectId(ArchiveRtId),
             new RtCkId<CkTypeId>("System-1.0.0/Sensor"),
-            CkArchiveStatus.Activated,
+            status,
             "voltage-raw",
             columns ?? new[] { new CkArchiveColumnSpec("voltage", true, false) })
         {
@@ -137,6 +138,40 @@ public class ImportArchiveDataJobTests
 
             await Assert.That(captured).IsNotNull();
             await Assert.That(captured!.Message).Contains("phase");
+            await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());
+            await _backupFileStorage.Received(1).DeleteFileAsync(path);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task Run_ArchiveNotDisabled_FailsWithoutImportingAndDeletesFile()
+    {
+        // §7.1: import must be rejected unless the target archive is Disabled.
+        var snapshot = Snapshot(status: CkArchiveStatus.Activated);
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot)), "{\"rtid\":\"61a\"}\n");
+        try
+        {
+            var job = CreateJob(snapshot);
+
+            JobFailedException? captured = null;
+            try
+            {
+                await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null);
+            }
+            catch (JobFailedException e)
+            {
+                captured = e;
+            }
+
+            await Assert.That(captured).IsNotNull();
+            await Assert.That(captured!.Message).Contains("must be Disabled");
+            await Assert.That(captured!.Message).Contains("Activated");
             await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
                 Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
                 Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());

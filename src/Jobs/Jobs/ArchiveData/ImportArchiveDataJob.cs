@@ -110,14 +110,21 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
                 throw new JobFailedException(mismatch);
             }
 
-            // 3. §7 guard: surface the disabled-archive precondition. The Studio orchestrates the
-            //    disable -> import -> re-enable flow. We do NOT auto-disable (that would be an
-            //    unrequested, potentially state-corrupting side effect), but we log the precondition
-            //    loudly so a misuse is traceable.
+            // 3. §7.1 guard (enforced): the target archive MUST be Disabled during import so no live
+            //    inserts/queries (or, for rollups, orchestrator re-aggregation) race the bulk load. The
+            //    CrateDB table is preserved while Disabled. We fail fast rather than auto-disabling —
+            //    auto-disabling would be an unrequested, potentially state-corrupting side effect; the
+            //    Studio orchestrates the disable -> import -> re-enable flow.
+            if (snapshot.Status != Meshmakers.Octo.Runtime.Contracts.StreamData.CkArchiveStatus.Disabled)
+            {
+                throw new JobFailedException(
+                    $"Archive '{snapshot.RtWellKnownName ?? archiveRtId}' must be Disabled before importing data " +
+                    $"(it is currently {snapshot.Status}). Disable the archive, import the data, then re-enable it.");
+            }
+
             var isRollup = snapshot.RollupAggregations is not null;
             _logger.LogInformation(
-                "Importing archive data into '{ArchiveRtId}' (kind '{Kind}', mode '{Mode}'). " +
-                "Precondition: the target archive must be Disabled during import (concept §7.1).",
+                "Importing archive data into '{ArchiveRtId}' (kind '{Kind}', mode '{Mode}').",
                 archiveRtId, targetSchema.Kind, mode);
 
             // 4. Stream data.ndjson directly into the stream-data repository.
