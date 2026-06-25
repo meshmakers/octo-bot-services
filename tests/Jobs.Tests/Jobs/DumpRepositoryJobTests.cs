@@ -25,7 +25,7 @@ public class DumpRepositoryJobTests
         _systemContext.IsSystemTenantExistingAsync().Returns(false);
         var job = CreateJob();
 
-        var result = await job.Run("tenant-1", null);
+        var result = await job.Run("tenant-1", false, null);
 
         await Assert.That(result).IsNull();
     }
@@ -37,7 +37,7 @@ public class DumpRepositoryJobTests
         _systemContext.FindTenantContextAsync("tenant-1").Returns((ITenantContext)null!);
         var job = CreateJob();
 
-        await Assert.That(async () => await job.Run("tenant-1", null))
+        await Assert.That(async () => await job.Run("tenant-1", false, null))
             .Throws<RepositoryUpdateException>();
     }
 
@@ -63,7 +63,7 @@ public class DumpRepositoryJobTests
 
             var job = CreateJob();
 
-            var result = await job.Run("tenant-1", null);
+            var result = await job.Run("tenant-1", false, null);
 
             await Assert.That(result).IsEqualTo(expectedPath);
         }
@@ -94,7 +94,7 @@ public class DumpRepositoryJobTests
 
             var job = CreateJob();
 
-            await Assert.That(async () => await job.Run("tenant-1", null))
+            await Assert.That(async () => await job.Run("tenant-1", false, null))
                 .Throws<JobFailedException>();
         }
         finally
@@ -124,7 +124,7 @@ public class DumpRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", null);
+            await job.Run("tenant-1", false, null);
 
             _backupFileStorage.Received(1).GenerateDumpFileName("tenant-1");
             _backupFileStorage.Received(1).GetDumpFilePath("tenant-1", "dump.tar.gz");
@@ -156,7 +156,7 @@ public class DumpRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", null);
+            await job.Run("tenant-1", false, null);
 
             await _systemContext.Received(1).BackupTenantAsync("tenant-1", dumpPath,
                 Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>());

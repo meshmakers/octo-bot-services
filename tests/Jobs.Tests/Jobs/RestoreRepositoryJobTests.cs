@@ -25,7 +25,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>()).Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "abc123", null, null);
+        await job.Run("tenant-1", "db-1", "abc123", null, false, null);
 
         await _systemContext.DidNotReceive().RestoreTenantAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
@@ -40,7 +40,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath("abc123").Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "abc123", null, null);
+        await job.Run("tenant-1", "db-1", "abc123", null, false, null);
 
         await _backupFileStorage.Received(1).DeleteFileAsync("/data/tus-uploads/abc123");
     }
@@ -52,7 +52,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath("abc123").Returns("/nonexistent/abc123");
         var job = CreateJob();
 
-        await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, null))
+        await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null))
             .Throws<JobFailedException>();
     }
 
@@ -65,7 +65,7 @@ public class RestoreRepositoryJobTests
 
         try
         {
-            await job.Run("tenant-1", "db-1", "abc123", null, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, null);
         }
         catch (JobFailedException)
         {
@@ -94,7 +94,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", null, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, null);
 
             await _backupFileStorage.Received(1).DeleteFileAsync(tempFile);
         }
@@ -123,7 +123,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", "old-db", null);
+            await job.Run("tenant-1", "db-1", "abc123", "old-db", false, null);
 
             await _systemContext.Received(1).RestoreTenantAsync(
                 "tenant-1", "db-1", tempFile, "old-db",
@@ -154,7 +154,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, null))
+            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null))
                 .Throws<JobFailedException>();
         }
         finally
@@ -170,7 +170,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>()).Returns("/data/tus-uploads/myFileId");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "myFileId", null, null);
+        await job.Run("tenant-1", "db-1", "myFileId", null, false, null);
 
         _backupFileStorage.Received(1).GetTusUploadFilePath("myFileId");
     }
