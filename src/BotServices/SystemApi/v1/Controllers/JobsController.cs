@@ -108,6 +108,7 @@ public class JobsController : ControllerBase
     /// <param name="tenantId">The tenant id.</param>
     /// <param name="databaseName">The name of the database to restore.</param>
     /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
+    /// <param name="restoreArchiveData">When <c>true</c> and the uploaded artifact is an <c>.octobak.zip</c> carrying archive data, the tenant's CrateDB archives are also restored (concept AB#4231). Default <c>false</c> (Mongo only).</param>
     /// <returns></returns>
     [HttpPost]
     [Route("restore-from-upload")]
@@ -119,7 +120,8 @@ public class JobsController : ControllerBase
         [Required] string tusFileId,
         [Required] string tenantId,
         [Required] string databaseName,
-        string? oldDatabaseName = null)
+        string? oldDatabaseName = null,
+        [FromQuery] bool restoreArchiveData = false)
     {
         try
         {
@@ -139,7 +141,8 @@ public class JobsController : ControllerBase
             }
 
             var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, BotCancellationToken.Null));
+                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+                    BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
@@ -153,18 +156,23 @@ public class JobsController : ControllerBase
     /// Dumps the repository for the given tenant
     /// </summary>
     /// <param name="tenantId">The tenant id</param>
+    /// <param name="includeArchiveData">
+    /// When <c>true</c>, the tenant's CrateDB archive rows are bundled with the mongodump blob into an
+    /// <c>.octobak.zip</c> container (concept AB#4231). When <c>false</c> (default), a single mongodump
+    /// <c>.tar.gz</c> is produced exactly as before.
+    /// </param>
     /// <returns></returns>
     [HttpPost]
     [Route("dump-repository")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public IActionResult DumpRepository(string tenantId)
+    public IActionResult DumpRepository(string tenantId, [FromQuery] bool includeArchiveData = false)
     {
         try
         {
             var id = _backgroundJobClient.Enqueue<IDumpRepositoryJob>(job =>
-                job.Run(tenantId, BotCancellationToken.Null));
+                job.Run(tenantId, includeArchiveData, BotCancellationToken.Null));
 
             return Ok(new JobResponseDto(id));
         }
