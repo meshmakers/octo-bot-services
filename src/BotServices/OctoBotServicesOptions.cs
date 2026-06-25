@@ -94,4 +94,10 @@ public class OctoBotServicesOptions
     /// Gets or sets the number of hours to retain temporary files before cleanup (default: 4).
     /// </summary>
     public int FileRetentionHours { get; set; } = 4;
+
+    /// <summary>
+    /// Gets or sets the base URL of the Asset Repository service. The archive data export/import
+    /// jobs (AB#4230) call the StreamData REST endpoints hosted on this service.
+    /// </summary>
+    public string? AssetServiceUrl { get; set; }
 }
