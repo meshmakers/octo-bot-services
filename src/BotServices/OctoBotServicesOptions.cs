@@ -96,8 +96,19 @@ public class OctoBotServicesOptions
     public int FileRetentionHours { get; set; } = 4;
 
     /// <summary>
-    /// Gets or sets the base URL of the Asset Repository service. The archive data export/import
-    /// jobs (AB#4230) call the StreamData REST endpoints hosted on this service.
+    /// Hostname of the CrateDB server backing the tenant stream-data archives. The archive data
+    /// export/import jobs (AB#4230) access CrateDB directly through the runtime engine instead of
+    /// calling the asset-repo over HTTP.
     /// </summary>
-    public string? AssetServiceUrl { get; set; }
+    public string StreamDataHost { get; set; } = "127.0.0.1";
+
+    /// <summary>
+    /// User for the CrateDB connection used by the archive data export/import jobs.
+    /// </summary>
+    public string StreamDataUser { get; set; } = "crate";
+
+    /// <summary>
+    /// Password for the CrateDB connection used by the archive data export/import jobs.
+    /// </summary>
+    public string? StreamDataPassword { get; set; }
 }
