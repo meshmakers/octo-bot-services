@@ -5,6 +5,7 @@ using Hangfire.Storage.Monitoring;
 using IdentityModel;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
@@ -174,6 +175,94 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
+    /// Exports the data rows of an archive to a downloadable ZIP (AB#4230). The produced ZIP is
+    /// registered as the job's downloadable result and retrieved via the existing
+    /// <c>jobs/download</c> endpoint. When both <paramref name="fromUtc"/> and <paramref name="toUtc"/>
+    /// are omitted the whole archive is exported; when supplied, only rows in the half-open window
+    /// <c>[fromUtc, toUtc)</c> are exported.
+    /// </summary>
+    /// <param name="tenantId">The tenant that owns the archive.</param>
+    /// <param name="archiveRtId">Runtime id of the <c>CkArchive</c> entity.</param>
+    /// <param name="fromUtc">Optional inclusive lower bound of the export window (ISO-8601 UTC).</param>
+    /// <param name="toUtc">Optional exclusive upper bound of the export window (ISO-8601 UTC).</param>
+    [HttpPost]
+    [Route("export-archive-data")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public IActionResult ExportArchiveData(
+        [Required] string tenantId,
+        [Required] string archiveRtId,
+        DateTime? fromUtc = null,
+        DateTime? toUtc = null)
+    {
+        try
+        {
+            var accessToken = GetBearerToken();
+
+            var id = _backgroundJobClient.Enqueue<IExportArchiveDataJob>(job =>
+                job.Run(tenantId, archiveRtId, accessToken, fromUtc, toUtc, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+    }
+
+    /// <summary>
+    /// Imports archive data rows into the given archive from a tus resumable upload (AB#4230). The
+    /// export ZIP must have been uploaded via the tus endpoint at <c>/system/v1/tus-upload</c> first.
+    /// Schema-match validation runs inside the job; on mismatch the job ends Failed with a
+    /// field-level reason surfaced through <c>jobs/{id}</c>.
+    /// </summary>
+    /// <param name="tusFileId">The tus file ID from the completed upload.</param>
+    /// <param name="tenantId">The tenant that owns the target archive.</param>
+    /// <param name="archiveRtId">Runtime id of the target <c>CkArchive</c> entity.</param>
+    /// <param name="mode">Import mode (<c>InsertOnly</c>/<c>Upsert</c>; binds from <c>0</c>/<c>1</c> or the name).</param>
+    [HttpPost]
+    [Route("import-archive-data-from-upload")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult ImportArchiveDataFromUpload(
+        [Required] string tusFileId,
+        [Required] string tenantId,
+        [Required] string archiveRtId,
+        [FromQuery] ArchiveImportMode mode = ArchiveImportMode.InsertOnly)
+    {
+        try
+        {
+            var filePath = _backupFileStorage.GetTusUploadFilePath(tusFileId);
+            if (!System.IO.File.Exists(filePath))
+            {
+                return NotFound(new NotFoundErrorDto(
+                    $"Upload file not found for tus file ID '{tusFileId}'. Ensure the upload completed successfully."));
+            }
+
+            var fileInfo = new FileInfo(filePath);
+            if (fileInfo.Length == 0)
+            {
+                return BadRequest(new InternalServerErrorDto(
+                    $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."));
+            }
+
+            var accessToken = GetBearerToken();
+
+            var id = _backgroundJobClient.Enqueue<IImportArchiveDataJob>(job =>
+                job.Run(tenantId, archiveRtId, filePath, accessToken, mode, BotCancellationToken.Null));
+
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+    }
+
+    /// <summary>
     ///     Downloads the job result as binary file
     /// </summary>
     /// <param name="tenantId">Corresponding tenant id, null if system tenant is used.</param>
@@ -277,6 +366,26 @@ public class JobsController : ControllerBase
         {
             return BadRequest(new InternalServerErrorDto(e.Message));
         }
+    }
+
+    /// <summary>
+    ///     Extracts the raw bearer access token from the inbound <c>Authorization</c> header so it can
+    ///     be forwarded to the archive data jobs (which call the asset-repo StreamData endpoints on the
+    ///     operator's behalf). The request is already authenticated by the JWT bearer scheme.
+    /// </summary>
+    private string GetBearerToken()
+    {
+        var authHeader = Request.Headers.Authorization.ToString();
+        const string bearerPrefix = "Bearer ";
+
+        if (string.IsNullOrWhiteSpace(authHeader) ||
+            !authHeader.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "No bearer token present on the request. Archive data jobs require the operator's token to call the asset-repo.");
+        }
+
+        return authHeader[bearerPrefix.Length..].Trim();
     }
 
     private JobDto CreateJobDto(string id, JobDetailsDto jobDetails)

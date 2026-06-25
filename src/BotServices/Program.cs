@@ -107,7 +107,8 @@ try
     builder.Services.AddOctoJobs(
         tusStoragePath: botOptions.TusStoragePath,
         dumpStoragePath: botOptions.DumpStoragePath,
-        fileRetentionHours: botOptions.FileRetentionHours);
+        fileRetentionHours: botOptions.FileRetentionHours,
+        assetServiceUrl: botOptions.AssetServiceUrl);
     builder.Services.AddOctoNotification();
     builder.Services.AddCkModelSystemBotV3();
 
@@ -351,11 +352,18 @@ try
             },
             OnBeforeCreateAsync = async ctx =>
             {
-                // Validate required metadata
+                // Validate required metadata. The same TUS endpoint serves two upload flows:
+                //   - tenant restore       → requires 'databaseName'
+                //   - archive data import  → requires 'archiveRtId' (AB#4230)
+                // Both require 'tenantId'.
                 var metadata = ctx.Metadata;
-                if (!metadata.ContainsKey("tenantId") || !metadata.ContainsKey("databaseName"))
+                if (!metadata.ContainsKey("tenantId"))
                 {
-                    ctx.FailRequest("Metadata must include 'tenantId' and 'databaseName'");
+                    ctx.FailRequest("Metadata must include 'tenantId'");
+                }
+                else if (!metadata.ContainsKey("databaseName") && !metadata.ContainsKey("archiveRtId"))
+                {
+                    ctx.FailRequest("Metadata must include either 'databaseName' (restore) or 'archiveRtId' (archive data import)");
                 }
             }
         }
