@@ -17,7 +17,7 @@ public class OctoBotServicesOptions
         PrepareJobSchemaIfNecessary = true;
         AuthorityUrl = "https://localhost:5003";
         PublicUrl = "https://localhost:5009";
-        PublicAdminPanelUrl = "https://localhost:5005";
+        PublicRefineryStudioUrl = "https://localhost:4200";
 #if DEBUGL || DEBUG
         MinLogLevel = LogLevelDto.Trace;
 #else
@@ -66,9 +66,10 @@ public class OctoBotServicesOptions
     public string PublicUrl { get; set; }
 
     /// <summary>
-    ///     (public) base address of the dashboard
+    ///     (public) base address of the Data Refinery Studio — used as the Hangfire dashboard's
+    ///     "Back to site" link (the legacy admin-panel host it pointed at was retired in Phase 4).
     /// </summary>
-    public string PublicAdminPanelUrl { get; set; }
+    public string PublicRefineryStudioUrl { get; set; }
     
     /// <summary>
     /// Gets or sets the minimal log level to be logged

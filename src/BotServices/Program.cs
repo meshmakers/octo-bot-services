@@ -393,7 +393,7 @@ try
 
         branchedApp.UseHangfireDashboard("/jobs", new DashboardOptions
         {
-            AppPath = octoOptions.Value.PublicAdminPanelUrl,
+            AppPath = octoOptions.Value.PublicRefineryStudioUrl,
             Authorization = [new HangfireDashboardAuthorizationFilter()]
         });
     });
