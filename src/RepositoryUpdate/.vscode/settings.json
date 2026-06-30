@@ -2,7 +2,7 @@
   "files.associations": {
     "*.js": "javascript"
   },
-  "mongodb.connectionString": "mongodb://octo-system-admin:REDACTED-LOCAL-DEV-PASSWORD@localhost:27017/sbeg",
+  "mongodb.connectionString": "mongodb://octo-system-admin:<password>@localhost:27017/sbeg",
   "javascript.suggest.includeAutomaticOptionalChainCompletions": true,
   "typescript.suggest.includeAutomaticOptionalChainCompletions": true,
   "javascript.preferences.includePackageJsonAutoImports": "auto"
