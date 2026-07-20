@@ -119,12 +119,15 @@ stages:
                 **/*Tests.csproj
                 !**/*SystemTests.csproj
               testRunTitle: 'CI'
+          # Multi-arch image (AB#4451): arm64 for Apple-Silicon kind clusters and
+          # edge devices, amd64 for the managed clusters.
           - template: templates/steps/build-and-push-docker.yml@pipelineTemplates
             parameters:
               publicRegistryServiceConnection: $(DockerRegistryPublicConnection)
               privateRegistryName: $(DockerRegistryPrivateUri)
               repository: meshmakers/octo-mesh-bot-services
               dockerfile: src/BotServices/Dockerfile
+              platforms: 'linux/arm64,linux/amd64'
               enableMainLatestTag: true
           - template: templates/steps/handle-artifacts.yml@pipelineTemplates
             parameters:

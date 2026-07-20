@@ -3,7 +3,9 @@ WORKDIR /app
 EXPOSE 80
 EXPOSE 443
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
+# Build on the native build platform (IL is portable) so multi-arch builds don't
+# emulate the SDK; the runtime arch is selected by the `base`/`final` stages.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 
 ARG OCTO_PRIVATE_NUGET_SERVICE
 ARG OCTO_PRIVATE_NUGET_CERTIFICATE
