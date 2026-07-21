@@ -29,5 +29,10 @@
         <ProjectReference Include="..\RepositoryUpdate\RepositoryUpdate.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+        <InternalsVisibleTo Include="Meshmakers.Octo.Backend.Jobs.Tests" />
+        <!-- Required so NSubstitute (Castle DynamicProxy) can mock ILogger<T> closed over internal types -->
+        <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+    </ItemGroup>
 
 </Project>

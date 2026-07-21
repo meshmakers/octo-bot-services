@@ -1,6 +1,8 @@
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
+using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
 using Meshmakers.Octo.Runtime.Contracts.TransportContainer;
@@ -98,7 +100,7 @@ internal class ExportRtModelByDeepGraphCommand(
 
             // Automatically determine required CK model dependencies from exported entities
             model.Dependencies.AddRange(
-                DetermineModelDependencies(tenantId, model.Entities));
+                await DetermineModelDependenciesAsync(tenantId, tenantRepository, session, model.Entities));
 
             await using var streamWriter = new StreamWriter(filePath);
             await rtSerializer.SerializeAsync(streamWriter, model);
@@ -112,8 +114,8 @@ internal class ExportRtModelByDeepGraphCommand(
         }
     }
 
-    private List<CkModelIdVersionRange> DetermineModelDependencies(string tenantId,
-        IEnumerable<RtEntityTcDto> entities)
+    internal async Task<List<CkModelIdVersionRange>> DetermineModelDependenciesAsync(string tenantId,
+        ITenantRepository tenantRepository, IOctoSession session, IEnumerable<RtEntityTcDto> entities)
     {
         var requiredModelIds = new HashSet<CkModelId>();
         foreach (var entity in entities)
@@ -122,13 +124,14 @@ internal class ExportRtModelByDeepGraphCommand(
             requiredModelIds.Add(ckTypeGraph.CkTypeId.ModelId);
         }
 
-        // Follow transitive dependencies
-        var allRequired = new HashSet<CkModelId>();
-        var loadedModelIds = ckCacheService.GetCkModelIds(tenantId);
-        var dependencyLookup = loadedModelIds
-            .ToDictionary(m => m, _ => (ICollection<CkModelId>)[]);
+        // Build a lookup of each installed model's direct dependencies
+        var installedModels =
+            await tenantRepository.GetCkModelsAsync(session, null, RtEntityQueryOptions.Create());
+        var dependencyLookup = installedModels.Items
+            .ToDictionary(m => m.Id, m => m.Dependencies ?? []);
 
-        // Build lookup from the cache - we get all model IDs and their dependencies
+        // Follow transitive dependencies (breadth-first, visited set terminates cycles)
+        var allRequired = new HashSet<CkModelId>();
         var queue = new Queue<CkModelId>(requiredModelIds);
         while (queue.Count > 0)
         {
@@ -136,6 +139,19 @@ internal class ExportRtModelByDeepGraphCommand(
             if (!allRequired.Add(modelId))
             {
                 continue;
+            }
+
+            if (!dependencyLookup.TryGetValue(modelId, out var directDependencies))
+            {
+                continue;
+            }
+
+            foreach (var dependency in directDependencies)
+            {
+                if (!allRequired.Contains(dependency))
+                {
+                    queue.Enqueue(dependency);
+                }
             }
         }
 

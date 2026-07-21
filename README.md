@@ -14,6 +14,8 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 - Attribute-value aggregation for autocomplete (`AttributeValueAggregatorJob`)
 - Hourly cleanup of stale backup/upload files (`CleanupStaleFilesJob`)
 
+Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
+
 ## Published packages
 
 The repository produces two NuGet packages (the service host project itself is `IsPackable=false` and ships as a container image):
