@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
@@ -26,7 +25,6 @@ public class RestoreRepositoryJob(
     IBackupFileStorageService backupFileStorage) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly JsonSerializerOptions NdjsonJsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <inheritdoc />
     public async Task Run(string tenantId, string databaseName, string cacheKey,
@@ -256,7 +254,8 @@ public class RestoreRepositoryJob(
             var counter = new RowCounter();
             await using (var dataStream = dataEntry.Open())
             {
-                await repository.ImportRowsAsync(objectId, ReadNdjsonRowsAsync(dataStream, counter, ct),
+                await repository.ImportRowsAsync(objectId,
+                    NdjsonRowReader.ReadRowsAsync(dataStream, () => counter.Count++, ct),
                     ArchiveImportMode.InsertOnly, ct);
             }
 
@@ -338,33 +337,6 @@ public class RestoreRepositoryJob(
         {
             // Not a ZIP (a legacy .tar.gz mongodump blob) — treat as legacy.
             return null;
-        }
-    }
-
-    /// <summary>
-    ///     Reads an NDJSON entry one line at a time, deserialising each non-blank line into a row
-    ///     dictionary and counting it. Streamed (never fully buffered) so multi-GB restores stay flat
-    ///     in memory.
-    /// </summary>
-    private static async IAsyncEnumerable<IReadOnlyDictionary<string, object?>> ReadNdjsonRowsAsync(
-        Stream body, RowCounter counter, [EnumeratorCancellation] CancellationToken ct)
-    {
-        using var reader = new StreamReader(body, Encoding.UTF8, detectEncodingFromByteOrderMarks: true,
-            bufferSize: 64 * 1024, leaveOpen: true);
-
-        while (await reader.ReadLineAsync(ct) is { } line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            var row = JsonSerializer.Deserialize<Dictionary<string, object?>>(line, NdjsonJsonOptions);
-            if (row is not null)
-            {
-                counter.Count++;
-                yield return row;
-            }
         }
     }
 

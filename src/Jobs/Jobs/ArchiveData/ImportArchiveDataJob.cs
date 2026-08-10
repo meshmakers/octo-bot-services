@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
@@ -26,7 +25,6 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
     private const int SupportedFormatVersion = 1;
 
     private static readonly JsonSerializerOptions MetadataJsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly JsonSerializerOptions NdjsonJsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ILogger<ImportArchiveDataJob> _logger;
     private readonly ISystemContext _systemContext;
@@ -139,7 +137,8 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
 
             await using (var dataStream = dataEntry.Open())
             {
-                await repository.ImportRowsAsync(archiveObjectId, ReadNdjsonRowsAsync(dataStream, ct), engineMode, ct);
+                await repository.ImportRowsAsync(archiveObjectId,
+                    NdjsonRowReader.ReadRowsAsync(dataStream, onRow: null, ct), engineMode, ct);
             }
 
             // 5. §7.2 — for rollups, freeze the imported window so the orchestrator does not
@@ -197,31 +196,6 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
         }
 
         return metadata;
-    }
-
-    /// <summary>
-    ///     Reads the NDJSON data entry one line at a time, deserialising each non-blank line into a row
-    ///     dictionary. Streamed (never fully buffered) so multi-GB imports stay flat in memory.
-    /// </summary>
-    private static async IAsyncEnumerable<IReadOnlyDictionary<string, object?>> ReadNdjsonRowsAsync(
-        Stream body, [EnumeratorCancellation] CancellationToken ct)
-    {
-        using var reader = new StreamReader(body, Encoding.UTF8, detectEncodingFromByteOrderMarks: true,
-            bufferSize: 64 * 1024, leaveOpen: true);
-
-        while (await reader.ReadLineAsync(ct) is { } line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            var row = JsonSerializer.Deserialize<Dictionary<string, object?>>(line, NdjsonJsonOptions);
-            if (row is not null)
-            {
-                yield return row;
-            }
-        }
     }
 
     private async Task FreezeImportedRollupWindowAsync(ITenantContext tenantContext, string tenantId,
