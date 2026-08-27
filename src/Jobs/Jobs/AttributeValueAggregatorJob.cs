@@ -75,8 +75,13 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
             var correlationId = Guid.NewGuid();
             try
             {
+                // CacheOnly (AB#4895): the aggregation only rewrites AutoCompleteValues on CK
+                // attributes — consumers must drop their cached CK model, but the communication
+                // controller must NOT relay a full adapter restart. The former Full-scope pair
+                // restarted every adapter's hub connection fleet-wide at 00:00 UTC, which was the
+                // trigger window for AB#4876.
                 await _distributionEventHubService.PublishAsync(new PreUpdateTenant(tenantId, correlationId,
-                    DateTime.Now));
+                    DateTime.Now, TenantUpdateScope.CacheOnly));
 
                 foreach (var configurationRtEntity in configurationResult.Items)
                 {
@@ -138,7 +143,7 @@ public class AttributeValueAggregatorJob : IAttributeValueAggregatorJob
             finally
             {
                 await _distributionEventHubService.PublishAsync(new PosUpdateTenant(tenantId, correlationId,
-                    DateTime.Now));
+                    DateTime.Now, TenantUpdateScope.CacheOnly));
             }
         }
         catch (Exception e)
