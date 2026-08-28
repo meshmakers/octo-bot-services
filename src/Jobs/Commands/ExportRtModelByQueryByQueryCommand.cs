@@ -1,4 +1,5 @@
 using Meshmakers.Common.Shared;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v2;
@@ -58,7 +59,8 @@ internal class ExportRtModelByQueryByQueryCommand(
                 foreach (var fieldFilterDto in fieldFilterDtoList)
                 {
                     queryOptions.FieldFilter(TransformAttributeName(fieldFilterDto.AttributePath),
-                        (FieldFilterOperator)fieldFilterDto.Operator, fieldFilterDto.ComparisonValue);
+                        FieldFilterOperatorDtoExtensions.FromCkModelEnum(fieldFilterDto.Operator),
+                        fieldFilterDto.ComparisonValue);
                 }
             }
 
