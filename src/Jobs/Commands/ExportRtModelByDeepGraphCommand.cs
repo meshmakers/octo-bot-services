@@ -36,9 +36,14 @@ internal class ExportRtModelByDeepGraphCommand(
             session.StartTransaction();
 
             var queryOptions = RtEntityQueryOptions.Create();
+            var followSpecs = rtByDeepGraphCommandRequest.FollowSpecs?
+                .Where(spec => !string.IsNullOrWhiteSpace(spec.RoleId))
+                .Select(spec => new RtDeepGraphFollowSpec(
+                    new RtCkId<CkAssociationRoleId>(spec.RoleId), spec.Direction))
+                .ToList();
             var resultSet = await tenantRepository.GetRtDeepGraphAsync(session,
                 rtByDeepGraphCommandRequest.OriginRtIds, rtByDeepGraphCommandRequest.OriginCkTypeId,
-                queryOptions);
+                queryOptions, followSpecs);
 
             CheckAndThrowCancellation(cancellationToken);
 
