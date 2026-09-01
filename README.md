@@ -16,6 +16,28 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
 
+### Tenant authorization for service tokens (AB#5032 / AB#5047)
+
+The request pipeline runs the shared `TenantAuthorizationMiddleware` from `octo-common-services`
+(`app.UseOctoTenantAuthorization()` in `Program.cs`, after `UseAuthorization()`): on every
+`{tenantId}/...` route it matches the route tenant against the caller's `tenant_id` claim. How
+**client-credentials** (service) tokens are treated is operator-settable, and `Program.cs` binds that
+setting with `builder.Services.AddOctoTenantAuthorization(builder.Configuration)` — configuration
+section `TenantAuthorization`, i.e. the environment variables
+
+| Variable | Values |
+| --- | --- |
+| `OCTO_TENANTAUTHORIZATION__SERVICETOKENENFORCEMENT` | `Disabled` \| `LogOnly` (default) \| `Enforce` |
+| `OCTO_TENANTAUTHORIZATION__CROSSTENANTSERVICECLIENTIDS__0`, `…__1`, … | client ids exempt from the tenant match (expected to stay empty) |
+
+`LogOnly` changes no request outcome but logs every service token that addresses a tenant it was not
+issued for; `Enforce` answers those with 403, including a service token carrying no `tenant_id` at
+all. The **`Add…` call is what makes the variables take effect** — `UseOctoTenantAuthorization()`
+alone runs on the built-in defaults and the environment is ignored (AB#5047). Every OctoMesh service
+hosting the middleware (Identity, Communication Controller, Asset-Repo, Bot, MCP) binds the same
+section through the same helper, so one fleet-wide value reaches all of them. Semantics and the
+`Enforce` rollout rules are documented in `octo-common-services/CLAUDE.md`.
+
 ## Published packages
 
 The repository produces two NuGet packages (the service host project itself is `IsPackable=false` and ships as a container image):
