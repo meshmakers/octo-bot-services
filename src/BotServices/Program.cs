@@ -76,6 +76,16 @@ try
     // AB#5032 (wired here with AB#5047): lets an operator narrow the client-credentials
     // exemption of UseOctoTenantAuthorization() per environment (OCTO_TENANTAUTHORIZATION__…).
     // The defaults reproduce the previous behaviour and only add the audit log.
+    //
+    // AB#5054 set TokenValidationParameters.AuthenticationType = "Bearer"
+    // (Configuration/ConfigureJwtBearerOptions.cs) so the middleware stops being a silent no-op on
+    // bearer requests here. Unlike asset-repo and the communication controller this service does
+    // NOT opt its user path down to UserTokenEnforcement=LogOnly, and deliberately so: every
+    // controller here is routed `system/v{version}/[controller]` — there is no {tenantId} route
+    // segment anywhere in this service, and the tenant of a job travels as a query argument or as
+    // TUS upload metadata. The middleware reads the route value only, so it returns early on every
+    // request and there is nothing to stage. Keeping the platform default (Enforce) means a future
+    // tenant-scoped route arrives closed rather than open.
     builder.Services.AddOctoTenantAuthorization(builder.Configuration);
 
     builder.Services.AddScoped<IDefaultConfigurationCreatorService, DefaultConfigurationCreatorService>();
@@ -163,15 +173,14 @@ try
                 NameClaimType = JwtClaimTypes.Name,
                 RoleClaimType = JwtClaimTypes.Role
             };
-        }).AddJwtBearer(jwt =>
-        {
-            jwt.Audience = CommonConstants.OctoApi;
-            jwt.TokenValidationParameters = new TokenValidationParameters
-            {
-                NameClaimType = JwtClaimTypes.Name,
-                RoleClaimType = JwtClaimTypes.Role
-            };
-        });
+            // 🔴 AB#5054 — no configuration delegate here. Audience, claim types, issuer and the
+            // "Bearer" AuthenticationType all live in ConfigureJwtBearerOptions (registered at the
+            // top of this file). A delegate here runs LAST in the options factory, so an assignment
+            // to TokenValidationParameters silently discards what the configurator set — including
+            // the label TenantAuthorizationMiddleware keys its tenant check off, which turns the
+            // gate back into a no-op with no compile error and no red test. See the remarks on
+            // ConfigureJwtBearerOptions. (The OIDC block above is a different options type.)
+        }).AddJwtBearer();
 
 
     builder.Services.AddAuthorization(options =>

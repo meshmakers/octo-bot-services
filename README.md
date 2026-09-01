@@ -16,6 +16,39 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
 
+### The tenant gate was a no-op until AB#5054 — and is a structural no-op here anyway
+
+`TenantAuthorizationMiddleware` inspects only principals whose `Identity.AuthenticationType` reads
+`Bearer` — its guard against false 403s on the cookie principal this service also issues. That label
+comes from `TokenValidationParameters.AuthenticationType`, which the JWT handler leaves at the
+framework default `AuthenticationTypes.Federation` unless the host sets it. This service did not, so
+the gate returned early on every bearer request. AB#5054 sets it in
+`Configuration/ConfigureJwtBearerOptions.cs`.
+
+🔴 It also had to **remove a second configurator**: `Program.cs` passed
+`AddJwtBearer(jwt => { jwt.TokenValidationParameters = new TokenValidationParameters { … }; })`,
+which — because the options factory runs configurators in registration order — ran after
+`ConfigureOptions<ConfigureJwtBearerOptions>()` and replaced the whole instance, discarding both the
+explicit `ValidIssuer` and the label. It compiles, and an isolated unit test of the configurator
+stays green: octo-ai-services shipped a release in exactly that state (AB#5051 → AB#5056). The rule
+is now one configurator owning `Authority`, `Audience`, claim types, issuer and the label, with
+`AddJwtBearer()` taking no argument. (The OpenID Connect block in the same file legitimately assigns
+its own `TokenValidationParameters` — different options type.)
+
+**In this service the gate still changes nothing, by construction.** Every controller is routed
+`system/v{version}/[controller]`; there is **no `{tenantId}` route segment anywhere**, and a job's
+target tenant travels as a query argument (`?tenantId=…`) or as TUS upload metadata. The middleware
+reads the route value only, so it returns early on every request. The label is set anyway so the
+first tenant-scoped route added here arrives gated instead of silently unguarded — which is exactly
+the failure AB#5054 exists to remove. For the same reason this service keeps the platform default
+`UserTokenEnforcement = Enforce` and does **not** opt down to the `LogOnly` migration mode that
+asset-repo and the communication controller use: there is nothing to stage.
+
+Coverage: `tests/Jobs.Tests/Configuration/TenantAuthorizationWiringTests.cs`. This repo had no test
+project for the service host at all, so `Jobs.Tests` — its only unit-test assembly — gained a
+project reference to `BotServices` plus an `InternalsVisibleTo` entry; the alternative was leaving
+the security-relevant wiring of this host permanently untested.
+
 ### Tenant authorization for service tokens (AB#5032 / AB#5047)
 
 The request pipeline runs the shared `TenantAuthorizationMiddleware` from `octo-common-services`

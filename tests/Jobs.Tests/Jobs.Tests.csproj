@@ -20,6 +20,10 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Jobs\Jobs.csproj" />
+        <!-- AB#5054: this repo has no test project for the service host, so the host's JWT bearer
+             wiring was untestable. Added here rather than as a new project because Jobs.Tests is
+             already the repo's only unit-test assembly. -->
+        <ProjectReference Include="..\..\src\BotServices\BotServices.csproj" />
     </ItemGroup>
 
 </Project>

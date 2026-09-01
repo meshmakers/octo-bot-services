@@ -39,6 +39,13 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- AB#5054: lets the test project reach ConfigureJwtBearerOptions, which is internal like
+             every other configurator here. Without it the JWT bearer wiring of this host — including
+             the AuthenticationType label a security gate depends on — has no test coverage at all. -->
+        <InternalsVisibleTo Include="Meshmakers.Octo.Backend.Jobs.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Content Update="wwwroot\css\swagger.css">
             <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
