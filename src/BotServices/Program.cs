@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using BotServices.Resources;
 using Hangfire;
+using Hangfire.Dashboard;
 using Hangfire.Mongo;
 using Hangfire.Mongo.Migration.Strategies;
 using Hangfire.Mongo.Migration.Strategies.Backup;
@@ -153,6 +154,19 @@ try
             options.Cookie.HttpOnly = true;
             options.Cookie.SameSite = SameSiteMode.None;
             options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+
+            // AB#5059: answer a forbidden request with 403 instead of the cookie handler's default
+            // 302 to /Account/AccessDenied, a path this service does not serve — which would turn
+            // every scope-based refusal on the Hangfire dashboard branch into a bare 404 and read as
+            // "broken" rather than "denied". This service is an API host plus the dashboard; it has
+            // no access-denied page, and until AB#5059 nothing on the cookie scheme could forbid at
+            // all (the /ui branch only ever required an authenticated user), so no existing flow
+            // changes.
+            options.Events.OnRedirectToAccessDenied = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            };
         })
         .AddOpenIdConnect(InfrastructureCommon.OidcAuthenticationScheme, options =>
         {
@@ -400,14 +414,34 @@ try
 
     var octoOptions = app.Services.GetRequiredService<IOptions<OctoBotServicesOptions>>();
 
+    // 🔴 AB#5059 — the Hangfire dashboard is a *system* surface, not a per-user one: it lists the
+    // jobs of every tenant of the instance together with their arguments (tenant ids, database
+    // names, dump file names) and offers Hangfire's Delete / Requeue commands on them. It used to be
+    // gated on AuthenticatedUserPolicy (RequireAuthenticatedUser) plus a dashboard filter that
+    // checked nothing but IsAuthenticated — and because this host also configures an interactive
+    // OpenID Connect login, *every* user of *every* tenant of the identity server could obtain such
+    // a principal simply by logging in.
+    //
+    // It now carries the same scope requirement as JobsController, the API over the very same jobs:
+    // JobApiReadOnlyPolicy to look, OctoApiFullAccess (JobApiReadWritePolicy's scope) to use the
+    // mutating commands, enforced through Hangfire's own IsReadOnlyFunc.
+    //
+    // The scope lives on the *bearer* token — Refinery Studio passes it as ?jwt_token=, which
+    // UseOctoCookieBasedAuthentication() above converts into an Authorization header and a cookie.
+    // app.UseAuthentication() only runs the default (Cookies) scheme, so the branch authenticates
+    // the bearer scheme explicitly first; see HangfireDashboardBearerAuthenticationMiddleware.
     app.Map("/ui", branchedApp =>
     {
         branchedApp.UseRouting();
-        branchedApp.UseAuthorization(BotServiceConstants.AuthenticatedUserPolicy);
+        branchedApp.UseMiddleware<HangfireDashboardBearerAuthenticationMiddleware>();
+        branchedApp.UseAuthorization(BotServiceConstants.JobApiReadOnlyPolicy);
 
         branchedApp.UseHangfireDashboard("/jobs", new DashboardOptions
         {
             AppPath = octoOptions.Value.PublicRefineryStudioUrl,
+            // Read-only scope may look at the jobs but must not requeue or delete them.
+            IsReadOnlyFunc = dashboardContext =>
+                !HangfireDashboardScopes.HasWriteAccess(dashboardContext.GetHttpContext().User),
             Authorization = [new HangfireDashboardAuthorizationFilter()]
         });
     });
