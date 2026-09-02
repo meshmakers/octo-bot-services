@@ -4,7 +4,7 @@ The bot services of OctoMesh: an ASP.NET Core background-processing service that
 
 ## Overview
 
-The service (`Meshmakers.Octo.Backend.BotServices`) is a Docker-deployed web host that schedules and executes jobs through Hangfire (backed by MongoDB). It consumes commands from the OctoMesh distribution event hub - importing CK and runtime models, exporting runtime data by query or deep graph - and exposes a versioned system API plus the Hangfire dashboard under `/ui/jobs`. Resumable uploads are handled via the tus.io protocol, and authentication is wired through OpenID Connect / JWT bearer against the OctoMesh identity service.
+The service (`Meshmakers.Octo.Backend.BotServices`) is a Docker-deployed web host that schedules and executes jobs through Hangfire (backed by MongoDB). It consumes commands from the OctoMesh distribution event hub - importing CK and runtime models, exporting runtime data by query or deep graph - and exposes a versioned system API, a versioned tenant API (`{tenantId}/v1/jobs/...`, AB#5060) plus the Hangfire dashboard under `/ui/jobs`. Resumable uploads are handled via the tus.io protocol, and authentication is wired through OpenID Connect / JWT bearer against the OctoMesh identity service.
 
 The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library and include:
 
@@ -16,7 +16,62 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
 
-### The tenant gate was a no-op until AB#5054 — and is a structural no-op here anyway
+### Tenant-routed job operations (AB#5060)
+
+The five job operations whose subject is **one tenant** — repository dump, restore from a tus upload,
+archive data export, archive data import and the fixup script run — are served on tenant routes:
+
+| Operation | Tenant route (use this) | Deprecated System route |
+| --- | --- | --- |
+| Repository dump | `POST {tenantId}/v1/jobs/dump-repository` | `POST system/v1/jobs/dump-repository?tenantId=…` |
+| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | `POST system/v1/jobs/restore-from-upload?tenantId=…` |
+| Archive data export | `POST {tenantId}/v1/jobs/export-archive-data` | `POST system/v1/jobs/export-archive-data?tenantId=…` |
+| Archive data import | `POST {tenantId}/v1/jobs/import-archive-data-from-upload` | `POST system/v1/jobs/import-archive-data-from-upload?tenantId=…` |
+| Fixup script run | `POST {tenantId}/v1/jobs/run-fixup-scripts` | `POST system/v1/jobs/run-fixup-scripts?tenantId=…` |
+
+**Why the route shape is the whole point.** `TenantAuthorizationMiddleware` reads the tenant from the
+**route value**. As long as these operations carried their tenant in `?tenantId=…` the gate never saw
+them, so a token issued for one tenant could dump, restore or export any other tenant's repository.
+The System variants stay functional and unchanged — they are the fallback until every caller (SDK,
+octo-cli, octo-mcp-service, Studio) has moved, which is stage 2/3 of AB#5060 — but they are marked
+deprecated in their XML docs and no new tenant-addressed operation may be added to them. This repo has
+no `[Obsolete]`/`deprecated` convention for REST endpoints (none of the six services has one), so the
+marking is documentation, not a wire-level flag.
+
+Both surfaces share their bodies through `Controllers/JobsControllerBase.cs`, so the tenant route
+enqueues the identical Hangfire job with identical arguments; `TenantJobRouteAuthorizationTests`
+checks that rather than asserting it.
+
+**The five tenant routes carry `[AllowParentTenantAdministration]`** (`octo-common-services`,
+AB#5068). An administrator of the **parent** tenant may back up, restore, export and fix up a child
+tenant, so a *user* token of the parent passes the gate on the child's route. Service tokens are
+never widened by that rule — a client-credentials `tenant_id` proves nothing, because mirrored
+clients share the parent's secret. The marker means *administration*, not *access*: none of these
+endpoints returns tenant content, and `system/v1/jobs/download` (which does hand out a job artifact)
+is deliberately **not** marked. Do not put the marker on anything that reads or writes tenant data.
+
+**The tus upload sink stays tenant-neutral, deliberately.** `/system/v1/tus-upload` requires a
+`tenantId` upload-metadata field, but nothing reads it: the file is stored flat under its tus file id
+(`BackupFileStorageService.GetTusUploadFilePath`), and both consuming jobs take the tenant from the
+request that starts them. A `{tenantId}/v1/tus-upload` route would therefore promise an ownership
+binding the storage does not have. The upload is a staging area; the tenant-carrying, gated decision
+is the `restore-from-upload` / `import-archive-data-from-upload` call. Binding the sink to a tenant
+(persist the metadata, re-check it at consumption time, scope the storage path) is a separate change,
+not a route rename.
+
+The `tenantId` route constraint that every other tenant-serving OctoMesh host registers
+(`Routing/TenantIdRouteConstraint.cs`, registered in `Program.cs`) arrived with these routes; without
+it the `{tenantId:tenantId}` templates never match. `/system/...` keeps winning over
+`/{tenantId}/...` because literal route segments outrank parameter segments — the same coexistence
+octo-ai-services has between `system/v1/aiservice` and `{tenantId}/v1/aiservice`.
+
+Coverage: `tests/Jobs.Tests/Api/TenantJobRouteAuthorizationTests.cs` — an in-process TestHost running
+the two real controllers behind the real gate: own tenant allowed, parent user token allowed on the
+child route, unrelated tenant 403, parent **service** token 403 under `Enforce` while its own tenant
+passes, identical enqueued job on both surfaces, and the marker present on the tenant controller and
+nowhere else in the assembly.
+
+### The tenant gate was a no-op until AB#5054
 
 `TenantAuthorizationMiddleware` inspects only principals whose `Identity.AuthenticationType` reads
 `Bearer` — its guard against false 403s on the cookie principal this service also issues. That label
@@ -35,14 +90,18 @@ is now one configurator owning `Authority`, `Audience`, claim types, issuer and 
 `AddJwtBearer()` taking no argument. (The OpenID Connect block in the same file legitimately assigns
 its own `TokenValidationParameters` — different options type.)
 
-**In this service the gate still changes nothing, by construction.** Every controller is routed
-`system/v{version}/[controller]`; there is **no `{tenantId}` route segment anywhere**, and a job's
-target tenant travels as a query argument (`?tenantId=…`) or as TUS upload metadata. The middleware
-reads the route value only, so it returns early on every request. The label is set anyway so the
-first tenant-scoped route added here arrives gated instead of silently unguarded — which is exactly
-the failure AB#5054 exists to remove. For the same reason this service keeps the platform default
-`UserTokenEnforcement = Enforce` and does **not** opt down to the `LogOnly` migration mode that
-asset-repo and the communication controller use: there is nothing to stage.
+**At the time of AB#5054 the gate still changed nothing here, by construction:** every controller was
+routed `system/v{version}/[controller]`, there was **no `{tenantId}` route segment anywhere**, and a
+job's target tenant travelled as a query argument (`?tenantId=…`) or as TUS upload metadata — the
+middleware reads the route value only, so it returned early on every request. The label was set
+anyway so that the first tenant-scoped route added here would arrive gated instead of silently
+unguarded, which is exactly the failure AB#5054 exists to remove. **AB#5060 added those routes** (see
+above) and the gate is now live on them.
+
+This service keeps the platform default `UserTokenEnforcement = Enforce` and does **not** opt down to
+the `LogOnly` migration mode that asset-repo and the communication controller use: the tenant routes
+are new, so there is no installed caller base to stage for, and the deprecated System variants are
+untouched by the gate because they carry no route tenant.
 
 Coverage: `tests/Jobs.Tests/Configuration/TenantAuthorizationWiringTests.cs`. This repo had no test
 project for the service host at all, so `Jobs.Tests` — its only unit-test assembly — gained a

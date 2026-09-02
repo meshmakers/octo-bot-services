@@ -3,8 +3,8 @@ using Asp.Versioning;
 using Hangfire;
 using Hangfire.Storage.Monitoring;
 using IdentityModel;
+using Meshmakers.Octo.Backend.BotServices.Controllers;
 using Meshmakers.Octo.Backend.Jobs;
-using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
@@ -18,15 +18,30 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 /// <summary>
 ///     REST Controller for job management
 /// </summary>
+/// <remarks>
+///     🔴 <b>The five tenant-addressed operations here are deprecated (AB#5060).</b>
+///     <c>run-fixup-scripts</c>, <c>restore-from-upload</c>, <c>dump-repository</c>,
+///     <c>export-archive-data</c> and <c>import-archive-data-from-upload</c> take their tenant as the
+///     query parameter <c>?tenantId=…</c>, which the transport tenant gate never sees — it reads the
+///     route value. Their replacements are the identical operations on
+///     <see cref="TenantApi.v1.Controllers.JobsController" /> (<c>{tenantId}/v1/jobs/...</c>), which
+///     share their implementation through <see cref="JobsControllerBase" /> and therefore behave
+///     identically. They stay here, unchanged and functional, only until every caller (SDK, octo-cli,
+///     octo-mcp-service, Studio) has moved — stage 3 of AB#5060 removes them. Do not add a new
+///     tenant-addressed operation to this controller.
+///     <para>
+///         The remaining actions — <c>GET</c> by job id, <c>download</c> and <c>DELETE</c> — are
+///         genuinely instance-scoped (a Hangfire job id is global to the instance) and stay on the
+///         System API.
+///     </para>
+/// </remarks>
 [Authorize(AuthenticationSchemes = OidcConstants.AuthenticationSchemes.AuthorizationHeaderBearer)]
 [Route("system/v{version:apiVersion}/[controller]")]
 [ApiController]
 [ApiVersion("1.0")]
-public class JobsController : ControllerBase
+public class JobsController : JobsControllerBase
 {
     private readonly IDistributedCacheService _distributedCache;
-    private readonly IBackgroundJobClient _backgroundJobClient;
-    private readonly IBackupFileStorageService _backupFileStorage;
 
     /// <summary>
     ///     Constructor
@@ -36,10 +51,9 @@ public class JobsController : ControllerBase
     /// <param name="backupFileStorage"></param>
     public JobsController(IDistributedCacheService distributedCache,
         IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage)
+        : base(backgroundJobClient, backupFileStorage)
     {
         _distributedCache = distributedCache;
-        _backgroundJobClient = backgroundJobClient;
-        _backupFileStorage = backupFileStorage;
     }
 
     /// <summary>
@@ -75,6 +89,10 @@ public class JobsController : ControllerBase
     /// </summary>
     /// <param name="tenantId">The tenant id</param>
     /// <returns></returns>
+    /// <remarks>
+    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/run-fixup-scripts</c>. The tenant is a
+    ///     query parameter here, so the transport tenant gate cannot check it.
+    /// </remarks>
     // POST: system/jobs/run-fixup-scripts?tenantId=abc
     [HttpPost]
     [Route("run-fixup-scripts")]
@@ -83,21 +101,7 @@ public class JobsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult RunFixupScripts(string tenantId)
     {
-        try
-        {
-            var id = _backgroundJobClient.Enqueue<IRunFixupJob>(job =>
-                job.Run(tenantId, BotCancellationToken.Null));
-
-            return Ok(new JobResponseDto(id));
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new InternalServerErrorDto(ex.Message));
-        }
+        return EnqueueRunFixupScripts(tenantId);
     }
 
     /// <summary>
@@ -110,6 +114,10 @@ public class JobsController : ControllerBase
     /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
     /// <param name="restoreArchiveData">When <c>true</c> and the uploaded artifact is an <c>.octobak.zip</c> carrying archive data, the tenant's CrateDB archives are also restored (concept AB#4231). Default <c>false</c> (Mongo only).</param>
     /// <returns></returns>
+    /// <remarks>
+    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/restore-from-upload</c>. The tenant is a
+    ///     query parameter here, so the transport tenant gate cannot check it.
+    /// </remarks>
     [HttpPost]
     [Route("restore-from-upload")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
@@ -123,33 +131,7 @@ public class JobsController : ControllerBase
         string? oldDatabaseName = null,
         [FromQuery] bool restoreArchiveData = false)
     {
-        try
-        {
-            // Verify the tus upload file exists on disk and has content
-            var filePath = _backupFileStorage.GetTusUploadFilePath(tusFileId);
-            if (!System.IO.File.Exists(filePath))
-            {
-                return NotFound(new NotFoundErrorDto(
-                    $"Upload file not found for tus file ID '{tusFileId}'. Ensure the upload completed successfully."));
-            }
-
-            var fileInfo = new FileInfo(filePath);
-            if (fileInfo.Length == 0)
-            {
-                return BadRequest(new InternalServerErrorDto(
-                    $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."));
-            }
-
-            var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
-                    BotCancellationToken.Null));
-
-            return Ok(new JobResponseDto(id));
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
-        }
+        return EnqueueRestoreFromUpload(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData);
     }
 
     /// <summary>
@@ -162,6 +144,10 @@ public class JobsController : ControllerBase
     /// <c>.tar.gz</c> is produced exactly as before.
     /// </param>
     /// <returns></returns>
+    /// <remarks>
+    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/dump-repository</c>. The tenant is a
+    ///     query parameter here, so the transport tenant gate cannot check it.
+    /// </remarks>
     [HttpPost]
     [Route("dump-repository")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
@@ -169,17 +155,7 @@ public class JobsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult DumpRepository(string tenantId, [FromQuery] bool includeArchiveData = false)
     {
-        try
-        {
-            var id = _backgroundJobClient.Enqueue<IDumpRepositoryJob>(job =>
-                job.Run(tenantId, includeArchiveData, BotCancellationToken.Null));
-
-            return Ok(new JobResponseDto(id));
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
-        }
+        return EnqueueDumpRepository(tenantId, includeArchiveData);
     }
 
     /// <summary>
@@ -193,6 +169,10 @@ public class JobsController : ControllerBase
     /// <param name="archiveRtId">Runtime id of the <c>CkArchive</c> entity.</param>
     /// <param name="fromUtc">Optional inclusive lower bound of the export window (ISO-8601 UTC).</param>
     /// <param name="toUtc">Optional exclusive upper bound of the export window (ISO-8601 UTC).</param>
+    /// <remarks>
+    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/export-archive-data</c>. The tenant is a
+    ///     query parameter here, so the transport tenant gate cannot check it.
+    /// </remarks>
     [HttpPost]
     [Route("export-archive-data")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
@@ -204,17 +184,7 @@ public class JobsController : ControllerBase
         DateTime? fromUtc = null,
         DateTime? toUtc = null)
     {
-        try
-        {
-            var id = _backgroundJobClient.Enqueue<IExportArchiveDataJob>(job =>
-                job.Run(tenantId, archiveRtId, fromUtc, toUtc, BotCancellationToken.Null));
-
-            return Ok(new JobResponseDto(id));
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
-        }
+        return EnqueueExportArchiveData(tenantId, archiveRtId, fromUtc, toUtc);
     }
 
     /// <summary>
@@ -227,6 +197,10 @@ public class JobsController : ControllerBase
     /// <param name="tenantId">The tenant that owns the target archive.</param>
     /// <param name="archiveRtId">Runtime id of the target <c>CkArchive</c> entity.</param>
     /// <param name="mode">Import mode (<c>InsertOnly</c>/<c>Upsert</c>; binds from <c>0</c>/<c>1</c> or the name).</param>
+    /// <remarks>
+    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/import-archive-data-from-upload</c>. The
+    ///     tenant is a query parameter here, so the transport tenant gate cannot check it.
+    /// </remarks>
     [HttpPost]
     [Route("import-archive-data-from-upload")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
@@ -239,31 +213,7 @@ public class JobsController : ControllerBase
         [Required] string archiveRtId,
         [FromQuery] ArchiveImportMode mode = ArchiveImportMode.InsertOnly)
     {
-        try
-        {
-            var filePath = _backupFileStorage.GetTusUploadFilePath(tusFileId);
-            if (!System.IO.File.Exists(filePath))
-            {
-                return NotFound(new NotFoundErrorDto(
-                    $"Upload file not found for tus file ID '{tusFileId}'. Ensure the upload completed successfully."));
-            }
-
-            var fileInfo = new FileInfo(filePath);
-            if (fileInfo.Length == 0)
-            {
-                return BadRequest(new InternalServerErrorDto(
-                    $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."));
-            }
-
-            var id = _backgroundJobClient.Enqueue<IImportArchiveDataJob>(job =>
-                job.Run(tenantId, archiveRtId, filePath, mode, BotCancellationToken.Null));
-
-            return Ok(new JobResponseDto(id));
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
-        }
+        return EnqueueImportArchiveDataFromUpload(tusFileId, tenantId, archiveRtId, mode);
     }
 
     /// <summary>

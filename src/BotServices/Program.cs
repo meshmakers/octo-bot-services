@@ -9,6 +9,7 @@ using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
+using Meshmakers.Octo.Backend.BotServices.Routing;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -74,6 +75,14 @@ try
     builder.Services.AddTransient<IJobCreatorService, JobCreatorService>();
     builder.Services.AddCors();
 
+    // AB#5060: this service now serves a tenant-addressed surface as well
+    // ({tenantId}/v1/jobs/dump-repository, restore-from-upload, export-archive-data,
+    // import-archive-data-from-upload, run-fixup-scripts), so the `tenantId` route constraint every
+    // other tenant-serving OctoMesh host registers is needed here too. Without it the
+    // `{tenantId:tenantId}` templates of TenantApi never match and the routes 404.
+    builder.Services.Configure<RouteOptions>(options =>
+        options.ConstraintMap.Add("tenantId", typeof(TenantIdRouteConstraint)));
+
     // AB#5032 (wired here with AB#5047): lets an operator narrow the client-credentials
     // exemption of UseOctoTenantAuthorization() per environment (OCTO_TENANTAUTHORIZATION__…).
     // The defaults reproduce the previous behaviour and only add the audit log.
@@ -81,12 +90,17 @@ try
     // AB#5054 set TokenValidationParameters.AuthenticationType = "Bearer"
     // (Configuration/ConfigureJwtBearerOptions.cs) so the middleware stops being a silent no-op on
     // bearer requests here. Unlike asset-repo and the communication controller this service does
-    // NOT opt its user path down to UserTokenEnforcement=LogOnly, and deliberately so: every
-    // controller here is routed `system/v{version}/[controller]` — there is no {tenantId} route
-    // segment anywhere in this service, and the tenant of a job travels as a query argument or as
-    // TUS upload metadata. The middleware reads the route value only, so it returns early on every
-    // request and there is nothing to stage. Keeping the platform default (Enforce) means a future
-    // tenant-scoped route arrives closed rather than open.
+    // NOT opt its user path down to UserTokenEnforcement=LogOnly: at the time of AB#5054 there was
+    // no {tenantId} route segment in this service at all, so the platform default (Enforce) meant a
+    // future tenant-scoped route would arrive closed rather than open.
+    //
+    // AB#5060 is that future: TenantApi/v1/Controllers/JobsController serves the five
+    // tenant-addressed job operations on {tenantId}/v1/jobs/... and the gate now really runs on
+    // them. It stays on Enforce — the routes are new, so there is no installed caller base to stage
+    // for; the deprecated system/v1/jobs/...?tenantId=… variants keep working meanwhile because the
+    // middleware reads the ROUTE value and those carry none. The five tenant routes additionally
+    // carry [AllowParentTenantAdministration], which lets an administrator of the parent tenant back
+    // up / restore / export a child (user tokens only, never service tokens).
     builder.Services.AddOctoTenantAuthorization(builder.Configuration);
 
     builder.Services.AddScoped<IDefaultConfigurationCreatorService, DefaultConfigurationCreatorService>();
