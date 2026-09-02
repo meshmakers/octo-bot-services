@@ -3,9 +3,12 @@ using Asp.Versioning;
 using Hangfire;
 using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
+using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Services;
+using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
 using Meshmakers.Octo.Services.Infrastructure.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,9 +17,10 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 
 /// <summary>
 ///     Tenant-scoped job operations of the bot service: repository dump, restore from a tus upload,
-///     archive data export, archive data import and the fixup script run. Mirrors the System-API
-///     controller one-to-one — same policies, same jobs, same arguments — but takes the tenant as a
-///     <b>route segment</b> instead of a query parameter.
+///     archive data export, archive data import, the fixup script run — and, since AB#5070, the
+///     download of the artifact those operations produce. Mirrors the System-API controller one-to-one
+///     — same policies, same jobs, same arguments — but takes the tenant as a <b>route segment</b>
+///     instead of a query parameter.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -29,23 +33,31 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 ///     </para>
 ///     <para>
 ///         <b>Every action carries <see cref="AllowParentTenantAdministrationAttribute" /></b> — the
-///         marker is on the class because all five operations are the same kind of thing: an
+///         marker is on the class because all six operations are the same kind of thing: an
 ///         administrator of a tenant <i>above</i> this one may back up, restore, export and fix up a
-///         child tenant. None of these five endpoints returns tenant content in its own response, and
-///         no data route of this service is or may be marked. Service tokens are never widened by the
-///         rule — see <see cref="IAllowParentTenantAdministration" />.
+///         child tenant, and may fetch the file that securing it produced. No data route of this
+///         service is or may be marked. Service tokens are never widened by the rule — see
+///         <see cref="IAllowParentTenantAdministration" />.
 ///     </para>
 ///     <para>
-///         🔴 <b>The artifact is not covered by any of that (AB#5070).</b> A dump or export produces a
-///         job whose result is fetched through <c>system/v1/jobs/download?tenantId=…&amp;id=…</c>, and
-///         that endpoint is <b>not</b> tenant-gated in either sense. It carries no route tenant, so
-///         the middleware returns early and checks nothing at all — being unmarked does not make it
-///         exact-matched, it makes it unchecked. And the artifact lookup never consults
-///         <c>tenantId</c> on the current path: the job id alone resolves the result file, which is
-///         then streamed. So the job id a parent administrator legitimately receives from the calls
-///         below is by itself sufficient to fetch the child tenant's dump. Until AB#5070 binds a job
-///         to its tenant and gates the retrieval, "may administer" is in practice "may read", and the
-///         separation this remark describes is aspirational rather than enforced.
+///         🔴 <b>The artifact is part of the operation (AB#5070).</b> Securing a tenant encloses the
+///         file: a parent administrator who may dump a child may fetch that dump, so
+///         <see cref="DownloadJobResult" /> carries the class marker like the other five. What AB#5070
+///         closes is something else — that a job id with <i>no relation at all</i> to the caller used
+///         to be enough. The old retrieval
+///         (<c>system/v1/jobs/download?tenantId=…&amp;id=…</c>) sees no route tenant, so the transport
+///         gate returns early and checks nothing, and the lookup resolved the result file from the job
+///         id alone, never consulting <c>tenantId</c> at all. Both halves are fixed: the job's tenant
+///         is now read from the job's own arguments (<see cref="JobTenantBinding" />), the route below
+///         requires it to equal the route tenant, and the System variant asks
+///         <see cref="IJobTenantAccessGuard" /> — the middleware's decision, performed in code —
+///         instead of nothing.
+///     </para>
+///     <para>
+///         <b>Granularity is the tenant, not the person.</b> The artifact is bound to the tenant the
+///         job ran for, deliberately not to the subject that started it: that would lock out a second
+///         administrator of the same tenant and make a dump started by CI unreachable for every human.
+///         The starting subject is recorded on the job so a later, finer rule needs no migration.
 ///     </para>
 ///     <para>
 ///         <b>The tus upload sink stays tenant-neutral, deliberately.</b> The resumable upload endpoint
@@ -70,8 +82,14 @@ public class JobsController : JobsControllerBase
     /// </summary>
     /// <param name="backgroundJobClient">Hangfire client used to enqueue the jobs.</param>
     /// <param name="backupFileStorage">Storage service resolving tus upload file paths.</param>
-    public JobsController(IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage)
-        : base(backgroundJobClient, backupFileStorage)
+    /// <param name="jobStorage">Reads job details and writes job parameters (AB#5070).</param>
+    /// <param name="tenantAccessGuard">Authorizes a job instance against its tenant (AB#5070).</param>
+    /// <param name="distributedCache">Backing store of the legacy GridFS artifact fallback.</param>
+    /// <param name="logger">Logger.</param>
+    public JobsController(IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage,
+        IJobStorageAccessor jobStorage, IJobTenantAccessGuard tenantAccessGuard,
+        IDistributedCacheService distributedCache, ILogger<JobsControllerBase> logger)
+        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache, logger)
     {
     }
 
@@ -187,5 +205,43 @@ public class JobsController : JobsControllerBase
         [FromQuery] ArchiveImportMode mode = ArchiveImportMode.InsertOnly)
     {
         return EnqueueImportArchiveDataFromUpload(tusFileId, tenantId, archiveRtId, mode);
+    }
+
+    /// <summary>
+    ///     Downloads the artifact produced by the job <paramref name="id" /> of the tenant taken from
+    ///     the route (AB#5070).
+    /// </summary>
+    /// <param name="tenantId">The tenant that owns the job, from the route.</param>
+    /// <param name="id">The job id.</param>
+    /// <remarks>
+    ///     <para>
+    ///         Two checks, and they answer different questions. The transport gate has already decided
+    ///         whether the caller may address <paramref name="tenantId" /> — exact <c>tenant_id</c>
+    ///         match, or the parent-tenant administration rule that the class marker opens for user
+    ///         tokens. What is left for this endpoint is <b>ownership</b>: the job must belong to
+    ///         <paramref name="tenantId" />, read from the job's own stored arguments
+    ///         (<see cref="JobTenantBinding" />). That second check has no staging and no ancestor
+    ///         relaxation — a parent administering a child addresses the child's route, so it never
+    ///         needs a job of a different tenant to be reachable here.
+    ///     </para>
+    ///     <para>
+    ///         A job that does not belong to the route tenant, and a job whose tenant cannot be
+    ///         determined at all, both answer a bare <c>403</c>: the refusal must not reveal whether
+    ///         the id exists or whom it belongs to.
+    ///     </para>
+    /// </remarks>
+    // GET: {tenantId}/v1/jobs/download?id=abc
+    [HttpGet]
+    [Route("download")]
+    [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public Task<IActionResult> DownloadJobResult(
+        [FromRoute] [Required] string tenantId,
+        [Required] string id)
+    {
+        return DownloadJobResultAsync(id, tenantId);
     }
 }

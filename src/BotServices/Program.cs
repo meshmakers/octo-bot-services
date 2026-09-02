@@ -73,6 +73,15 @@ try
 
 
     builder.Services.AddTransient<IJobCreatorService, JobCreatorService>();
+
+    // AB#5070: a job artifact belongs to the tenant the job ran for, and the job-instance endpoints
+    // (status, download, delete) enforce that themselves — the System routes they live on carry no
+    // tenant segment, so UseOctoTenantAuthorization() returns early there and checks nothing at all.
+    // JobTenantAccessGuard is the middleware's decision performed in code; HangfireJobStorageAccessor
+    // is the seam over JobStorage.Current that makes it testable.
+    builder.Services.AddSingleton<IJobStorageAccessor, HangfireJobStorageAccessor>();
+    builder.Services.AddScoped<IJobTenantAccessGuard, JobTenantAccessGuard>();
+
     builder.Services.AddCors();
 
     // AB#5060: this service now serves a tenant-addressed surface as well

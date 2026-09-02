@@ -1,10 +1,9 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using Asp.Versioning;
 using Hangfire;
-using Hangfire.Storage.Monitoring;
 using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
-using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
@@ -30,9 +29,23 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 ///     octo-mcp-service, Studio) has moved — stage 3 of AB#5060 removes them. Do not add a new
 ///     tenant-addressed operation to this controller.
 ///     <para>
-///         The remaining actions — <c>GET</c> by job id, <c>download</c> and <c>DELETE</c> — are
-///         genuinely instance-scoped (a Hangfire job id is global to the instance) and stay on the
-///         System API.
+///         🔴 <b>The three job-instance actions are gated in code, not by the middleware (AB#5070).</b>
+///         <c>GET</c> by job id, <c>download</c> and <c>DELETE</c> address a Hangfire job id, which is
+///         global to the instance — so the route carries no tenant segment and the transport gate
+///         returns early on all three. "Unmarked" there means <b>unchecked</b>, not "exactly matched":
+///         until AB#5070 the download resolved a result file from the job id alone and handed any
+///         tenant's backup to any caller holding the job-read scope. Each of the three therefore
+///         resolves the tenant the job belongs to and asks <see cref="IJobTenantAccessGuard" />, which
+///         is a faithful port of the middleware's decision — <c>tenant_id</c> match, the parent-tenant
+///         administration rule for user tokens only, the same staging options, fail closed.
+///     </para>
+///     <para>
+///         <c>download</c> additionally exists on the tenant route
+///         (<c>{tenantId}/v1/jobs/download?id=…</c>) since AB#5070, where the middleware does the
+///         caller check and the endpoint only has to confirm ownership. <c>GET</c> and <c>DELETE</c>
+///         deliberately stay System-only: they are instance operations on a job id, they return or
+///         change nothing that a tenant route would scope better, and the guard already answers the
+///         same question there.
 ///     </para>
 /// </remarks>
 [Authorize(AuthenticationSchemes = OidcConstants.AuthenticationSchemes.AuthorizationHeaderBearer)]
@@ -41,19 +54,21 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 [ApiVersion("1.0")]
 public class JobsController : JobsControllerBase
 {
-    private readonly IDistributedCacheService _distributedCache;
-
     /// <summary>
     ///     Constructor
     /// </summary>
     /// <param name="distributedCache"></param>
     /// <param name="backgroundJobClient"></param>
     /// <param name="backupFileStorage"></param>
+    /// <param name="jobStorage"></param>
+    /// <param name="tenantAccessGuard"></param>
+    /// <param name="logger"></param>
     public JobsController(IDistributedCacheService distributedCache,
-        IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage)
-        : base(backgroundJobClient, backupFileStorage)
+        IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage,
+        IJobStorageAccessor jobStorage, IJobTenantAccessGuard tenantAccessGuard,
+        ILogger<JobsControllerBase> logger)
+        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache, logger)
     {
-        _distributedCache = distributedCache;
     }
 
     /// <summary>
@@ -61,27 +76,19 @@ public class JobsController : JobsControllerBase
     /// </summary>
     /// <param name="id">The job id</param>
     /// <returns></returns>
+    /// <remarks>
+    ///     Answers <c>403</c> when the job belongs to a tenant the caller was not issued a token for
+    ///     and is not the administering parent of (AB#5070).
+    /// </remarks>
     // GET: system/Jobs?id=abc
     [HttpGet]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
     [ProducesResponseType(typeof(JobDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public IActionResult Get([Required] string id)
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public Task<IActionResult> Get([Required] string id)
     {
-        try
-        {
-            var jobDetails = JobStorage.Current.GetMonitoringApi().JobDetails(id);
-            if (jobDetails == null)
-            {
-                return NotFound();
-            }
-
-            return Ok(CreateJobDto(id, jobDetails));
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new InternalServerErrorDto(ex.Message));
-        }
+        return GetJobAsync(id, null);
     }
 
     /// <summary>
@@ -219,84 +226,31 @@ public class JobsController : JobsControllerBase
     /// <summary>
     ///     Downloads the job result as binary file
     /// </summary>
-    /// <param name="tenantId">Corresponding tenant id, null if system tenant is used.</param>
+    /// <param name="tenantId">
+    ///     🔴 <b>Ignored since AB#5070, kept only so existing callers keep compiling and calling.</b>
+    ///     The artifact is resolved and authorized against the tenant the <i>job</i> belongs to, read
+    ///     from the job's own stored arguments; a tenant supplied by the caller can never widen that.
+    ///     Before AB#5070 this argument was consulted only by the legacy GridFS fallback, which is why
+    ///     the endpoint handed out every on-disk artifact to every caller.
+    /// </param>
     /// <param name="id">Job ID</param>
     /// <returns></returns>
-    // POST: system/jobs/download?id=abc
+    /// <remarks>
+    ///     Deprecated in favour of <c>GET {tenantId}/v1/jobs/download?id=…</c> (AB#5070), which the
+    ///     transport gate can see. This variant stays functional and now performs the equivalent check
+    ///     itself, because leaving an active hole open until stage 3 of AB#5060 is not acceptable.
+    /// </remarks>
+    // GET: system/jobs/download?id=abc
     [HttpGet]
     [Route("download")]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
     [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> DownloadExportRtResult(string tenantId, string id)
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public Task<IActionResult> DownloadExportRtResult(string tenantId, string id)
     {
-        try
-        {
-            var jobDetails = JobStorage.Current.GetMonitoringApi().JobDetails(id);
-
-            if (jobDetails == null)
-            {
-                return NotFound(new NotFoundErrorDto("No job found with id: " + id));
-            }
-
-            // Check if the job is in a final state
-            var status = jobDetails.History.FirstOrDefault();
-            if (status is { StateName: "Deleted" })
-            {
-                status = jobDetails.History.Skip(1).FirstOrDefault();
-
-                if (status?.StateName == "Failed")
-                {
-                    var errorMessage = status.Data.TryGetValue("ExceptionMessage", out var value) ? value : null;
-                    return BadRequest(
-                        new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
-                }
-
-                return BadRequest(new InternalServerErrorDto("The job with id: " + id + " has been deleted at " +
-                                                             status?.CreatedAt + ". " +
-                                                             "Please check the job status and server logs and try again."));
-            }
-
-            if (status?.StateName == "Failed")
-            {
-                var errorMessage = status.Data.TryGetValue("ExceptionMessage", out var value) ? value : null;
-                return BadRequest(
-                    new InternalServerErrorDto("The job with id: " + id + " has failed: " + errorMessage));
-            }
-
-            if (status?.StateName == "Succeeded")
-            {
-                if (!status.Data.TryGetValue("Result", out var result))
-                {
-                    return NotFound(new NotFoundErrorDto("No result found for the job with id: " + id));
-                }
-
-                var key = result.Replace("\"", "");
-
-                // New path: result is a file path on disk
-                if (System.IO.File.Exists(key))
-                {
-                    var fileStream = new FileStream(key, FileMode.Open, FileAccess.Read, FileShare.Read);
-                    return new FileStreamResult(fileStream, "application/gzip")
-                    {
-                        FileDownloadName = Path.GetFileName(key),
-                        EnableRangeProcessing = true
-                    };
-                }
-
-                // Fallback: result is a GridFS cache key (backward compatibility)
-                var resultTuple = await GetResultStream(tenantId, key);
-
-                return new FileStreamResult(resultTuple.Item2, resultTuple.Item1);
-            }
-
-            return BadRequest(new InternalServerErrorDto("The job with id: " + id + " is not in a final state."));
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
-        }
+        return DownloadJobResultAsync(id, null);
     }
 
     // DELETE: system/Jobs/abc
@@ -305,58 +259,18 @@ public class JobsController : JobsControllerBase
     /// </summary>
     /// <param name="id">The job id</param>
     /// <returns></returns>
+    /// <remarks>
+    ///     Answers <c>403</c> when the job belongs to a tenant the caller was not issued a token for
+    ///     and is not the administering parent of (AB#5070) — an ungated delete would let any holder of
+    ///     the job-write scope cancel another tenant's running restore.
+    /// </remarks>
     [HttpDelete("{id}")]
     [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public IActionResult Delete([Required] string id)
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public Task<IActionResult> Delete([Required] string id)
     {
-        try
-        {
-            var result = BackgroundJob.Delete(id);
-            return Ok(result);
-        }
-        catch (InvalidOperationException e)
-        {
-            return BadRequest(new InternalServerErrorDto(e.Message));
-        }
+        return DeleteJobAsync(id, null);
     }
-
-    private JobDto CreateJobDto(string id, JobDetailsDto jobDetails)
-    {
-        string? errorMessage = null;
-        var status = jobDetails.History.FirstOrDefault();
-        if (status is { StateName: "Deleted" })
-        {
-            status = jobDetails.History.Skip(1).FirstOrDefault();
-        }
-
-        if (status is { StateName: "Failed" } && status.Data.TryGetValue("ExceptionMessage", out var value))
-        {
-            errorMessage = value;
-        }
-
-        var jobDto = new JobDto
-        {
-            Id = id,
-            CreatedAt = jobDetails.CreatedAt ?? DateTime.MinValue,
-            StateChangedAt = status?.CreatedAt,
-            Status = status?.StateName,
-            Reason = status?.Reason,
-            ErrorMessage = errorMessage
-        };
-        return jobDto;
-    }
-
-    private async Task<Tuple<string, Stream>> GetResultStream(string tenantId, string key)
-    {
-        var cacheStream = await _distributedCache.GetCacheStreamByIdAsync(tenantId, key);
-        if (cacheStream == null)
-        {
-            throw new JobFailedException("No value in distribute cache found.");
-        }
-
-        return new Tuple<string, Stream>(cacheStream.ContentType, cacheStream.Stream);
-    }
-
 }
