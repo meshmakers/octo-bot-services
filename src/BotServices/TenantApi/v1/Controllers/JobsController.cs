@@ -31,11 +31,21 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 ///         <b>Every action carries <see cref="AllowParentTenantAdministrationAttribute" /></b> — the
 ///         marker is on the class because all five operations are the same kind of thing: an
 ///         administrator of a tenant <i>above</i> this one may back up, restore, export and fix up a
-///         child tenant. That is administration, not access: none of these endpoints returns tenant
-///         content to the caller (a dump/export produces a job whose artifact is fetched through
-///         <c>system/v1/jobs/download</c>, which is unmarked and therefore still exact-matched), and
+///         child tenant. None of these five endpoints returns tenant content in its own response, and
 ///         no data route of this service is or may be marked. Service tokens are never widened by the
 ///         rule — see <see cref="IAllowParentTenantAdministration" />.
+///     </para>
+///     <para>
+///         🔴 <b>The artifact is not covered by any of that (AB#5070).</b> A dump or export produces a
+///         job whose result is fetched through <c>system/v1/jobs/download?tenantId=…&amp;id=…</c>, and
+///         that endpoint is <b>not</b> tenant-gated in either sense. It carries no route tenant, so
+///         the middleware returns early and checks nothing at all — being unmarked does not make it
+///         exact-matched, it makes it unchecked. And the artifact lookup never consults
+///         <c>tenantId</c> on the current path: the job id alone resolves the result file, which is
+///         then streamed. So the job id a parent administrator legitimately receives from the calls
+///         below is by itself sufficient to fetch the child tenant's dump. Until AB#5070 binds a job
+///         to its tenant and gates the retrieval, "may administer" is in practice "may read", and the
+///         separation this remark describes is aspirational rather than enforced.
 ///     </para>
 ///     <para>
 ///         <b>The tus upload sink stays tenant-neutral, deliberately.</b> The resumable upload endpoint
