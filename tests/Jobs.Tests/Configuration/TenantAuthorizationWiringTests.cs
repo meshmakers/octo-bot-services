@@ -11,15 +11,23 @@ namespace Meshmakers.Octo.Backend.Jobs.Tests.Configuration;
 ///     AB#5054 — pins the JWT bearer wiring the shared transport tenant gate
 ///     (<c>UseOctoTenantAuthorization()</c> / <c>TenantAuthorizationMiddleware</c>) depends on.
 ///     <para>
-///         This service has <b>no</b> <c>{tenantId}</c> route segment — every controller is routed
-///         <c>system/v{version}/[controller]</c> and a job's target tenant travels as a query
-///         argument or as TUS upload metadata — so the middleware still returns early on the missing
-///         route tenant and the gate changes nothing today. The label is set (and pinned here)
-///         anyway, so that the first tenant-scoped route added to this service arrives gated instead
-///         of silently unguarded, which is the exact failure AB#5054 exists to remove. That is also
-///         why this service keeps the platform default <c>UserTokenEnforcement = Enforce</c> and
-///         does not opt down to the migration mode the way asset-repo and the communication
-///         controller do: there is nothing to stage.
+///         When AB#5054 landed, this service had <b>no</b> <c>{tenantId}</c> route segment — every
+///         controller was routed <c>system/v{version}/[controller]</c> and a job's target tenant
+///         travelled as a query argument or as TUS upload metadata — so the middleware returned
+///         early on the missing route tenant and the gate changed nothing. The label was set (and
+///         pinned here) anyway, so that the first tenant-scoped route added to this service would
+///         arrive gated instead of silently unguarded, which is the exact failure AB#5054 exists to
+///         remove.
+///     </para>
+///     <para>
+///         AB#5060 added those routes (<c>TenantApi/v1/Controllers/JobsController</c>), so the gate
+///         now fires here for real — and that is why the label matters rather than being
+///         hypothetical. This service still keeps the platform default
+///         <c>UserTokenEnforcement = Enforce</c> and does not opt down to the migration mode the way
+///         asset-repo and the communication controller do. Those two stage because they are
+///         narrowing a gate around callers that already exist; the tenant job routes are new and
+///         have no callers to migrate, so enforcing them from their first release costs nothing and
+///         is the whole point of having set the label early.
 ///     </para>
 /// </summary>
 internal class TenantAuthorizationWiringTests
