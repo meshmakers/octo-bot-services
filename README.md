@@ -81,14 +81,17 @@ Three parts, because a route rename alone would have promised an ownership the s
 - **Metadata** — `tenantId` is still accepted for older clients, but the route decides, and a
   disagreement is refused rather than silently resolved.
 
-🔴 The tenant id becomes a directory name, and `TenantIdRouteConstraint` only rejects a *missing*
-value — so `ResolveTenantDirectory` validates it as a path segment and then verifies the resolved
-path still sits under the storage root. Both checks, because either alone is a single point of
-failure.
+🔴 The tenant id becomes a directory name, so `ResolveTenantDirectory` validates it as a path segment
+and then verifies the resolved path still sits under the storage root — both checks, because either
+alone is a single point of failure. The shared `TenantIdRouteConstraint` already rejects such a value
+on the route, but the same method serves dumps, which arrive as a Hangfire job argument on no route
+at all.
 
-The `tenantId` route constraint that every other tenant-serving OctoMesh host registers
-(`Routing/TenantIdRouteConstraint.cs`, registered in `Program.cs`) arrived with these routes; without
-it the `{tenantId:tenantId}` templates never match. While both surfaces existed, `/system/...` won
+The `tenantId` route constraint arrived with these routes; without it the `{tenantId:tenantId}`
+templates never match. It now lives once in octo-common-services
+(`Infrastructure/Routing/TenantIdRouteConstraint.cs`) and is registered with
+`builder.Services.AddOctoTenantIdRouteConstraint()` — until AB#5060 each host carried its own
+`internal` copy, and the seven copies had drifted. While both surfaces existed, `/system/...` won
 over `/{tenantId}/...` because literal route segments outrank parameter segments. That precedence is
 also why removing the five System actions turns their old URLs into *tenant* routes for a tenant
 named `system` rather than into 404s — see the section above.

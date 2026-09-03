@@ -5,7 +5,6 @@ using Hangfire.Common;
 using Hangfire.States;
 using Hangfire.Storage.Monitoring;
 using Meshmakers.Octo.Backend.BotServices;
-using Meshmakers.Octo.Backend.BotServices.Routing;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
@@ -238,9 +237,10 @@ internal sealed class JobsApiTestHost : IDisposable
             builder.Services.AddOctoTenantAuthorization(configure);
         }
 
-        // Same registration as Program.cs — without it the {tenantId:tenantId} templates 404.
-        builder.Services.Configure<RouteOptions>(options =>
-            options.ConstraintMap.Add("tenantId", typeof(TenantIdRouteConstraint)));
+        // The same call Program.cs makes — without it the {tenantId:tenantId} templates 404. Calling
+        // the shared extension rather than re-registering by hand means these tests run against the
+        // real constraint, so a change to what may name a tenant shows up here.
+        builder.Services.AddOctoTenantIdRouteConstraint();
 
         builder.Services.AddAuthentication(SchemeName)
             .AddScheme<AuthenticationSchemeOptions, TokenShapedAuthenticationHandler>(SchemeName, _ => { });

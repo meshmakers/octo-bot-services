@@ -44,10 +44,10 @@ public class BackupFileStorageServiceTests
     }
 
     /// <summary>
-    ///     🔴 The tenant id becomes a directory name, and it arrives as a route value —
-    ///     <c>TenantIdRouteConstraint</c> only rejects a <i>missing</i> one, so nothing upstream has
-    ///     checked it for being a safe path segment. Every one of these would otherwise write, or
-    ///     read, outside the storage root.
+    ///     🔴 The tenant id becomes a directory name. On the tus route the shared
+    ///     <c>TenantIdRouteConstraint</c> would already have rejected these, but a dump reaches the
+    ///     same code as a Hangfire job argument on no route at all — so this class checks rather than
+    ///     assumes. Every one of these would otherwise write, or read, outside the storage root.
     /// </summary>
     [Test]
     [Arguments("..")]

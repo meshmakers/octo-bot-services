@@ -10,7 +10,6 @@ using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
-using Meshmakers.Octo.Backend.BotServices.Routing;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -91,8 +90,7 @@ try
     // import-archive-data-from-upload, run-fixup-scripts), so the `tenantId` route constraint every
     // other tenant-serving OctoMesh host registers is needed here too. Without it the
     // `{tenantId:tenantId}` templates of TenantApi never match and the routes 404.
-    builder.Services.Configure<RouteOptions>(options =>
-        options.ConstraintMap.Add("tenantId", typeof(TenantIdRouteConstraint)));
+    builder.Services.AddOctoTenantIdRouteConstraint();
 
     // AB#5032 (wired here with AB#5047): lets an operator narrow the client-credentials
     // exemption of UseOctoTenantAuthorization() per environment (OCTO_TENANTAUTHORIZATION__…).

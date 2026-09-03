@@ -61,12 +61,12 @@ public class BackupFileStorageService : IBackupFileStorageService
     ///     would not stay inside it.
     /// </summary>
     /// <remarks>
-    ///     🔴 <b>The tenant id reaching this method is caller-supplied.</b> For tus uploads it is a
-    ///     route value, and <c>TenantIdRouteConstraint</c> deliberately only rejects a <i>missing</i>
-    ///     value — authorization is the tenant gate's job, not the constraint's. So the string is
-    ///     authenticated (it matches the caller's <c>tenant_id</c> claim by the time a request gets
-    ///     here) but it has never been checked for being a safe path segment, and this is the one
-    ///     place it becomes one.
+    ///     🔴 <b>The tenant id reaching this method is caller-supplied, and this class does not get to
+    ///     assume who checked it.</b> For tus uploads it arrives as a route value, where the shared
+    ///     <c>TenantIdRouteConstraint</c> already rejects anything that cannot name a tenant — but for
+    ///     dumps it arrives as a Hangfire job argument, deserialized from storage, on no route at all.
+    ///     One path is guarded upstream and the other is not, so the guard belongs here, at the point
+    ///     where a string becomes a directory.
     ///     <para>
     ///         Two independent checks, because either alone is a single point of failure: the tenant
     ///         id must look like a tenant id, and the combined path must still sit under the root.
