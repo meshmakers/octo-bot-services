@@ -152,15 +152,18 @@ internal class JobArtifactTenantBindingTests
     }
 
     /// <summary>
-    ///     🔴 <b>The residual exposure, pinned rather than argued.</b> With the platform default
-    ///     <c>ServiceTokenEnforcement = LogOnly</c> a foreign <b>service</b> token still gets the
-    ///     artifact — logged, not refused. That is deliberate: this guard is a port of
-    ///     <c>TenantAuthorizationMiddleware</c>, staging included, so one environment switch
-    ///     (<c>OCTO_TENANTAUTHORIZATION__SERVICETOKENENFORCEMENT=Enforce</c>) governs both surfaces and
-    ///     the artifact path cannot end up stricter than every tenant route of the same service. The
-    ///     user path — the one AB#5060 made concrete, and the one a human uses — is closed today,
-    ///     because <c>UserTokenEnforcement</c> defaults to <c>Enforce</c> and this service never opts
-    ///     down. Deleting this test without deleting the staging would hide the gap, not close it.
+    ///     <b>The residual exposure this used to pin is closed (AB#5077).</b> It asserted that a
+    ///     foreign <b>service</b> token still received the artifact under the then-platform default
+    ///     <c>ServiceTokenEnforcement = LogOnly</c> — logged, not refused. That default is now
+    ///     <c>Enforce</c>, so the same request is refused, and this test asserts the refusal instead.
+    ///     <para>
+    ///         The staging itself is deliberately still exercised below: the guard is a port of
+    ///         <c>TenantAuthorizationMiddleware</c> including its modes, so one environment switch
+    ///         governs both surfaces and the artifact path can never end up stricter than every
+    ///         tenant route of the same service. An environment that still needs its consumer
+    ///         inventory sets <c>OCTO_TENANTAUTHORIZATION__SERVICETOKENENFORCEMENT=LogOnly</c> and
+    ///         gets the old behaviour back — which is what the second half pins.
+    ///     </para>
     /// </summary>
     [Test]
     public async Task SystemRoute_Download_ForeignServiceToken_IsStagedExactlyLikeTheMiddleware()
@@ -169,7 +172,17 @@ internal class JobArtifactTenantBindingTests
         using var artifact = new TempArtifact();
         await SeedDumpJobAsync(host, Child, artifact.Path);
 
-        var logOnly = await host.GetAsync($"/system/v1/jobs/download?tenantId={Child}&id={JobId}",
+        // Default configuration since AB#5077: a foreign service token is refused.
+        var byDefault = await host.GetAsync($"/system/v1/jobs/download?tenantId={Child}&id={JobId}",
+            JobsApiTestHost.ServiceToken(Unrelated));
+        await Assert.That(byDefault.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+
+        // And the migration mode still lets it through, so an environment can opt down.
+        using var observing = await JobsApiTestHost.StartAsync(
+            o => o.ServiceTokenEnforcement = ServiceTokenTenantEnforcementMode.LogOnly);
+        await SeedDumpJobAsync(observing, Child, artifact.Path);
+
+        var logOnly = await observing.GetAsync($"/system/v1/jobs/download?tenantId={Child}&id={JobId}",
             JobsApiTestHost.ServiceToken(Unrelated));
         await Assert.That(logOnly.StatusCode).IsEqualTo(HttpStatusCode.OK);
 

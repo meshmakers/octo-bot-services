@@ -18,16 +18,24 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 ///     REST Controller for job management
 /// </summary>
 /// <remarks>
-///     🔴 <b>The five tenant-addressed operations here are deprecated (AB#5060).</b>
+///     🔴 <b>This controller holds job-<i>instance</i> operations only. Do not add a
+///     tenant-addressed operation here.</b> The five that used to live here —
 ///     <c>run-fixup-scripts</c>, <c>restore-from-upload</c>, <c>dump-repository</c>,
-///     <c>export-archive-data</c> and <c>import-archive-data-from-upload</c> take their tenant as the
-///     query parameter <c>?tenantId=…</c>, which the transport tenant gate never sees — it reads the
-///     route value. Their replacements are the identical operations on
-///     <see cref="TenantApi.v1.Controllers.JobsController" /> (<c>{tenantId}/v1/jobs/...</c>), which
-///     share their implementation through <see cref="JobsControllerBase" /> and therefore behave
-///     identically. They stay here, unchanged and functional, only until every caller (SDK, octo-cli,
-///     octo-mcp-service, Studio) has moved — stage 3 of AB#5060 removes them. Do not add a new
-///     tenant-addressed operation to this controller.
+///     <c>export-archive-data</c> and <c>import-archive-data-from-upload</c> — were removed in stage 3
+///     of AB#5060. They took their tenant as the query parameter <c>?tenantId=…</c>, which the
+///     transport tenant gate never sees, because it reads the route value. The replacements are the
+///     identical operations on <see cref="TenantApi.v1.Controllers.JobsController" />
+///     (<c>{tenantId}/v1/jobs/...</c>); both surfaces shared their implementation through
+///     <see cref="JobsControllerBase" /> throughout the migration, so nothing about their behaviour
+///     changed when the callers moved.
+///     <para>
+///         The removal was verified against the whole checkout first: no production caller was left.
+///         The SDK stopped addressing them when its five job verbs moved to per-call tenant routes,
+///         octo-cli and octo-mcp-service inherit that through the package, and the frontend builds
+///         <c>{tenantId}/v1/jobs/…</c> itself. An external caller that still uses the old paths now
+///         gets a 404 — deliberately, since a silent tenant-ungated path is the thing this epic set
+///         out to remove.
+///     </para>
 ///     <para>
 ///         🔴 <b>The three job-instance actions are gated in code, not by the middleware (AB#5070).</b>
 ///         <c>GET</c> by job id, <c>download</c> and <c>DELETE</c> address a Hangfire job id, which is
@@ -89,138 +97,6 @@ public class JobsController : JobsControllerBase
     public Task<IActionResult> Get([Required] string id)
     {
         return GetJobAsync(id, null);
-    }
-
-    /// <summary>
-    /// Runs the fixup scripts for the given tenant
-    /// </summary>
-    /// <param name="tenantId">The tenant id</param>
-    /// <returns></returns>
-    /// <remarks>
-    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/run-fixup-scripts</c>. The tenant is a
-    ///     query parameter here, so the transport tenant gate cannot check it.
-    /// </remarks>
-    // POST: system/jobs/run-fixup-scripts?tenantId=abc
-    [HttpPost]
-    [Route("run-fixup-scripts")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
-    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public IActionResult RunFixupScripts(string tenantId)
-    {
-        return EnqueueRunFixupScripts(tenantId);
-    }
-
-    /// <summary>
-    /// Restores the repository for the given tenant from a tus resumable upload.
-    /// The file must have been uploaded via the tus endpoint at /system/v1/tus-upload first.
-    /// </summary>
-    /// <param name="tusFileId">The tus file ID from the completed upload.</param>
-    /// <param name="tenantId">The tenant id.</param>
-    /// <param name="databaseName">The name of the database to restore.</param>
-    /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
-    /// <param name="restoreArchiveData">When <c>true</c> and the uploaded artifact is an <c>.octobak.zip</c> carrying archive data, the tenant's CrateDB archives are also restored (concept AB#4231). Default <c>false</c> (Mongo only).</param>
-    /// <returns></returns>
-    /// <remarks>
-    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/restore-from-upload</c>. The tenant is a
-    ///     query parameter here, so the transport tenant gate cannot check it.
-    /// </remarks>
-    [HttpPost]
-    [Route("restore-from-upload")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
-    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult RestoreFromUpload(
-        [Required] string tusFileId,
-        [Required] string tenantId,
-        [Required] string databaseName,
-        string? oldDatabaseName = null,
-        [FromQuery] bool restoreArchiveData = false)
-    {
-        return EnqueueRestoreFromUpload(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData);
-    }
-
-    /// <summary>
-    /// Dumps the repository for the given tenant
-    /// </summary>
-    /// <param name="tenantId">The tenant id</param>
-    /// <param name="includeArchiveData">
-    /// When <c>true</c>, the tenant's CrateDB archive rows are bundled with the mongodump blob into an
-    /// <c>.octobak.zip</c> container (concept AB#4231). When <c>false</c> (default), a single mongodump
-    /// <c>.tar.gz</c> is produced exactly as before.
-    /// </param>
-    /// <returns></returns>
-    /// <remarks>
-    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/dump-repository</c>. The tenant is a
-    ///     query parameter here, so the transport tenant gate cannot check it.
-    /// </remarks>
-    [HttpPost]
-    [Route("dump-repository")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
-    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public IActionResult DumpRepository(string tenantId, [FromQuery] bool includeArchiveData = false)
-    {
-        return EnqueueDumpRepository(tenantId, includeArchiveData);
-    }
-
-    /// <summary>
-    /// Exports the data rows of an archive to a downloadable ZIP (AB#4230). The produced ZIP is
-    /// registered as the job's downloadable result and retrieved via the existing
-    /// <c>jobs/download</c> endpoint. When both <paramref name="fromUtc"/> and <paramref name="toUtc"/>
-    /// are omitted the whole archive is exported; when supplied, only rows in the half-open window
-    /// <c>[fromUtc, toUtc)</c> are exported.
-    /// </summary>
-    /// <param name="tenantId">The tenant that owns the archive.</param>
-    /// <param name="archiveRtId">Runtime id of the <c>CkArchive</c> entity.</param>
-    /// <param name="fromUtc">Optional inclusive lower bound of the export window (ISO-8601 UTC).</param>
-    /// <param name="toUtc">Optional exclusive upper bound of the export window (ISO-8601 UTC).</param>
-    /// <remarks>
-    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/export-archive-data</c>. The tenant is a
-    ///     query parameter here, so the transport tenant gate cannot check it.
-    /// </remarks>
-    [HttpPost]
-    [Route("export-archive-data")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
-    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public IActionResult ExportArchiveData(
-        [Required] string tenantId,
-        [Required] string archiveRtId,
-        DateTime? fromUtc = null,
-        DateTime? toUtc = null)
-    {
-        return EnqueueExportArchiveData(tenantId, archiveRtId, fromUtc, toUtc);
-    }
-
-    /// <summary>
-    /// Imports archive data rows into the given archive from a tus resumable upload (AB#4230). The
-    /// export ZIP must have been uploaded via the tus endpoint at <c>/system/v1/tus-upload</c> first.
-    /// Schema-match validation runs inside the job; on mismatch the job ends Failed with a
-    /// field-level reason surfaced through <c>jobs/{id}</c>.
-    /// </summary>
-    /// <param name="tusFileId">The tus file ID from the completed upload.</param>
-    /// <param name="tenantId">The tenant that owns the target archive.</param>
-    /// <param name="archiveRtId">Runtime id of the target <c>CkArchive</c> entity.</param>
-    /// <param name="mode">Import mode (<c>InsertOnly</c>/<c>Upsert</c>; binds from <c>0</c>/<c>1</c> or the name).</param>
-    /// <remarks>
-    ///     Deprecated (AB#5060) — use <c>POST {tenantId}/v1/jobs/import-archive-data-from-upload</c>. The
-    ///     tenant is a query parameter here, so the transport tenant gate cannot check it.
-    /// </remarks>
-    [HttpPost]
-    [Route("import-archive-data-from-upload")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
-    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult ImportArchiveDataFromUpload(
-        [Required] string tusFileId,
-        [Required] string tenantId,
-        [Required] string archiveRtId,
-        [FromQuery] ArchiveImportMode mode = ArchiveImportMode.InsertOnly)
-    {
-        return EnqueueImportArchiveDataFromUpload(tusFileId, tenantId, archiveRtId, mode);
     }
 
     /// <summary>

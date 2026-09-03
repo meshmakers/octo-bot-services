@@ -21,22 +21,32 @@ Runtime-model exports automatically embed the CK model dependencies required by 
 The five job operations whose subject is **one tenant** — repository dump, restore from a tus upload,
 archive data export, archive data import and the fixup script run — are served on tenant routes:
 
-| Operation | Tenant route (use this) | Deprecated System route |
+| Operation | Route | Removed System route (stage 3) |
 | --- | --- | --- |
-| Repository dump | `POST {tenantId}/v1/jobs/dump-repository` | `POST system/v1/jobs/dump-repository?tenantId=…` |
-| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | `POST system/v1/jobs/restore-from-upload?tenantId=…` |
-| Archive data export | `POST {tenantId}/v1/jobs/export-archive-data` | `POST system/v1/jobs/export-archive-data?tenantId=…` |
-| Archive data import | `POST {tenantId}/v1/jobs/import-archive-data-from-upload` | `POST system/v1/jobs/import-archive-data-from-upload?tenantId=…` |
-| Fixup script run | `POST {tenantId}/v1/jobs/run-fixup-scripts` | `POST system/v1/jobs/run-fixup-scripts?tenantId=…` |
+| Repository dump | `POST {tenantId}/v1/jobs/dump-repository` | ~~`system/v1/jobs/dump-repository?tenantId=…`~~ |
+| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | ~~`system/v1/jobs/restore-from-upload?tenantId=…`~~ |
+| Archive data export | `POST {tenantId}/v1/jobs/export-archive-data` | ~~`system/v1/jobs/export-archive-data?tenantId=…`~~ |
+| Archive data import | `POST {tenantId}/v1/jobs/import-archive-data-from-upload` | ~~`system/v1/jobs/import-archive-data-from-upload?tenantId=…`~~ |
+| Fixup script run | `POST {tenantId}/v1/jobs/run-fixup-scripts` | ~~`system/v1/jobs/run-fixup-scripts?tenantId=…`~~ |
+
+The System variants were **removed** in stage 3 of AB#5060. The checkout was searched for callers
+first and none was left: the SDK stopped addressing them when its five job verbs moved to per-call
+tenant routes, octo-cli and octo-mcp-service inherit that through the package, and the frontend builds
+the tenant route itself.
+
+An external caller still on an old path is refused — but with **403, not 404**, and the reason is
+worth knowing. With no System action left to match, `system/v1/jobs/dump-repository` now matches the
+tenant route `{tenantId:tenantId}/v1/jobs/dump-repository` with `tenantId = "system"`, so the request
+reaches the tenant gate and is refused there because the caller's token names a different tenant.
+That is the stricter of the two possible outcomes, and it is what the tests pin. The one consequence
+to keep in mind: a tenant *named* `system` would make the old URLs live again as that tenant's
+routes.
 
 **Why the route shape is the whole point.** `TenantAuthorizationMiddleware` reads the tenant from the
 **route value**. As long as these operations carried their tenant in `?tenantId=…` the gate never saw
 them, so a token issued for one tenant could dump, restore or export any other tenant's repository.
-The System variants stay functional and unchanged — they are the fallback until every caller (SDK,
-octo-cli, octo-mcp-service, Studio) has moved, which is stage 2/3 of AB#5060 — but they are marked
-deprecated in their XML docs and no new tenant-addressed operation may be added to them. This repo has
-no `[Obsolete]`/`deprecated` convention for REST endpoints (none of the six services has one), so the
-marking is documentation, not a wire-level flag.
+No new tenant-addressed operation may be added to the System controller — it holds job-*instance*
+operations only.
 
 Both surfaces share their bodies through `Controllers/JobsControllerBase.cs`, so the tenant route
 enqueues the identical Hangfire job with identical arguments; `TenantJobRouteAuthorizationTests`
@@ -61,9 +71,10 @@ not a route rename.
 
 The `tenantId` route constraint that every other tenant-serving OctoMesh host registers
 (`Routing/TenantIdRouteConstraint.cs`, registered in `Program.cs`) arrived with these routes; without
-it the `{tenantId:tenantId}` templates never match. `/system/...` keeps winning over
-`/{tenantId}/...` because literal route segments outrank parameter segments — the same coexistence
-octo-ai-services has between `system/v1/aiservice` and `{tenantId}/v1/aiservice`.
+it the `{tenantId:tenantId}` templates never match. While both surfaces existed, `/system/...` won
+over `/{tenantId}/...` because literal route segments outrank parameter segments. That precedence is
+also why removing the five System actions turns their old URLs into *tenant* routes for a tenant
+named `system` rather than into 404s — see the section above.
 
 Coverage: `tests/Jobs.Tests/Api/TenantJobRouteAuthorizationTests.cs` — an in-process TestHost running
 the two real controllers behind the real gate: own tenant allowed, parent user token allowed on the

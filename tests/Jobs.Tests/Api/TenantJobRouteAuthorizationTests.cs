@@ -139,52 +139,18 @@ internal class TenantJobRouteAuthorizationTests
     }
 
     /// <summary>
-    ///     Same operation, same effect: the tenant route enqueues the identical Hangfire job — same
-    ///     job type, same method, same arguments — as the deprecated System-API route it replaces.
-    ///     That is what makes the System variant safe to keep as a fallback until stage 3 removes it,
-    ///     and it is checked rather than argued because the two surfaces are two controllers.
-    /// </summary>
-    [Test]
-    [Arguments("run-fixup-scripts", "")]
-    [Arguments("dump-repository", "")]
-    [Arguments("export-archive-data", ExportQuery)]
-    [Arguments("restore-from-upload", RestoreQuery)]
-    [Arguments("import-archive-data-from-upload", ImportQuery)]
-    public async Task TenantRoute_EnqueuesTheSameJobAsTheSystemRoute(string route, string query)
-    {
-        using var host = await JobsApiTestHost.StartAsync();
-
-        var tenantResponse = await host.PostAsync($"/{Child}/v1/jobs/{route}{query}",
-            JobsApiTestHost.UserToken(Child));
-        await Assert.That(tenantResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var viaTenantRoute = host.LastEnqueuedJob();
-
-        host.ResetJobClient();
-
-        var separator = query.Length == 0 ? "?" : "&";
-        var systemResponse = await host.PostAsync($"/system/v1/jobs/{route}{query}{separator}tenantId={Child}",
-            JobsApiTestHost.UserToken(Child));
-        await Assert.That(systemResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var viaSystemRoute = host.LastEnqueuedJob();
-
-        await Assert.That(viaTenantRoute.Type).IsEqualTo(viaSystemRoute.Type);
-        await Assert.That(viaTenantRoute.Method.Name).IsEqualTo(viaSystemRoute.Method.Name);
-        var sameArguments = viaTenantRoute.Args.Select(a => a?.ToString())
-            .SequenceEqual(viaSystemRoute.Args.Select(a => a?.ToString()));
-        await Assert.That(sameArguments).IsTrue();
-    }
-
-    /// <summary>
-    ///     The System-API variants of the five <i>enqueueing</i> operations keep working untouched —
-    ///     including for a caller whose token was issued for a different tenant, because the gate reads
-    ///     the route value and that route has none. That is precisely the hole the tenant routes close;
-    ///     pinning it here records that removing the System variants (stage 3 of AB#5060) is the fix,
-    ///     not a regression.
+    ///     The tenant the job runs against comes from the <b>route segment</b> — the value the
+    ///     transport gate checked before the request ever reached the controller.
     /// </summary>
     /// <remarks>
-    ///     🔴 Enqueueing only. The System <i>artifact</i> routes are no longer ungated: AB#5070 gave
-    ///     them the check the middleware cannot perform there, because an open artifact endpoint could
-    ///     not wait for stage 3. See <see cref="JobArtifactTenantBindingTests" />.
+    ///     This replaces the migration invariant it grew out of. Until stage 3 of AB#5060 the same
+    ///     operation existed twice, and the test asserted that both surfaces enqueued an identical
+    ///     Hangfire job — same type, same method, same arguments — which is what made the deprecated
+    ///     System variant safe to keep as a fallback. That variant is gone, so there is no second
+    ///     surface left to compare against, and what remains worth pinning is the half that carries
+    ///     the security property: a job started through <c>{tenantId}/v1/jobs/…</c> acts on the tenant
+    ///     the gate authorized, and on no other. The removed surface took its tenant from
+    ///     <c>?tenantId=</c>, so gate and job could disagree; here they cannot.
     /// </remarks>
     [Test]
     [Arguments("run-fixup-scripts", "")]
@@ -192,15 +158,63 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
-    public async Task SystemRoute_StaysFunctionalAndUngated(string route, string query)
+    public async Task TenantRoute_EnqueuesTheJobForTheRouteTenant(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync();
+        host.ResetJobClient();
+
+        var response = await host.PostAsync($"/{Child}/v1/jobs/{route}{query}",
+            JobsApiTestHost.UserToken(Child));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await Assert.That(host.EnqueuedJobCount).IsEqualTo(1);
+
+        var enqueued = host.LastEnqueuedJob();
+        var carriesRouteTenant = enqueued.Args.Any(a => string.Equals(a?.ToString(), Child, StringComparison.Ordinal));
+        await Assert.That(carriesRouteTenant).IsTrue();
+    }
+
+    /// <summary>
+    ///     The five <i>enqueueing</i> operations are gone from the System API (stage 3 of AB#5060).
+    ///     Until then they took their tenant from <c>?tenantId=</c>, which the transport gate cannot
+    ///     see, so any authenticated caller could start a job against any tenant — the hole the tenant
+    ///     routes were built to close. This asserts that no such request enqueues anything any more,
+    ///     for the caller that used to be able to do it: a token issued for an unrelated tenant.
+    /// </summary>
+    /// <remarks>
+    ///     🔴 <b>The refusal is 403, not 404, and that is worth knowing.</b> Once the System actions
+    ///     were removed, <c>system/v1/jobs/dump-repository</c> stopped matching a route of its own and
+    ///     started matching the tenant route <c>{tenantId:tenantId}/v1/jobs/dump-repository</c> with
+    ///     <c>tenantId = "system"</c> — so the request now reaches the gate, which refuses it because
+    ///     the caller's token names a different tenant. The outcome an external caller sees is a
+    ///     refusal either way, and going through the gate is the stricter of the two paths. What it
+    ///     costs is that a tenant literally named <c>system</c> would make the old URLs live again as
+    ///     that tenant's routes; the tenant-id route constraint is what keeps this from being reachable
+    ///     for anything but a syntactically valid tenant id.
+    ///     <para>
+    ///         Enqueueing only. The System <i>artifact</i> routes (<c>GET</c>, <c>download</c>,
+    ///         <c>DELETE</c>) deliberately stay: they address a Hangfire job id, which is global to the
+    ///         instance, and AB#5070 gave them the check in code that the middleware cannot perform on
+    ///         a route with no tenant segment. See <see cref="JobArtifactTenantBindingTests" />.
+    ///     </para>
+    /// </remarks>
+    [Test]
+    [Arguments("run-fixup-scripts", "")]
+    [Arguments("dump-repository", "")]
+    [Arguments("export-archive-data", ExportQuery)]
+    [Arguments("restore-from-upload", RestoreQuery)]
+    [Arguments("import-archive-data-from-upload", ImportQuery)]
+    public async Task SystemRoute_IsGone_AndEnqueuesNothing(string route, string query)
+    {
+        using var host = await JobsApiTestHost.StartAsync();
+        host.ResetJobClient();
 
         var separator = query.Length == 0 ? "?" : "&";
         var response = await host.PostAsync($"/system/v1/jobs/{route}{query}{separator}tenantId={Child}",
             JobsApiTestHost.UserToken(Unrelated));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.IsSuccessStatusCode).IsFalse();
+        await Assert.That(host.EnqueuedJobCount).IsEqualTo(0);
     }
 
     /// <summary>

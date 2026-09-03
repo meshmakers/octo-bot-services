@@ -132,6 +132,15 @@ internal sealed class JobsApiTestHost : IDisposable
         _backgroundJobClient.ClearReceivedCalls();
     }
 
+    /// <summary>
+    ///     How many jobs were enqueued since the last <see cref="ResetJobClient" />. Asserting on zero
+    ///     is how a test states that a request was refused <i>before</i> it did anything, rather than
+    ///     merely that it answered with an error status.
+    /// </summary>
+    public int EnqueuedJobCount =>
+        _backgroundJobClient.ReceivedCalls()
+            .Count(c => c.GetMethodInfo().Name == nameof(IBackgroundJobClient.Create));
+
     public IBackgroundJobClient BackgroundJobClient => _backgroundJobClient;
 
     public IJobStorageAccessor JobStorage => _jobStorage;
