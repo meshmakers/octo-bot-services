@@ -1,8 +1,8 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using Asp.Versioning;
+using Duende.IdentityModel;
 using Hangfire;
 using Hangfire.Storage.Monitoring;
-using IdentityModel;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;

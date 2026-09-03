@@ -6,6 +6,16 @@
 version: 2
 updates:
   - package-ecosystem: "nuget" # See documentation for possible values
-    directory: "/src" # Location of package manifests
+    directory: "/" # Location of package manifests (src and tests)
     schedule:
       interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/src/BotServices"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # A new .NET major is a platform decision, not a Dependabot bump.
+      - dependency-name: "mcr.microsoft.com/dotnet/aspnet"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mcr.microsoft.com/dotnet/sdk"
+        update-types: ["version-update:semver-major"]
