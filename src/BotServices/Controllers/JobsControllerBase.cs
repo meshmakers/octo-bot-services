@@ -124,7 +124,7 @@ public abstract class JobsControllerBase : ControllerBase
         try
         {
             // Verify the tus upload file exists on disk and has content
-            var uploadCheck = ValidateTusUpload(tusFileId, out _);
+            var uploadCheck = ValidateTusUpload(tenantId, tusFileId, out _);
             if (uploadCheck != null)
             {
                 return uploadCheck;
@@ -192,7 +192,7 @@ public abstract class JobsControllerBase : ControllerBase
     {
         try
         {
-            var uploadCheck = ValidateTusUpload(tusFileId, out var filePath);
+            var uploadCheck = ValidateTusUpload(tenantId, tusFileId, out var filePath);
             if (uploadCheck != null)
             {
                 return uploadCheck;
@@ -479,22 +479,30 @@ public abstract class JobsControllerBase : ControllerBase
     }
 
     /// <summary>
-    ///     Verifies that the tus upload exists on disk and is not empty.
+    ///     Verifies that the tus upload exists for this tenant and is not empty.
     /// </summary>
+    /// <param name="tenantId">The tenant the consuming job will run for.</param>
     /// <param name="tusFileId">The tus file ID from the completed upload.</param>
     /// <param name="filePath">The resolved path of the uploaded file.</param>
     /// <returns>
     ///     <c>null</c> when the upload is usable, otherwise the error result to return to the caller.
     /// </returns>
     /// <remarks>
-    ///     The tus upload itself carries no tenant (AB#5060): the upload sink is a tenant-neutral
-    ///     staging area keyed by the tus file id, and the tenant is decided by the restore / import
-    ///     call that consumes it. This check therefore only answers "is there a file", never "whose
-    ///     file is it".
+    ///     🔴 <b>"Whose file is it" is answered by the address, not by a check here (AB#5060).</b>
+    ///     Uploads are stored under a per-tenant directory, so resolving the id against
+    ///     <paramref name="tenantId" /> cannot reach a file staged by another tenant — the not-found
+    ///     branch below <i>is</i> the ownership answer for a foreign id. Until stage 3 the sink was
+    ///     flat and this method only asked "is there a file"; the <c>tenantId</c> upload metadata
+    ///     that looked like it bound the two was never read by anything.
+    ///     <para>
+    ///         Deliberately not distinguished in the response: "no such upload" and "that upload
+    ///         belongs to another tenant" both answer 404. Separating them would turn this into an
+    ///         oracle for which tus ids exist elsewhere.
+    ///     </para>
     /// </remarks>
-    private IActionResult? ValidateTusUpload(string tusFileId, out string filePath)
+    private IActionResult? ValidateTusUpload(string tenantId, string tusFileId, out string filePath)
     {
-        filePath = _backupFileStorage.GetTusUploadFilePath(tusFileId);
+        filePath = _backupFileStorage.GetTusUploadFilePath(tenantId, tusFileId);
         if (!System.IO.File.Exists(filePath))
         {
             return NotFound(new NotFoundErrorDto(

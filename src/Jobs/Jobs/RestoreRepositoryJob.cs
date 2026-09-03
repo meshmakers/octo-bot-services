@@ -33,8 +33,10 @@ public class RestoreRepositoryJob(
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
 
-        // cacheKey is used as the tus file ID (or legacy cache key)
-        var filePath = backupFileStorage.GetTusUploadFilePath(cacheKey);
+        // cacheKey is used as the tus file ID (or legacy cache key). The tenant is part of the
+        // address since AB#5060: uploads live under a per-tenant directory, so a restore can only
+        // ever resolve a file staged for the very tenant it is restoring.
+        var filePath = backupFileStorage.GetTusUploadFilePath(tenantId, cacheKey);
 
         try
         {

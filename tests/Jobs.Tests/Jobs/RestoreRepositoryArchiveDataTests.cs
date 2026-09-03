@@ -39,7 +39,7 @@ public class RestoreRepositoryArchiveDataTests
     private void SetupCommon(string filePath)
     {
         _systemContext.IsSystemTenantExistingAsync().Returns(true);
-        _backupFileStorage.GetTusUploadFilePath("file-1").Returns(filePath);
+        _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), "file-1").Returns(filePath);
         _systemContext.RestoreTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                 Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(),
                 Arg.Any<CancellationToken>())

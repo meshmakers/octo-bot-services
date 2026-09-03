@@ -6,11 +6,29 @@ namespace Meshmakers.Octo.Backend.Jobs.Services;
 public interface IBackupFileStorageService
 {
     /// <summary>
-    /// Gets the full file path for a tus upload by its file ID.
+    /// Gets the directory tus uploads for a tenant are stored in.
     /// </summary>
+    /// <param name="tenantId">The tenant identifier.</param>
+    /// <returns>The tenant's upload directory.</returns>
+    /// <exception cref="ArgumentException">The tenant id is not usable as a path segment.</exception>
+    string GetTusUploadDirectory(string tenantId);
+
+    /// <summary>
+    /// Gets the full file path for a tus upload of a tenant.
+    /// </summary>
+    /// <remarks>
+    ///     🔴 <b>The tenant is part of the address, not a cross-check (AB#5060).</b> Uploads are
+    ///     stored under a per-tenant directory, so a restore running for one tenant cannot resolve a
+    ///     file another tenant staged even if it is handed that file's id. The binding is structural:
+    ///     there is no separate ownership check to remember, and no place to forget it. The sink used
+    ///     to be flat, with a <c>tenantId</c> upload-metadata field that nothing read — which looked
+    ///     like an ownership binding and was not one.
+    /// </remarks>
+    /// <param name="tenantId">The tenant the upload belongs to.</param>
     /// <param name="tusFileId">The tus file identifier.</param>
     /// <returns>The full path to the uploaded file.</returns>
-    string GetTusUploadFilePath(string tusFileId);
+    /// <exception cref="ArgumentException">The tenant id is not usable as a path segment.</exception>
+    string GetTusUploadFilePath(string tenantId, string tusFileId);
 
     /// <summary>
     /// Gets the full file path for a database dump file.

@@ -60,14 +60,31 @@ clients share the parent's secret. The marker means *administration*, not *acces
 endpoints returns tenant content, and `system/v1/jobs/download` (which does hand out a job artifact)
 is deliberately **not** marked. Do not put the marker on anything that reads or writes tenant data.
 
-**The tus upload sink stays tenant-neutral, deliberately.** `/system/v1/tus-upload` requires a
-`tenantId` upload-metadata field, but nothing reads it: the file is stored flat under its tus file id
-(`BackupFileStorageService.GetTusUploadFilePath`), and both consuming jobs take the tenant from the
-request that starts them. A `{tenantId}/v1/tus-upload` route would therefore promise an ownership
-binding the storage does not have. The upload is a staging area; the tenant-carrying, gated decision
-is the `restore-from-upload` / `import-archive-data-from-upload` call. Binding the sink to a tenant
-(persist the metadata, re-check it at consumption time, scope the storage path) is a separate change,
-not a route rename.
+**The tus upload sink is tenant-routed too.** `POST {tenantId}/v1/tus-upload` — moved off
+`/system/v1/tus-upload` in stage 3. The old shape required a `tenantId` upload-metadata field that
+nothing read: the file was stored flat under its tus file id, both consuming jobs took the tenant
+from the request that started them, and the gate never saw the upload at all because it reads the
+route value. So any caller holding `octo_api` could stage bytes for any tenant, and the metadata
+field looked like an ownership binding while being decoration.
+
+Three parts, because a route rename alone would have promised an ownership the storage did not have:
+
+- **Route** — `{tenantId}/v1/tus-upload`, registered through endpoint routing (only that overload
+  produces route values) and carrying `[AllowParentTenantAdministration]`, the same marker the
+  consuming restore / import routes carry. Without it the upload would refuse the exact parent
+  administrator the restore then accepts.
+- **Storage** — uploads live under a per-tenant directory
+  (`BackupFileStorageService.GetTusUploadDirectory`). This is the actual binding: a restore for one
+  tenant cannot resolve a file staged by another even when handed its id, and there is no separate
+  ownership check to remember or forget. "No such upload" and "belongs to another tenant" both
+  answer 404, so the endpoint is not an oracle for which tus ids exist elsewhere.
+- **Metadata** — `tenantId` is still accepted for older clients, but the route decides, and a
+  disagreement is refused rather than silently resolved.
+
+🔴 The tenant id becomes a directory name, and `TenantIdRouteConstraint` only rejects a *missing*
+value — so `ResolveTenantDirectory` validates it as a path segment and then verifies the resolved
+path still sits under the storage root. Both checks, because either alone is a single point of
+failure.
 
 The `tenantId` route constraint that every other tenant-serving OctoMesh host registers
 (`Routing/TenantIdRouteConstraint.cs`, registered in `Program.cs`) arrived with these routes; without

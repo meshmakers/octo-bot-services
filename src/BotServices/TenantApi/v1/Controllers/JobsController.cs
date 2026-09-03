@@ -60,14 +60,14 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 ///         The starting subject is recorded on the job so a later, finer rule needs no migration.
 ///     </para>
 ///     <para>
-///         <b>The tus upload sink stays tenant-neutral, deliberately.</b> The resumable upload endpoint
-///         (<c>/system/v1/tus-upload</c>) takes a <c>tenantId</c> upload metadata field, but nothing
-///         reads it: the file is stored flat under its tus file id, and both consuming jobs take the
-///         tenant from the request that starts them. Putting the upload on a tenant route would
-///         therefore promise an ownership binding the storage does not have — the upload is a staging
-///         area, and the tenant-carrying, gated decision is the restore / import call below. Binding
-///         the sink to a tenant is a separate change (it needs the metadata to be persisted and
-///         re-checked at consumption time), not a route rename.
+///         <b>The tus upload sink is tenant-routed too (stage 3).</b> It sits on
+///         <c>{tenantId}/v1/tus-upload</c> and carries this same marker, so the parent administrator
+///         this controller admits can also stage the file they will restore. It used to be
+///         <c>/system/v1/tus-upload</c> with the tenant as an upload-metadata field that nothing
+///         read — invisible to the gate, which reads the route value, and binding nothing, because
+///         the file was stored flat under its tus file id. The binding is now the storage layout:
+///         uploads live under a per-tenant directory, so the actions below cannot resolve a file
+///         staged by another tenant even when handed its id.
 ///     </para>
 /// </remarks>
 [Authorize(AuthenticationSchemes = OidcConstants.AuthenticationSchemes.AuthorizationHeaderBearer)]

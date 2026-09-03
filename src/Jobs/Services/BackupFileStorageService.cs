@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Services;
@@ -7,6 +8,14 @@ namespace Meshmakers.Octo.Backend.Jobs.Services;
 /// </summary>
 public class BackupFileStorageService : IBackupFileStorageService
 {
+    /// <summary>
+    ///     What may become a per-tenant directory name. Deliberately narrower than "a tenant id the
+    ///     platform accepts": this is a filesystem guard, so it admits only characters that mean the
+    ///     same thing on every platform we run on, and no separator, no dot-segment, no whitespace.
+    /// </summary>
+    private static readonly Regex TenantDirectoryName =
+        new("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", RegexOptions.Compiled);
+
     private readonly ILogger<BackupFileStorageService> _logger;
 
     /// <summary>
@@ -30,15 +39,66 @@ public class BackupFileStorageService : IBackupFileStorageService
     public string DumpStoragePath { get; }
 
     /// <inheritdoc />
-    public string GetTusUploadFilePath(string tusFileId)
+    public string GetTusUploadDirectory(string tenantId)
     {
-        return Path.Combine(TusStoragePath, tusFileId);
+        return ResolveTenantDirectory(TusStoragePath, tenantId);
+    }
+
+    /// <inheritdoc />
+    public string GetTusUploadFilePath(string tenantId, string tusFileId)
+    {
+        return Path.Combine(GetTusUploadDirectory(tenantId), tusFileId);
     }
 
     /// <inheritdoc />
     public string GetDumpFilePath(string tenantId, string fileName)
     {
-        return Path.Combine(DumpStoragePath, tenantId, fileName);
+        return Path.Combine(ResolveTenantDirectory(DumpStoragePath, tenantId), fileName);
+    }
+
+    /// <summary>
+    ///     Resolves the per-tenant subdirectory of a storage root, rejecting any tenant id that
+    ///     would not stay inside it.
+    /// </summary>
+    /// <remarks>
+    ///     🔴 <b>The tenant id reaching this method is caller-supplied.</b> For tus uploads it is a
+    ///     route value, and <c>TenantIdRouteConstraint</c> deliberately only rejects a <i>missing</i>
+    ///     value — authorization is the tenant gate's job, not the constraint's. So the string is
+    ///     authenticated (it matches the caller's <c>tenant_id</c> claim by the time a request gets
+    ///     here) but it has never been checked for being a safe path segment, and this is the one
+    ///     place it becomes one.
+    ///     <para>
+    ///         Two independent checks, because either alone is a single point of failure: the tenant
+    ///         id must look like a tenant id, and the combined path must still sit under the root.
+    ///         The second catches whatever the first fails to anticipate — platform-specific path
+    ///         quirks, an absolute path, a device name — and it is the check that cannot be argued
+    ///         around, since it compares the resolved result rather than the input.
+    ///     </para>
+    /// </remarks>
+    /// <param name="root">The storage root.</param>
+    /// <param name="tenantId">The tenant the files belong to.</param>
+    /// <returns>The tenant's directory beneath <paramref name="root" />.</returns>
+    /// <exception cref="ArgumentException">The tenant id is not usable as a path segment.</exception>
+    private static string ResolveTenantDirectory(string root, string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || !TenantDirectoryName.IsMatch(tenantId))
+        {
+            throw new ArgumentException(
+                $"'{tenantId}' is not a valid tenant id for file storage.", nameof(tenantId));
+        }
+
+        var rootFull = Path.GetFullPath(root);
+        var combined = Path.GetFullPath(Path.Combine(rootFull, tenantId));
+
+        // TrimEnd so a root of "/data/tus" is not treated as a prefix of "/data/tus-other".
+        var rootPrefix = rootFull.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!combined.StartsWith(rootPrefix, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"'{tenantId}' would resolve outside the storage root.", nameof(tenantId));
+        }
+
+        return combined;
     }
 
     /// <inheritdoc />

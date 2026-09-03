@@ -22,7 +22,7 @@ public class RestoreRepositoryJobTests
     public async Task Run_SystemTenantDoesNotExist_ReturnsEarly()
     {
         _systemContext.IsSystemTenantExistingAsync().Returns(false);
-        _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>()).Returns("/data/tus-uploads/abc123");
+        _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), Arg.Any<string>()).Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
         await job.Run("tenant-1", "db-1", "abc123", null, false, null);
@@ -37,7 +37,7 @@ public class RestoreRepositoryJobTests
     public async Task Run_SystemTenantDoesNotExist_StillDeletesFile()
     {
         _systemContext.IsSystemTenantExistingAsync().Returns(false);
-        _backupFileStorage.GetTusUploadFilePath("abc123").Returns("/data/tus-uploads/abc123");
+        _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
         await job.Run("tenant-1", "db-1", "abc123", null, false, null);
@@ -49,7 +49,7 @@ public class RestoreRepositoryJobTests
     public async Task Run_FileDoesNotExist_ThrowsJobFailedException()
     {
         _systemContext.IsSystemTenantExistingAsync().Returns(true);
-        _backupFileStorage.GetTusUploadFilePath("abc123").Returns("/nonexistent/abc123");
+        _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns("/nonexistent/abc123");
         var job = CreateJob();
 
         await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null))
@@ -60,7 +60,7 @@ public class RestoreRepositoryJobTests
     public async Task Run_FileDoesNotExist_DeletesFileInFinally()
     {
         _systemContext.IsSystemTenantExistingAsync().Returns(true);
-        _backupFileStorage.GetTusUploadFilePath("abc123").Returns("/nonexistent/abc123");
+        _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns("/nonexistent/abc123");
         var job = CreateJob();
 
         try
@@ -83,7 +83,7 @@ public class RestoreRepositoryJobTests
         {
             await File.WriteAllTextAsync(tempFile, "backup content");
             _systemContext.IsSystemTenantExistingAsync().Returns(true);
-            _backupFileStorage.GetTusUploadFilePath("abc123").Returns(tempFile);
+            _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns(tempFile);
 
             var commandResult = new CommandResult { Success = true };
             _systemContext.RestoreTenantAsync(
@@ -112,7 +112,7 @@ public class RestoreRepositoryJobTests
         {
             await File.WriteAllTextAsync(tempFile, "backup content");
             _systemContext.IsSystemTenantExistingAsync().Returns(true);
-            _backupFileStorage.GetTusUploadFilePath("abc123").Returns(tempFile);
+            _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns(tempFile);
 
             var commandResult = new CommandResult { Success = true };
             _systemContext.RestoreTenantAsync(
@@ -143,7 +143,7 @@ public class RestoreRepositoryJobTests
         {
             await File.WriteAllTextAsync(tempFile, "backup content");
             _systemContext.IsSystemTenantExistingAsync().Returns(true);
-            _backupFileStorage.GetTusUploadFilePath("abc123").Returns(tempFile);
+            _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns(tempFile);
 
             var commandResult = new CommandResult { Success = false, ExitCode = 1 };
             _systemContext.RestoreTenantAsync(
@@ -167,11 +167,11 @@ public class RestoreRepositoryJobTests
     public async Task Run_UsesCorrectTusFileIdForPath()
     {
         _systemContext.IsSystemTenantExistingAsync().Returns(false);
-        _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>()).Returns("/data/tus-uploads/myFileId");
+        _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), Arg.Any<string>()).Returns("/data/tus-uploads/myFileId");
         var job = CreateJob();
 
         await job.Run("tenant-1", "db-1", "myFileId", null, false, null);
 
-        _backupFileStorage.Received(1).GetTusUploadFilePath("myFileId");
+        _backupFileStorage.Received(1).GetTusUploadFilePath("tenant-1", "myFileId");
     }
 }

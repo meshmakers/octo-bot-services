@@ -211,7 +211,7 @@ internal sealed class JobsApiTestHost : IDisposable
         _backgroundJobClient.ChangeState(Arg.Any<string>(), Arg.Any<IState>(), Arg.Any<string>()).Returns(true);
 
         var backupFileStorage = Substitute.For<IBackupFileStorageService>();
-        backupFileStorage.GetTusUploadFilePath(Arg.Any<string>()).Returns(_tusFilePath);
+        backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), Arg.Any<string>()).Returns(_tusFilePath);
 
         // AB#5070: the job store is a substitute so a test can seed a job of a chosen tenant; the
         // access guard below is the REAL one, because it is the thing under test.

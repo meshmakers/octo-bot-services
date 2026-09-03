@@ -218,13 +218,21 @@ internal class TenantJobRouteAuthorizationTests
     }
 
     /// <summary>
-    ///     🔴 The marker is what opens the parent path, so where it sits is part of the contract: on
-    ///     the tenant job routes and on nothing else in this service. In particular it must never
-    ///     reach a route that returns tenant content other than the artifact of an administration
-    ///     operation the same caller was allowed to start (AB#5070).
+    ///     🔴 The marker is what opens the parent path, so where it sits is part of the contract. In
+    ///     particular it must never reach a route that returns tenant content other than the artifact
+    ///     of an administration operation the same caller was allowed to start (AB#5070).
     /// </summary>
+    /// <remarks>
+    ///     This covers the <b>declarative</b> placements — attributes on controllers and actions. The
+    ///     service has exactly one further placement, applied imperatively: the tus upload endpoint in
+    ///     <c>Program.cs</c> gets it via <c>.WithMetadata(...)</c>, because it is a
+    ///     <c>MapTus</c> endpoint rather than a controller and reflection over assembly types cannot
+    ///     see it. That one is deliberate and required — the upload stages the very file the marked
+    ///     restore action below consumes, so refusing the parent there would refuse the caller the
+    ///     restore then accepts. Anything <i>else</i> that starts carrying the marker fails here.
+    /// </remarks>
     [Test]
-    public async Task OnlyTheTenantJobRoutesCarryTheParentAdministrationMarker()
+    public async Task OnlyTheTenantJobRoutesCarryTheParentAdministrationMarkerAsAnAttribute()
     {
         var marked = typeof(TenantJobsController).Assembly.GetTypes()
             .Where(IsMarked)

@@ -17,13 +17,66 @@ public class BackupFileStorageServiceTests
     }
 
     [Test]
-    public async Task GetTusUploadFilePath_ReturnsCorrectPath()
+    public async Task GetTusUploadFilePath_PutsTheUploadUnderItsOwnTenant()
     {
         var service = CreateService();
 
-        var result = service.GetTusUploadFilePath("abc123");
+        var result = service.GetTusUploadFilePath("tenant-1", "abc123");
 
-        await Assert.That(result).IsEqualTo(Path.Combine(TusStoragePath, "abc123"));
+        await Assert.That(result).IsEqualTo(
+            Path.Combine(Path.GetFullPath(TusStoragePath), "tenant-1", "abc123"));
+    }
+
+    /// <summary>
+    ///     🔴 The per-tenant directory <i>is</i> the ownership binding (AB#5060), so two tenants must
+    ///     never resolve the same file — not even when handed the identical tus file id, which is the
+    ///     case that matters: an id leaked from one tenant is worthless to another.
+    /// </summary>
+    [Test]
+    public async Task GetTusUploadFilePath_ResolvesDifferentFilesForDifferentTenants()
+    {
+        var service = CreateService();
+
+        var first = service.GetTusUploadFilePath("tenant-1", "abc123");
+        var second = service.GetTusUploadFilePath("tenant-2", "abc123");
+
+        await Assert.That(first).IsNotEqualTo(second);
+    }
+
+    /// <summary>
+    ///     🔴 The tenant id becomes a directory name, and it arrives as a route value —
+    ///     <c>TenantIdRouteConstraint</c> only rejects a <i>missing</i> one, so nothing upstream has
+    ///     checked it for being a safe path segment. Every one of these would otherwise write, or
+    ///     read, outside the storage root.
+    /// </summary>
+    [Test]
+    [Arguments("..")]
+    [Arguments("../other")]
+    [Arguments("..\\other")]
+    [Arguments("/etc")]
+    [Arguments("tenant/../../etc")]
+    [Arguments(".")]
+    [Arguments("")]
+    [Arguments("   ")]
+    [Arguments("tenant 1")]
+    public async Task GetTusUploadFilePath_RefusesATenantIdThatIsNotASafePathSegment(string tenantId)
+    {
+        var service = CreateService();
+
+        await Assert.That(() => service.GetTusUploadFilePath(tenantId, "abc123"))
+            .Throws<ArgumentException>();
+    }
+
+    /// <summary>
+    ///     The same guard protects the dump path, which builds a per-tenant directory the same way.
+    /// </summary>
+    [Test]
+    public async Task GetDumpFilePath_RefusesATraversingTenantId()
+    {
+        var service = CreateService();
+
+        await Assert.That(() => service.GetDumpFilePath("../escape", "dump.tar.gz"))
+            .Throws<ArgumentException>();
     }
 
     [Test]

@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Text;
 using BotServices.Resources;
 using Hangfire;
 using Hangfire.Dashboard;
@@ -21,6 +22,7 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb.Extensions;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Infrastructure;
+using Meshmakers.Octo.Services.Infrastructure.Authorization;
 using Meshmakers.Octo.Services.Infrastructure.Configuration;
 using Meshmakers.Octo.Services.Infrastructure.Services;
 using Meshmakers.Octo.Services.Observability;
@@ -380,10 +382,38 @@ try
 
     app.UseOctoApiVersioningAndDocumentation();
 
-    // tus.io resumable upload middleware
-    app.MapTus("/system/v1/tus-upload", async httpContext => new DefaultTusConfiguration
+    // Resolves and creates the tenant's own upload directory for this request. Called per tus
+    // request because the tenant is per request; TusDiskStore is a thin wrapper over a path, so
+    // building one each time costs nothing.
+    string EnsureTenantUploadDirectory(HttpContext httpContext)
     {
-        Store = new TusDiskStore(fileStorage.TusStoragePath),
+        // Cannot be null: the endpoint's own route template carries {tenantId}, so a request that
+        // reached this delegate matched it. Throwing rather than defaulting keeps a future route
+        // change from silently pooling every tenant's uploads in one directory again.
+        var tenantId = httpContext.GetTenantId()
+                       ?? throw new InvalidOperationException(
+                           "The tus upload endpoint was reached without a tenant route value.");
+
+        var directory = fileStorage.GetTusUploadDirectory(tenantId);
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    // tus.io resumable upload middleware.
+    //
+    // 🔴 The tenant is a ROUTE segment (AB#5060). It used to be `/system/v1/tus-upload` with the
+    // tenant as an upload-metadata field, which meant two things: the transport tenant gate never
+    // saw the request (it reads the route value), and the metadata field bound nothing, because
+    // the file was stored flat under its tus file id and no consumer ever read the field back.
+    // Now the gate authorizes the upload like any other tenant route, and the file is stored under
+    // the tenant's own directory, so the binding is structural rather than declared.
+    //
+    // Endpoint routing, not the IApplicationBuilder branch: only the endpoint overload produces
+    // route values, and `UseRouting()` runs above `UseOctoTenantAuthorization()` so the gate sees
+    // {tenantId} by the time it looks.
+    app.MapTus("/{tenantId:tenantId}/v1/tus-upload", async httpContext => new DefaultTusConfiguration
+    {
+        Store = new TusDiskStore(EnsureTenantUploadDirectory(httpContext)),
         MaxAllowedUploadSizeInBytesLong = botOptions.MaxUploadSizeBytes,
         Events = new Events
         {
@@ -417,19 +447,35 @@ try
                 // Validate required metadata. The same TUS endpoint serves two upload flows:
                 //   - tenant restore       → requires 'databaseName'
                 //   - archive data import  → requires 'archiveRtId' (AB#4230)
-                // Both require 'tenantId'.
                 var metadata = ctx.Metadata;
-                if (!metadata.ContainsKey("tenantId"))
-                {
-                    ctx.FailRequest("Metadata must include 'tenantId'");
-                }
-                else if (!metadata.ContainsKey("databaseName") && !metadata.ContainsKey("archiveRtId"))
+                if (!metadata.ContainsKey("databaseName") && !metadata.ContainsKey("archiveRtId"))
                 {
                     ctx.FailRequest("Metadata must include either 'databaseName' (restore) or 'archiveRtId' (archive data import)");
+                    return;
+                }
+
+                // 'tenantId' metadata is accepted for older clients but the ROUTE decides. Refuse a
+                // disagreement rather than silently preferring one: a client that sends a different
+                // tenant than it addressed has a bug, and quietly honouring the route would hide it
+                // until a restore ran against the wrong database. Refusing costs nothing — every
+                // current client derives both from the same value.
+                if (metadata.TryGetValue("tenantId", out var declaredTenant))
+                {
+                    var routeTenant = ctx.HttpContext.GetTenantId();
+                    var declared = declaredTenant.GetString(Encoding.UTF8);
+                    if (!string.Equals(declared, routeTenant, StringComparison.Ordinal))
+                    {
+                        ctx.FailRequest(
+                            $"Upload metadata names tenant '{declared}' but the request addresses '{routeTenant}'.");
+                    }
                 }
             }
         }
-    });
+    })
+    // The consuming restore / import routes carry the same marker, so a parent administrator
+    // securing a child tenant can still stage the file it will restore. Without it the upload
+    // would refuse the exact caller the restore then accepts.
+    .WithMetadata(new AllowParentTenantAdministrationAttribute());
 
     app.MapControllers();
     // app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
