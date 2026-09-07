@@ -210,7 +210,9 @@ public class RestoreRepositoryJob(
         {
             if (entry.NdjsonEntry is null)
             {
-                // The archive had no provisioned Crate table at backup time — nothing to restore.
+                // The archive had no provisioned Crate table at backup time (never activated, e.g. a
+                // blueprint-seeded Disabled archive) — nothing to restore, and deliberately no table is
+                // created: the archive stays exactly as backed up (AB#5141).
                 return ArchiveRestoreResult.Skipped(rtId,
                     $"no archive data in the backup (archive was '{entry.Status}', had no Crate table)");
             }
@@ -259,15 +261,27 @@ public class RestoreRepositoryJob(
                     ArchiveImportMode.InsertOnly, ct);
             }
 
-            // Restore the archive's backed-up status (concept §10): Activated -> re-enable; Disabled ->
-            // leave Disabled. Created/Failed never reach here (they carry no NdjsonEntry).
+            // Restore the archive's backed-up status (concept §10): Activated -> re-enable; anything else
+            // (Disabled, or a Failed archive whose table was backed up) -> leave Disabled, the safe state.
+            // The result reports the status the archive actually ends up in, not the parsed backup value.
             var backedUpStatus = ParseStatus(entry.Status);
+            var restoredStatus = CkArchiveStatus.Disabled;
             if (backedUpStatus == CkArchiveStatus.Activated)
             {
                 await lifecycle.EnableAsync(objectId);
+                restoredStatus = CkArchiveStatus.Activated;
+            }
+            else if (!string.Equals(entry.Status, nameof(CkArchiveStatus.Disabled), StringComparison.OrdinalIgnoreCase))
+            {
+                // Compare the raw manifest value: ParseStatus maps unknown (e.g. forward-version) values
+                // to Disabled as well, and that mapping must be visible too.
+                logger.LogWarning(
+                    "Archive '{ArchiveRtId}' of tenant '{TenantId}' was '{BackedUpStatus}' at backup time; its data was " +
+                    "restored and it is left Disabled — re-enable it once the cause of the failed activation is fixed",
+                    rtId, tenantId, entry.Status);
             }
 
-            return ArchiveRestoreResult.Imported(rtId, counter.Count, backedUpStatus);
+            return ArchiveRestoreResult.Imported(rtId, counter.Count, restoredStatus);
         }
         catch (OperationCanceledException)
         {
