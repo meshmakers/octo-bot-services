@@ -132,12 +132,14 @@ public class DumpRepositoryJob(
 
                 // archives/<rtId>.ndjson — one entry per archive that HAS a provisioned table.
                 var repository = tenantContext.GetStreamDataRepository();
+                var provisionedTables = await LoadProvisionedTablesAsync(repository, snapshots, tenantId, ct);
                 var manifestArchives = new List<BackupManifestArchive>(snapshots.Count);
 
                 foreach (var snapshot in snapshots)
                 {
                     ct.ThrowIfCancellationRequested();
-                    manifestArchives.Add(await WriteArchiveAsync(zip, repository, snapshot, tenantId, ct));
+                    var hasTable = provisionedTables.Contains(snapshot.RtId);
+                    manifestArchives.Add(await WriteArchiveAsync(zip, repository, snapshot, hasTable, tenantId, ct));
                 }
 
                 // manifest.json — written last so each entry carries its final exported row count.
@@ -199,25 +201,79 @@ public class DumpRepositoryJob(
     }
 
     /// <summary>
+    ///     Resolves which archives actually have a provisioned Crate table, in one bulk storage-stats
+    ///     round-trip. The lifecycle status is deliberately NOT used as a proxy (AB#5141): a blueprint
+    ///     seeds archives <see cref="CkArchiveStatus.Disabled"/> without ever activating them, a failed
+    ///     re-enable leaves a <see cref="CkArchiveStatus.Failed"/> archive with its table and data, and a
+    ///     Mongo-only restore leaves an <see cref="CkArchiveStatus.Activated"/> archive without one.
+    ///     A failing probe propagates: a backup must never silently omit archive data.
+    /// </summary>
+    private async Task<HashSet<OctoObjectId>> LoadProvisionedTablesAsync(IStreamDataRepository? repository,
+        IReadOnlyList<ArchiveSnapshot> snapshots, string tenantId, CancellationToken ct)
+    {
+        var provisioned = new HashSet<OctoObjectId>();
+
+        if (repository is null || snapshots.Count == 0)
+        {
+            return provisioned;
+        }
+
+        var stats = await repository.GetArchiveStatsAsync(snapshots.Select(s => s.RtId).ToList(), ct);
+
+        foreach (var snapshot in snapshots)
+        {
+            if (stats.TryGetValue(snapshot.RtId, out var storage) && storage.TableExists)
+            {
+                provisioned.Add(snapshot.RtId);
+            }
+        }
+
+        logger.LogInformation(
+            "Tenant '{TenantId}': {ProvisionedCount} of {ArchiveCount} archive(s) have a provisioned Crate table",
+            tenantId, provisioned.Count, snapshots.Count);
+
+        return provisioned;
+    }
+
+    /// <summary>
     ///     Writes one archive's NDJSON rows into the ZIP and returns its manifest entry. An archive with
-    ///     a provisioned Crate table (status <see cref="CkArchiveStatus.Activated"/> or
-    ///     <see cref="CkArchiveStatus.Disabled"/>) has its rows streamed out; a
-    ///     <see cref="CkArchiveStatus.Created"/>/<see cref="CkArchiveStatus.Failed"/> archive has no
-    ///     table, so it is recorded with row count 0 and no NDJSON entry (concept §4).
+    ///     a provisioned Crate table has its rows streamed out (even when empty, so the restore can
+    ///     recreate the table); an archive without a table — never activated, whatever its status —
+    ///     is recorded with row count 0 and no NDJSON entry (concept §4, AB#5141).
     /// </summary>
     private async Task<BackupManifestArchive> WriteArchiveAsync(ZipArchive zip, IStreamDataRepository? repository,
-        ArchiveSnapshot snapshot, string tenantId, CancellationToken ct)
+        ArchiveSnapshot snapshot, bool hasTable, string tenantId, CancellationToken ct)
     {
         var schema = ArchiveSchemaMapper.ToDto(snapshot);
         var rtId = snapshot.RtId.ToString();
-        var hasTable = snapshot.Status is CkArchiveStatus.Activated or CkArchiveStatus.Disabled;
 
         if (!hasTable || repository is null)
         {
-            logger.LogInformation(
-                "Archive '{ArchiveRtId}' of tenant '{TenantId}' has status '{Status}' (no Crate table); recording it " +
-                "in the manifest without data", rtId, tenantId, snapshot.Status);
+            if (snapshot.Status == CkArchiveStatus.Activated)
+            {
+                // Status and storage disagree: typically the aftermath of a Mongo-only restore. The
+                // backup records what exists (nothing); re-enabling the archive provisions the table.
+                logger.LogWarning(
+                    "Archive '{ArchiveRtId}' of tenant '{TenantId}' is Activated but has no Crate table; recording it " +
+                    "in the manifest without data", rtId, tenantId);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Archive '{ArchiveRtId}' of tenant '{TenantId}' has status '{Status}' and no Crate table; recording " +
+                    "it in the manifest without data", rtId, tenantId, snapshot.Status);
+            }
+
             return new BackupManifestArchive(schema, snapshot.Status.ToString(), RowCount: 0, NdjsonEntry: null);
+        }
+
+        if (snapshot.Status is CkArchiveStatus.Created or CkArchiveStatus.Failed)
+        {
+            // A table despite a pre-activation status (e.g. a re-enable that failed validation after the
+            // table was provisioned). The data is real — back it up rather than trusting the status.
+            logger.LogWarning(
+                "Archive '{ArchiveRtId}' of tenant '{TenantId}' has status '{Status}' but a provisioned Crate table; " +
+                "exporting its rows", rtId, tenantId, snapshot.Status);
         }
 
         var ndjsonEntryName = BackupArchiveContainer.NdjsonEntryFor(rtId);

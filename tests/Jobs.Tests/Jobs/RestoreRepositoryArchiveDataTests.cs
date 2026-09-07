@@ -287,4 +287,88 @@ public class RestoreRepositoryArchiveDataTests
             if (File.Exists(path)) File.Delete(path);
         }
     }
+
+    [Test]
+    public async Task Run_OctoBak_EntryWithoutData_IsSkippedUntouched_WhileOthersAreRestored()
+    {
+        // AB#5141: an archive that had no Crate table at backup time (e.g. blueprint-seeded Disabled,
+        // never activated) is listed in the manifest without an NDJSON entry. The restore must leave it
+        // exactly as the Mongo restore brought it back — no drop, no activate, no table — and still
+        // restore the archives that do carry data.
+        var seeded = Snapshot(RtIdA, CkArchiveStatus.Disabled);
+        var seededEntry = new BackupManifestArchive(ArchiveSchemaMapper.ToDto(seeded), "Disabled", 0, NdjsonEntry: null);
+        var withData = Snapshot(RtIdB, CkArchiveStatus.Disabled);
+        var path = WriteOctoBak(new[] { seededEntry, ManifestEntry(withData) });
+        try
+        {
+            SetupCommon(path);
+            SetupTenant(CkArchiveStatus.Disabled, RtIdA, RtIdB);
+
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null);
+
+            // A: untouched.
+            await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
+            await _lifecycle.DidNotReceive().ActivateAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
+            await _lifecycle.DidNotReceive().DisableAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
+            await _lifecycle.DidNotReceive().EnableAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
+            await _repository.DidNotReceive().ImportRowsAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());
+            // B: restored via the clean sequence.
+            await _repository.Received(1).DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdB));
+            await _lifecycle.Received(1).ActivateAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdB));
+            await _repository.Received(1).ImportRowsAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdB),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                EngineArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
+            await _backupFileStorage.Received(1).DeleteFileAsync(path);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task Run_OctoBak_EmptyDataEntry_RecreatesTheTableWithZeroRows()
+    {
+        // An archive with a provisioned but empty table is backed up with an empty NDJSON entry. The
+        // restore must still run the clean sequence so the table exists again, importing zero rows.
+        var snapshot = Snapshot(RtIdA, CkArchiveStatus.Disabled);
+        var entry = ManifestEntry(snapshot, rowCount: 0);
+        var path = WriteOctoBak(new[] { entry },
+            ndjson: new Dictionary<string, string> { [entry.NdjsonEntry!] = string.Empty });
+        try
+        {
+            SetupCommon(path);
+            SetupTenant(CkArchiveStatus.Disabled, RtIdA);
+
+            var importedRows = -1;
+            _repository.ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                    Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                    Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>())
+                .Returns(async ci =>
+                {
+                    var count = 0;
+                    await foreach (var _ in ci.Arg<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>())
+                    {
+                        count++;
+                    }
+
+                    importedRows = count;
+                });
+
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null);
+
+            await _repository.Received(1).DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
+            await _lifecycle.Received(1).ActivateAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
+            await _lifecycle.Received(1).DisableAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
+            await Assert.That(importedRows).IsEqualTo(0);
+            // Backed-up status Disabled: no re-enable.
+            await _lifecycle.DidNotReceive().EnableAsync(Arg.Any<OctoObjectId>());
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }
