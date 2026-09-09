@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using Asp.Versioning;
 using Hangfire;
-using IdentityModel;
+using Duende.IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;

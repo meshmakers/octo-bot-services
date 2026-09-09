@@ -1,4 +1,4 @@
-using IdentityModel;
+using Duende.IdentityModel;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Communication.Contracts;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
