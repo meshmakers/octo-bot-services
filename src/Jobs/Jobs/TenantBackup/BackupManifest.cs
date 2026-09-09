@@ -35,8 +35,10 @@ public sealed record BackupManifest(
 /// <param name="RowCount">Advisory exported row count (<c>0</c> for an archive with no provisioned table).</param>
 /// <param name="NdjsonEntry">
 ///     Relative ZIP path of this archive's row data (<c>archives/&lt;rtId&gt;.ndjson</c>), or <c>null</c>
-///     when the archive had no provisioned Crate table at backup time (status <c>Created</c>/<c>Failed</c>)
-///     and therefore carries no data to restore.
+///     when the archive had no provisioned Crate table at backup time and therefore carries no data to
+///     restore. The table, not the status, decides (AB#5141): a blueprint-seeded archive is
+///     <c>Disabled</c> without a table until its first activation, and the restore leaves such an
+///     archive exactly as backed up (status kept, no table created).
 /// </param>
 public sealed record BackupManifestArchive(
     ArchiveSchemaDto Schema,

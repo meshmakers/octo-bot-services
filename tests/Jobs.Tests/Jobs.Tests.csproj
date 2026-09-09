@@ -15,7 +15,7 @@
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-        <PackageReference Include="TUnit" Version="1.65.63" />
+        <PackageReference Include="TUnit" Version="1.65.68" />
         <!-- AB#5060: the tenant-routed job endpoints must be exercised through the real request
              pipeline — the transport tenant gate is middleware, so a controller called directly
              proves nothing about who may reach it. TestHost hosts the two JobsControllers in

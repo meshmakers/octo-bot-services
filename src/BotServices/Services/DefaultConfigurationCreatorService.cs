@@ -1,5 +1,5 @@
 using BotServices.Resources;
-using IdentityModel;
+using Duende.IdentityModel;
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;

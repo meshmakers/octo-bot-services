@@ -1,12 +1,12 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using BotServices.Resources;
+using Duende.IdentityModel;
 using Hangfire;
 using Hangfire.Dashboard;
 using Hangfire.Mongo;
 using Hangfire.Mongo.Migration.Strategies;
 using Hangfire.Mongo.Migration.Strategies.Backup;
-using IdentityModel;
 using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
@@ -298,14 +298,16 @@ try
             AllowInsecureTls = systemOptions.Value.AllowInsecureTls
         };
 
+        // DatabaseHost may carry a port suffix ("host:port"). MongoServerAddress.Parse handles
+        // that; the MongoServerAddress(string host) constructor rejects it since MongoDB.Driver
+        // 3.11.1 (CSHARP-6171 host validation).
         if (systemOptions.Value.DatabaseHost.Contains(","))
         {
-            mongoUrlBuilder.Servers =
-                systemOptions.Value.DatabaseHost.Split(",").Select(x => new MongoServerAddress(x));
+            mongoUrlBuilder.Servers = systemOptions.Value.DatabaseHost.Split(",").Select(MongoServerAddress.Parse);
         }
         else
         {
-            mongoUrlBuilder.Server = new MongoServerAddress(systemOptions.Value.DatabaseHost);
+            mongoUrlBuilder.Server = MongoServerAddress.Parse(systemOptions.Value.DatabaseHost);
         }
 
         config.UseMongoStorage(mongoUrlBuilder.ToString(), storageOptions);

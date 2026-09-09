@@ -1,9 +1,12 @@
 using System.ComponentModel.DataAnnotations;
 using Asp.Versioning;
+using Duende.IdentityModel;
 using Hangfire;
-using IdentityModel;
+using Hangfire.Storage.Monitoring;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;

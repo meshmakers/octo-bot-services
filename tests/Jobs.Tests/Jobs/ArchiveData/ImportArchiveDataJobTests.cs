@@ -28,14 +28,30 @@ public class ImportArchiveDataJobTests
     private readonly IRollupArchiveLifecycleService _rollupLifecycle =
         Substitute.For<IRollupArchiveLifecycleService>();
 
-    private ImportArchiveDataJob CreateJob(ArchiveSnapshot? snapshot)
+    private ImportArchiveDataJob CreateJob(ArchiveSnapshot? snapshot, bool tableExists = true)
     {
         _systemContext.FindTenantContextAsync("tenant-1").Returns(_tenantContext);
         _tenantContext.GetStreamDataRepository().Returns(_repository);
         _tenantContext.GetArchiveRuntimeStore().Returns(_archiveStore);
         _tenantContext.GetRollupArchiveLifecycleService().Returns(_rollupLifecycle);
         _archiveStore.GetAsync(Arg.Any<OctoObjectId>()).Returns(snapshot);
+        StubTable(tableExists);
         return new ImportArchiveDataJob(_logger, _systemContext, _backupFileStorage);
+    }
+
+    /// <summary>
+    ///     Stubs the storage probe the import uses to verify the target archive has a Crate table
+    ///     (AB#5141) — Disabled alone does not guarantee one.
+    /// </summary>
+    private void StubTable(bool exists)
+    {
+        var id = new OctoObjectId(ArchiveRtId);
+        IReadOnlyDictionary<OctoObjectId, ArchiveStorageStats> stats = new Dictionary<OctoObjectId, ArchiveStorageStats>
+        {
+            [id] = new(id, exists, RecordCount: 0, SizeBytes: 0, Health: ArchiveStorageHealth.Good)
+        };
+        _repository.GetArchiveStatsAsync(Arg.Any<IReadOnlyList<OctoObjectId>>(), Arg.Any<CancellationToken>())
+            .Returns(stats);
     }
 
     private static ArchiveSnapshot Snapshot(
@@ -172,6 +188,42 @@ public class ImportArchiveDataJobTests
             await Assert.That(captured).IsNotNull();
             await Assert.That(captured!.Message).Contains("must be Disabled");
             await Assert.That(captured!.Message).Contains("Activated");
+            await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());
+            await _backupFileStorage.Received(1).DeleteFileAsync(path);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task Run_ArchiveWithoutTable_FailsWithActionableMessageAndDeletesFile()
+    {
+        // AB#5141: a blueprint-seeded archive is Disabled but was never activated, so it has no Crate
+        // table. Importing would fail deep in the insert path with 42P01; fail fast with the sequence
+        // the operator has to run instead.
+        var snapshot = Snapshot(status: CkArchiveStatus.Disabled);
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot)), "{\"rtid\":\"61a\"}\n");
+        try
+        {
+            var job = CreateJob(snapshot, tableExists: false);
+
+            JobFailedException? captured = null;
+            try
+            {
+                await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null);
+            }
+            catch (JobFailedException e)
+            {
+                captured = e;
+            }
+
+            await Assert.That(captured).IsNotNull();
+            await Assert.That(captured!.Message).Contains("never been activated");
+            await Assert.That(captured!.Message).Contains("Activate the archive once");
             await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
                 Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
                 Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());

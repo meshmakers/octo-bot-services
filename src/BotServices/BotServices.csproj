@@ -21,12 +21,14 @@
 
     <ItemGroup>
         <PackageReference Include="Hangfire.Mongo" Version="1.16.2" />
-        <PackageReference Include="IdentityModel.AspNetCore.OAuth2Introspection" Version="6.2.0" />
+        <PackageReference Include="Duende.AspNetCore.Authentication.OAuth2Introspection" Version="7.0.1" />
+        <!-- direct reference: the released SDK still ships the legacy IdentityModel until the next libs train -->
+        <PackageReference Include="Duende.IdentityModel" Version="8.1.0" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.11" />
         <PackageReference Include="NLog.Web.AspNetCore" Version="6.2.0" />
         <PackageReference Include="tusdotnet" Version="2.11.2" />
-        <PackageReference Include="Hangfire.AspNetCore" Version="1.8.24" />
+        <PackageReference Include="Hangfire.AspNetCore" Version="1.8.25" />
         <PackageReference Include="Meshmakers.Octo.Services.Swagger" Version="$(OctoCoreLibVersion)" />
         <PackageReference Include="Meshmakers.Octo.Services.Notifications" Version="$(OctoCoreLibVersion)" />
         <PackageReference Include="Meshmakers.Octo.Services.Infrastructure" Version="$(OctoCoreLibVersion)" />

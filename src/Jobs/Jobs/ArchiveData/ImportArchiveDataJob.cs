@@ -120,6 +120,18 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
                     $"(it is currently {snapshot.Status}). Disable the archive, import the data, then re-enable it.");
             }
 
+            // 3b. Disabled does not imply a provisioned table (AB#5141): a blueprint seeds archives
+            //     Disabled without ever activating them. Importing into a missing table would fail deep in
+            //     the insert path with CrateDB's RelationUnknown; fail fast with the actionable sequence.
+            var storageStats = await repository.GetArchiveStatsAsync(new[] { archiveObjectId }, ct);
+            if (!storageStats.TryGetValue(archiveObjectId, out var storage) || !storage.TableExists)
+            {
+                throw new JobFailedException(
+                    $"Archive '{snapshot.RtWellKnownName ?? archiveRtId}' has no storage table yet (it has never been " +
+                    "activated). Activate the archive once to provision its table, disable it again, then import " +
+                    "the data.");
+            }
+
             var isRollup = snapshot.RollupAggregations is not null;
             _logger.LogInformation(
                 "Importing archive data into '{ArchiveRtId}' (kind '{Kind}', mode '{Mode}').",
