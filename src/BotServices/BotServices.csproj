@@ -24,7 +24,7 @@
         <PackageReference Include="Duende.AspNetCore.Authentication.OAuth2Introspection" Version="7.0.1" />
         <!-- direct reference: the released SDK still ships the legacy IdentityModel until the next libs train -->
         <PackageReference Include="Duende.IdentityModel" Version="8.1.0" />
-        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.11" />
         <PackageReference Include="NLog.Web.AspNetCore" Version="6.2.0" />
         <PackageReference Include="tusdotnet" Version="2.11.2" />
