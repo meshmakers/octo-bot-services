@@ -31,6 +31,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using NLog;
@@ -194,6 +195,13 @@ try
         .AddOpenIdConnect(InfrastructureCommon.OidcAuthenticationScheme, options =>
         {
             options.ClientId = CommonConstants.BotServicesClientId;
+
+            // AB#5266 — must be stated explicitly. The handler default is the implicit
+            // id_token flow, which the identity server stopped supporting when it moved from
+            // Duende to OpenIddict (AB#4989): OpenIddict enables the authorization code flow
+            // only, so the challenge dies at the PAR endpoint with 'unsupported_response_type'
+            // before any application code runs — a bodyless 500 on every interactive login.
+            options.ResponseType = OpenIdConnectResponseType.Code;
 
             options.Scope.Clear();
             options.Scope.Add(CommonConstants.Scopes.OpenId);
