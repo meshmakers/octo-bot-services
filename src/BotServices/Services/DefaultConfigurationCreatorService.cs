@@ -88,7 +88,12 @@ internal class DefaultConfigurationCreatorService(
                 BotTexts.Backend_BotServices_UserSchema_BotServices_DisplayName,
                 octoBotServicesOptions.Value.PublicUrl)
             {
-                AllowedGrantTypes = [OidcConstants.GrantTypes.Implicit],
+                // AB#5266 — authorization code, not implicit. The identity server dropped the
+                // implicit flow with the move to OpenIddict (AB#4989), so a client registered
+                // for it gets no response-type and no authorize/PAR/token endpoint permission
+                // out of ClientPermissionsMapper and every interactive login fails. Must stay in
+                // step with options.ResponseType in Program.cs.
+                AllowedGrantTypes = [OidcConstants.GrantTypes.AuthorizationCode],
 
                 RequireConsent = false,
 
