@@ -1,10 +1,5 @@
 # Root-level CI pipeline using shared templates from octo-pipeline-templates.
 #
-# Coexists with devops-build/azure-pipelines.yml during the Phase 1-services
-# pilot. Once parity is verified, def 94 yamlFilename can be flipped to this
-# file and devops-build/ deleted in a follow-up commit. Services-train
-# references def 94 by ID so the train is unaffected by the yamlFilename swap.
-#
 # Bot-specific quirks preserved from the legacy YAML:
 #   - InstallSSHKey (no submodules:recursive — checkout has clean only)
 #   - download-ca — internal CA for dotnet restore
