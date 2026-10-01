@@ -1,17 +1,11 @@
 # Root-level CI pipeline using shared templates from octo-pipeline-templates.
 #
-# Coexists with devops-build/azure-pipelines.yml during the Phase 1-services
-# pilot. Once parity is verified, def 94 yamlFilename can be flipped to this
-# file and devops-build/ deleted in a follow-up commit. Services-train
-# references def 94 by ID so the train is unaffected by the yamlFilename swap.
-#
 # Bot-specific quirks preserved from the legacy YAML:
 #   - InstallSSHKey (no submodules:recursive — checkout has clean only)
 #   - download-ca — internal CA for dotnet restore
-#   - Build step passes /p:OctoPublishCatalog="$(effectivePublishCatalog)"
-#     and /p:OctoPrivateGitHubApiKey/OctoPublicGitHubApiKey for CK model
-#     catalog publish gating (only main / r* tags push to GitHub catalogs)
-#   - Test passes /p:OctoPublishCkModel=false — Test step must not re-publish CK libs
+#   - Build and Test pass /p:OctoPublishCkModel=false: they compile the CK model
+#     and publish it nowhere. System.Bot is published by the shared CK step after
+#     the tests (main -> private catalog, r* -> private AND public).
 #   - SystemTests excluded
 #   - HAS push-nuget — bot publishes Meshmakers.Octo.Bots NuGets
 #   - HAS CK library output: SystemBotCkModel
@@ -48,7 +42,7 @@ resources:
       type: github
       name: meshmakers/octo-pipeline-templates
       endpoint: meshmakers-access-token
-      ref: refs/tags/tpl-v0.5.0
+      ref: refs/tags/tpl-v1.0.0
 
 trigger:
   batch: true
@@ -102,13 +96,6 @@ stages:
               sshPassphrase: '$(SSHPassphrase)'
               sshKeySecureFile: '$(SSHPrivateKeyFile)'
           - template: templates/steps/set-version.yml@pipelineTemplates
-          # CK SemVer honesty gate (AB#4420): System.Bot is published DURING
-          # the dotnet build (/p:OctoPublishCatalog), so the gate must be able
-          # to fail first.
-          - template: templates/steps/validate-ck-versions.yml@pipelineTemplates
-            parameters:
-              constructionKitPaths:
-                - 'src/SystemBotCkModel/ConstructionKit'
           - template: templates/steps/download-ca.yml@pipelineTemplates
           - task: DotNetCoreCLI@2
             retryCountOnTaskFailure: 2
@@ -118,13 +105,20 @@ stages:
               projects: '$(solutionFile)'
               restoreArguments: '--force /p:OctoNugetPrivateServer=$(nugetPrivateServer)'
               noCache: true
+          # The build compiles System.Bot and publishes it nowhere: the CK step
+          # below owns publishing, and CkCompile would publish with isForced
+          # hardcoded. No other CK in this solution depends on System.Bot, so a
+          # local catalog would never be read. The command line overrides the
+          # csproj's <OctoPublishCkModel>, which stays for local development. The
+          # GitHub API keys keep CkCompile's catalog refresh clear of GitHub's
+          # unauthenticated rate limit.
           - task: DotNetCoreCLI@2
             retryCountOnTaskFailure: 2
             displayName: 'Build'
             inputs:
               command: 'build'
               projects: '$(solutionFile)'
-              arguments: '--configuration $(buildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer) /p:OctoPublishCatalog="$(effectivePublishCatalog)" /p:OctoPrivateGitHubApiKey=$(GitHubPAT) /p:OctoPublicGitHubApiKey=$(GitHubPAT)'
+              arguments: '--configuration $(buildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer) /p:OctoPublishCkModel=false /p:OctoPrivateGitHubApiKey=$(GitHubPAT) /p:OctoPublicGitHubApiKey=$(GitHubPAT)'
               publishWebProjects: false
               zipAfterPublish: false
               modifyOutputPath: false
@@ -138,6 +132,17 @@ stages:
                 **/*Tests.csproj
                 !**/*SystemTests.csproj
               testRunTitle: 'CI'
+          # CK SemVer and schema gate (AB#4420), and since tpl-v1.0.0 also the
+          # publish of System.Bot (AB#5121): main -> private catalog, r* tags ->
+          # private AND public, never replacing a published version. It runs after
+          # Test so a run whose build or tests fail never leaves a version in a
+          # shared catalog — a published version cannot be withdrawn. The step
+          # compiles the model itself with the pinned octo-ckc, so it needs nothing
+          # from the build; it only has to come before the image and the NuGets.
+          - template: templates/steps/validate-and-publish-ck-versions.yml@pipelineTemplates
+            parameters:
+              constructionKitPaths:
+                - 'src/SystemBotCkModel/ConstructionKit'
           # Multi-arch image (AB#4451): arm64 for Apple-Silicon kind clusters and
           # edge devices, amd64 for the managed clusters.
           - template: templates/steps/build-and-push-docker.yml@pipelineTemplates
