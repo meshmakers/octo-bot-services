@@ -1,4 +1,4 @@
 $schema: https://schemas.meshmakers.cloud/construction-kit-meta.schema.json
-modelId: "System.Bot-3.2.0"
+modelId: "System.Bot-3.3.0"
 dependencies:
   - System-[2.0,3.0)
