@@ -123,7 +123,8 @@ public interface IBotArtifactStorage
 
     /// <summary>
     ///     The header (key id, creation time) of every encrypted artifact of this instance, read from the first
-    ///     bytes of each artifact only (cached per key). Used for the key-id retention check (<c>DumpKeyMissing</c>).
+    ///     bytes of each artifact only (cached per key; the whole result is reused for up to a minute unless this
+    ///     instance stored or deleted an artifact). Used for the key-id retention check (<c>DumpKeyMissing</c>).
     /// </summary>
     Task<IReadOnlyList<EncryptedArtifactHeader>> GetEncryptedArtifactHeadersAsync(
         CancellationToken cancellationToken = default);

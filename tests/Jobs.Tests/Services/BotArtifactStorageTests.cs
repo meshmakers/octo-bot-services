@@ -260,4 +260,24 @@ public class BotArtifactStorageTests : IDisposable
         await Assert.That(File.Exists(path)).IsFalse();
         await Assert.That(File.Exists(fresh)).IsTrue();
     }
+
+    [Test]
+    public async Task EncryptedArtifactHeaders_AreReusedBriefly_ButRefreshedByOwnWritesAndDeletes()
+    {
+        await _env.Storage.StoreFileAsync(ArtifactCategories.Presweep, "t1", "a.presweep",
+            _env.WriteFile("a", Payload(10)), ArtifactEncryption.Required);
+        await Assert.That((await _env.Storage.GetEncryptedArtifactHeadersAsync()).Count).IsEqualTo(1);
+
+        // Written by another replica (another instance on the same store): not listed again until the snapshot ends.
+        await _env.CreateStorage(_env.Protector).StoreFileAsync(ArtifactCategories.Presweep, "t1", "b.presweep",
+            _env.WriteFile("b", Payload(10)), ArtifactEncryption.Required);
+        await Assert.That((await _env.Storage.GetEncryptedArtifactHeadersAsync()).Count).IsEqualTo(1);
+
+        await _env.Storage.StoreFileAsync(ArtifactCategories.Presweep, "t1", "c.presweep",
+            _env.WriteFile("c", Payload(10)), ArtifactEncryption.Required);
+        await Assert.That((await _env.Storage.GetEncryptedArtifactHeadersAsync()).Count).IsEqualTo(3);
+
+        await _env.Storage.DeleteAsync(ArtifactCategories.Presweep, "t1", "c.presweep.octoenc");
+        await Assert.That((await _env.Storage.GetEncryptedArtifactHeadersAsync()).Count).IsEqualTo(2);
+    }
 }

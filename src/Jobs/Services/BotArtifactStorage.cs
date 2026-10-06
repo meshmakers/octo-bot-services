@@ -29,11 +29,19 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     private readonly ConcurrentDictionary<string, (DateTimeOffset CreatedAt, long Size, SecretFileHeader Header)>
         _headerCache = new(StringComparer.Ordinal);
 
+    /// <summary>
+    ///     How long the result of <see cref="GetEncryptedArtifactHeadersAsync" /> is reused. The secrets status (any
+    ///     tenant user, polled by editors) calls it; without a snapshot every call would list all categories of the
+    ///     whole store. Writes and deletes through this instance invalidate it.
+    /// </summary>
+    internal static readonly TimeSpan HeaderSnapshotLifetime = TimeSpan.FromMinutes(1);
+
     private readonly ArtifactKeyBuilder _keys;
     private readonly ILogger<BotArtifactStorage> _logger;
     private readonly IArtifactStore? _presweepStore;
     private readonly ISecretFileProtector _protector;
     private readonly IArtifactStore _store;
+    private volatile HeaderSnapshot? _headerSnapshot;
 
     /// <summary>
     ///     Constructor.
@@ -174,6 +182,7 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
             throw;
         }
 
+        _headerSnapshot = null;
         var info = await store.GetInfoAsync(key, cancellationToken);
         _logger.LogInformation(
             "Stored artifact '{Category}/{TenantId}/{FileName}' ({Size} bytes, encrypted: {Encrypted}) in the " +
@@ -193,7 +202,9 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     public Task<bool> DeleteAsync(string category, string tenantId, string fileName,
         CancellationToken cancellationToken = default)
     {
-        return GetStore(category).DeleteAsync(_keys.Build(category, tenantId, fileName), cancellationToken);
+        var key = _keys.Build(category, tenantId, fileName);
+        _headerSnapshot = null;
+        return GetStore(category).DeleteAsync(key, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -202,6 +213,11 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     {
         var deletedKeys = await GetStore(category)
             .DeleteOlderThanAsync(_keys.CategoryPrefix(category), maxAge, cancellationToken);
+        if (deletedKeys.Count > 0)
+        {
+            _headerSnapshot = null;
+        }
+
         var deleted = new List<ArtifactKeyParts>(deletedKeys.Count);
         foreach (var key in deletedKeys)
         {
@@ -342,6 +358,12 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     public async Task<IReadOnlyList<EncryptedArtifactHeader>> GetEncryptedArtifactHeadersAsync(
         CancellationToken cancellationToken = default)
     {
+        if (_headerSnapshot is { } snapshot &&
+            Environment.TickCount64 - snapshot.Ticks < (long)HeaderSnapshotLifetime.TotalMilliseconds)
+        {
+            return snapshot.Headers;
+        }
+
         var result = new List<EncryptedArtifactHeader>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var category in EncryptedCategories)
@@ -369,6 +391,7 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
             _headerCache.TryRemove(stale, out _);
         }
 
+        _headerSnapshot = new HeaderSnapshot(Environment.TickCount64, result);
         return result;
     }
 
@@ -559,6 +582,8 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
             _logger.LogWarning(e, "Could not delete the partial artifact '{Key}'", key);
         }
     }
+
+    private sealed record HeaderSnapshot(long Ticks, IReadOnlyList<EncryptedArtifactHeader> Headers);
 
     private static async Task<Exception?> CaptureAsync(Task task)
     {
