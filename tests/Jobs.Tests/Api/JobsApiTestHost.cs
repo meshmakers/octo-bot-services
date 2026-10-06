@@ -368,7 +368,10 @@ internal sealed class JobsApiTestHost : IDisposable
                 new("client_id", isUser ? "octo-cli" : "octo-worker"),
                 new(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)
             };
-            claims.AddRange(roles.Select(r => new Claim("role", r)));
+            // AB#5539: role claims arrive the way the real bearer handler hands them over — renamed to
+            // ClaimTypes.Role by its default inbound claim mapping, while the identity's RoleClaimType stays
+            // "role". Modelling them as plain "role" claims hid that RequireRole never matched a real token.
+            claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
 
             if (isUser)
             {
