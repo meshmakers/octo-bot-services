@@ -141,4 +141,22 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
         await Assert.That(dump.DeletedAt).IsNotNull();
         await Assert.That(dump.DeletedBy).IsNull();
     }
+
+    [Test]
+    public async Task Cleanup_LocalDiskFailure_StillExpiresPreSweepDumpsInTheStore_AndFails()
+    {
+        await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+            new SecretSweepRunInfo("run-7"), CancellationToken.None);
+        var presweep = (await _runs.GetRunsAsync(Tenant)).Single().Dump!.FileName;
+        _env.Age(ArtifactCategories.Presweep, Tenant, presweep, TimeSpan.FromDays(8));
+        _files.CleanupStaleFilesAsync(Arg.Any<TimeSpan>())
+            .Returns<Task<int>>(_ => throw new IOException("local disk unavailable"));
+
+        var job = new CleanupStaleFilesJob(Substitute.For<ILogger<CleanupStaleFilesJob>>(), _files, 4, 7, _runs,
+            null, _env.Storage);
+
+        await Assert.That(async () => await job.Run(null)).Throws<IOException>();
+        await Assert.That(await _env.Storage.GetInfoAsync(ArtifactCategories.Presweep, Tenant, presweep)).IsNull();
+        await Assert.That((await _runs.GetRunsAsync(Tenant)).Single().Dump!.DeletedAt).IsNotNull();
+    }
 }

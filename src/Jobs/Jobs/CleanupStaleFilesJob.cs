@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Services.ArtifactStorage;
@@ -26,6 +27,7 @@ public class CleanupStaleFilesJob(
     public async Task Run(IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        Exception? localError = null;
         try
         {
             logger.LogInformation("Running cleanup of stale backup files (retention: {Hours} hours)",
@@ -50,13 +52,27 @@ public class CleanupStaleFilesJob(
         }
         catch (Exception e)
         {
+            // Not rethrown yet: a local disk problem must not stop the retention of the pre-sweep dumps (secret
+            // material, decision 10) in the artifact store below.
             logger.LogError(e, "Error during stale backup file cleanup");
-            throw;
+            localError = e;
         }
 
         if (artifactStorage != null)
         {
-            await CleanupArtifactStoreAsync(artifactStorage, ct);
+            try
+            {
+                await CleanupArtifactStoreAsync(artifactStorage, ct);
+            }
+            catch (Exception) when (localError != null)
+            {
+                // Logged by CleanupArtifactStoreAsync; the local error is reported below.
+            }
+        }
+
+        if (localError != null)
+        {
+            ExceptionDispatchInfo.Throw(localError);
         }
     }
 
