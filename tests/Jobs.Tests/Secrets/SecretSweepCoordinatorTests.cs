@@ -487,6 +487,41 @@ public class SecretSweepCoordinatorTests : IDisposable
     }
 
     [Test]
+    public async Task CleanupUnreadable_CarriesTheLegacyKeySkipCount_IntoStepReportAndRun()
+    {
+        var runs = new InMemorySecretSweepRunStore();
+        var rtId = new OctoObjectId("6512a1b2c3d4e5f601020305");
+        SetupBackupSucceeds();
+        SetupSweep("t-legacy", SecretSweepMode.CleanupUnreadable, r =>
+        {
+            r.Totals.Add(SecretValueForm.UnknownKeyId, SecretValueStates.LegacyV1KeyId);
+            r.Unreadable.Add(new SecretSweepUnreadableValue("Test/Type", rtId, "Password",
+                SecretValueStates.LegacyV1KeyId));
+            r.SkippedLegacyV1KeyMissing = 2;
+        });
+        SetupSweep("t-legacy", SecretSweepMode.Verify, r =>
+        {
+            r.Totals.Add(SecretValueForm.UnknownKeyId, SecretValueStates.LegacyV1KeyId);
+            r.Unreadable.Add(new SecretSweepUnreadableValue("Test/Type", rtId, "Password",
+                SecretValueStates.LegacyV1KeyId));
+        });
+
+        var report = await CreateCoordinator(runStore: runs).SweepTenantAsync("t-legacy",
+            SecretSweepMode.CleanupUnreadable, SecretSweepTrigger.Manual, new SecretSweepRunInfo("job-7"),
+            CancellationToken.None);
+
+        await Assert.That(report.Steps[0].SkippedLegacyV1KeyMissing).IsEqualTo(2);
+        await Assert.That(report.Steps[1].SkippedLegacyV1KeyMissing).IsEqualTo(0);
+        await Assert.That(report.SkippedLegacyV1KeyMissing).IsEqualTo(2);
+        // Kept, so still a re-entry / configuration task, never "cleared".
+        await Assert.That(report.Steps[0].Cleared).IsEmpty();
+        await Assert.That(report.Unreadable.Single().KeyId).IsEqualTo(SecretValueStates.LegacyV1KeyId);
+        var run = (await runs.GetRunsAsync("t-legacy")).Single();
+        await Assert.That(run.SkippedLegacyV1KeyMissing).IsEqualTo(2);
+        await Assert.That(run.Reason).IsNull();
+    }
+
+    [Test]
     public async Task Encrypt_NeverConfirmsCleanupUnreadable_AndKeepsUnknownKidsAsUnreadable()
     {
         var rtId = new OctoObjectId("6512a1b2c3d4e5f601020304");

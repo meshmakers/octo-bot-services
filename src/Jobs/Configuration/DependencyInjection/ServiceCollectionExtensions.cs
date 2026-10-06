@@ -82,7 +82,22 @@ public static class ServiceCollectionExtensions
         services.AddTransient<ISecretEnvironmentStatusService, SecretEnvironmentStatusService>();
         services.AddTransient<ISecretSweepCoordinator, SecretSweepCoordinator>();
         services.AddTransient<ISecretSweepJob, SecretSweepJob>();
+        services.AddSingleton<ISecretSweepJobInspector>(_ => new HangfireSecretSweepJobInspector());
+        services.AddTransient<SecretSweepInterruptedRunRecovery>();
 
+        return services;
+    }
+
+    /// <summary>
+    ///     Adds the startup check that marks secret sweep runs left in <c>Running</c> by an ended process as
+    ///     <c>Failed</c> ("Interrupted (service restart)", AB#5539). Register it in the host that runs the
+    ///     Hangfire server, after <see cref="AddOctoJobs" />.
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <returns>The service collection</returns>
+    public static IServiceCollection AddOctoSecretSweepInterruptedRunRecovery(this IServiceCollection services)
+    {
+        services.AddHostedService<SecretSweepInterruptedRunRecoveryHostedService>();
         return services;
     }
 }

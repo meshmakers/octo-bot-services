@@ -66,4 +66,12 @@ public class SecretSweepJobOptions
     ///     strict mode" (concept §5.3). The engine does not refuse legacy reads yet (follow-up).
     /// </summary>
     public DateTimeOffset? StrictModeSince { get; set; }
+
+    /// <summary>
+    ///     Seconds after service start before sweep runs left in <c>Running</c> by an ended process are marked
+    ///     <c>Failed</c> ("Interrupted (service restart)"). Default 120 - longer than the Hangfire server
+    ///     heartbeat interval (30 s), so a server that is still alive has sent a heartbeat since this service
+    ///     started and its runs are left alone. <c>0</c> or less disables the check.
+    /// </summary>
+    public int InterruptedRunCheckDelaySeconds { get; set; } = 120;
 }

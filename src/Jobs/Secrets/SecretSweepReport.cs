@@ -142,6 +142,14 @@ public class SecretSweepReport
     public long PlaceholdersNormalized { get; set; }
 
     /// <summary>
+    ///     <see cref="SecretSweepMode.CleanupUnreadable" /> only, over all steps: legacy <c>enc:v1</c> values kept
+    ///     although unreadable, because only the legacy key (<c>SecretEncryption:LegacyV1Key</c>) is missing - a
+    ///     configuration gap, not key loss (engine <c>SecretSweepResult.SkippedLegacyV1KeyMissing</c>). They stay
+    ///     in <see cref="Unreadable" /> (key id <c>enc:v1</c>).
+    /// </summary>
+    public long SkippedLegacyV1KeyMissing { get; set; }
+
+    /// <summary>
     ///     Stored values whose key id is not in this environment's key ring, in the final state (the last
     ///     step): kept encrypted, read as "key missing", readable again once the key is added to the ring -
     ///     the re-entry list (decisions 2026-10-06, item 2).
@@ -198,6 +206,12 @@ public class SecretSweepStepReport
     ///     Attributes left alone because they changed while the sweep ran.
     /// </summary>
     public long SkippedConcurrentlyModified { get; set; }
+
+    /// <summary>
+    ///     <see cref="SecretSweepMode.CleanupUnreadable" /> only: legacy <c>enc:v1</c> values kept although
+    ///     unreadable, because only the legacy key is missing (they stay in <see cref="Unreadable" />).
+    /// </summary>
+    public long SkippedLegacyV1KeyMissing { get; set; }
 
     /// <summary>
     ///     True when nothing failed.
@@ -502,6 +516,7 @@ internal static class SecretSweepReportMapper
             ValuesRewritten = result.ValuesRewritten,
             PlaceholdersNormalized = result.PlaceholdersNormalized,
             SkippedConcurrentlyModified = result.SkippedConcurrentlyModified,
+            SkippedLegacyV1KeyMissing = result.SkippedLegacyV1KeyMissing,
             Success = result.Success,
             Totals = SecretFormCountsReport.From(result.Totals),
             Slots = result.Slots.Select(s => new SecretSlotCountsReport

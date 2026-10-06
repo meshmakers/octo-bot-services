@@ -134,7 +134,14 @@ tenant busy is skipped, the post-restore sweep waits up to 30 minutes.
 Every run (manual, recurring, restore) is kept in the tenant's run history (Hangfire storage, last 50 per
 tenant): run id = Hangfire job id, mode, trigger, outcome (`Running` while in progress), starter, counts
 and the dump state (`createdAt`, `expiresAt`, `deletedAt`, `deletedBy`; the hourly cleanup records
-`deletedAt` on expiry).
+`deletedAt` on expiry). `skippedLegacyV1KeyMissing` (report, step, run) counts the `enc:v1` values a
+`CleanupUnreadable` kept because only the legacy key is missing (configuration gap, not key loss).
+
+A run left in `Running` by a crashed or killed process is marked `Failed` with reason
+`Interrupted (service restart)` once, `Bot:SecretSweep:InterruptedRunCheckDelaySeconds` (default 120,
+`0` disables) after the service started: when its Hangfire job is no longer processing, or - if Hangfire
+still says processing - when the processing server is gone or sent no heartbeat since this start and the
+run started before it. Runs processing on a live server (another replica) are left alone.
 
 | Endpoint | Requires | Purpose |
 | --- | --- | --- |

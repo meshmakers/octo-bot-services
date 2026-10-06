@@ -334,6 +334,9 @@ try
         options.SchedulePollingInterval = TimeSpan.FromSeconds(schedulePollingSeconds);
     });
 
+    // AB#5539: sweep runs a crashed/killed process left in Running are marked Failed after startup.
+    builder.Services.AddOctoSecretSweepInterruptedRunRecovery();
+
 
     // NLog: Setup NLog for Dependency injection
     builder.Logging.ClearProviders();

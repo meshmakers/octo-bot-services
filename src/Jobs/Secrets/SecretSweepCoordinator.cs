@@ -356,6 +356,7 @@ public class SecretSweepCoordinator(
         report.Reason = reason;
         report.CompletedAt = _time.GetUtcNow().UtcDateTime;
         report.PlaceholdersNormalized = report.Steps.Sum(s => s.PlaceholdersNormalized);
+        report.SkippedLegacyV1KeyMissing = report.Steps.Sum(s => s.SkippedLegacyV1KeyMissing);
 
         var finalStep = report.Steps.LastOrDefault();
         if (finalStep != null)
@@ -375,7 +376,9 @@ public class SecretSweepCoordinator(
         run.Outcome = (SecretSweepOutcomeDto)(int)outcome;
         run.CompletedAt = report.CompletedAt;
         run.Totals = ToDto(finalStep?.Totals ?? new SecretFormCountsReport());
+        run.Reason = reason;
         run.PlaceholdersNormalized = report.PlaceholdersNormalized;
+        run.SkippedLegacyV1KeyMissing = report.SkippedLegacyV1KeyMissing;
         run.UnreadableCount = report.Unreadable.Count;
         await SaveRunAsync(report.TenantId, run);
 
@@ -428,13 +431,13 @@ public class SecretSweepCoordinator(
         logger.Log(level,
             "Secret sweep {Mode} ({Trigger}) of tenant '{TenantId}': {Outcome}{ReasonSeparator}{Reason}. Final state: " +
             "{Plaintext} plaintext, {EncV1} enc_v1, {EncV2} enc_v2, {UnknownKid} unknown kid, {Failed} failed; " +
-            "{Rewritten} value(s) rewritten, {Placeholders} legacy placeholder(s) normalised, {ReEnter} secret(s) " +
-            "to re-enter, backup '{BackupFileName}'",
+            "{Rewritten} value(s) rewritten, {Placeholders} legacy placeholder(s) normalised, {SkippedLegacyV1} enc_v1 " +
+            "kept (legacy key missing), {ReEnter} secret(s) to re-enter, backup '{BackupFileName}'",
             report.Mode, report.Trigger, report.TenantId, report.Outcome,
             report.Reason == null ? string.Empty : " - ", report.Reason ?? string.Empty,
             final?.Plaintext ?? 0, final?.EncV1 ?? 0, final?.EncV2 ?? 0, final?.UnknownKeyId ?? 0,
             report.Steps.Sum(s => s.Totals.Failed), report.Steps.Sum(s => s.ValuesRewritten),
-            report.PlaceholdersNormalized, report.SecretsToReEnter.Count, report.BackupFileName ?? "<none>");
+            report.PlaceholdersNormalized, report.SkippedLegacyV1KeyMissing, report.SecretsToReEnter.Count, report.BackupFileName ?? "<none>");
 
         foreach (var secret in report.SecretsToReEnter)
         {
