@@ -22,9 +22,12 @@ public interface IRestoreRepositoryJob
     /// untouched. A legacy <c>.tar.gz</c> always restores Mongo only.
     /// </param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
-    /// <returns></returns>
+    /// <returns>
+    /// The restore result including the post-restore secret sweep report and the secrets to re-enter
+    /// (AB#5539); <c>null</c> when the system tenant does not exist.
+    /// </returns>
     [DisplayName("Restore repository '{1}' using tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
-    Task Run(string tenantId, string databaseName, string cacheKey, string? oldDatabaseName, bool restoreArchiveData, IBotCancellationToken? cancellationToken);
+    Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey, string? oldDatabaseName, bool restoreArchiveData, IBotCancellationToken? cancellationToken);
 }

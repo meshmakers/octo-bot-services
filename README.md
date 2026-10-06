@@ -13,6 +13,7 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 - Construction-kit fixups (`RunFixupJob`)
 - Attribute-value aggregation for autocomplete (`AttributeValueAggregatorJob`)
 - Hourly cleanup of stale backup/upload files (`CleanupStaleFilesJob`)
+- Secret sweep over the `Secret` attribute values of every tenant (`SecretSweepJob`, AB#5539)
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
 
@@ -101,6 +102,44 @@ the two real controllers behind the real gate: own tenant allowed, parent user t
 child route, unrelated tenant 403, parent **service** token 403 under `Enforce` while its own tenant
 passes, identical enqueued job on both surfaces, and the marker present on the tenant controller and
 nowhere else in the assembly.
+
+### Secret sweep (AB#5539)
+
+Implements phases 4 and 5 of the SECRET attribute value type (concept
+`octo-construction-kit-engine/docs/concept-secret-attribute-type.md`, §5.2–§6) on top of the engine's
+`ISecretMaintenanceService`. `SecretSweepJob` sweeps one tenant or every tenant of the instance (the
+system tenant first, then every registered tenant, child tenants included):
+
+| Mode | Effect |
+| --- | --- |
+| `Verify` | Counts the stored forms only. Recurring, daily (`Bot:SecretSweep:VerifyCron`). |
+| `Encrypt` | Clear text and `enc:v1` become `enc:v2` with the active key; placeholders become "not set". Once per environment. |
+| `Reprotect` | Everything not under the active key is re-encrypted (key rotation). |
+| `ClearUnknownKid` | Values of an unknown key id become "not set" and are listed for re-entry. |
+
+`Decrypt` (the emergency rollback) is deliberately not offered by the bot. Every writing mode first takes
+a fresh mongodump of the tenant into `Bot:SecretSweep:BackupStoragePath/<tenant>/…presweep.tar.gz`
+(owner-only, never a job download, deleted after `BackupRetentionDays` = 7 by the hourly cleanup); if
+that dump fails the tenant is **skipped** unless `RequirePreSweepBackup=false`. A writing run is
+followed by a `Verify`, so the report and the engine gauge `octo.secrets.values` describe the state
+after the sweep. After every repository restore the job runs `ClearUnknownKid` → `Encrypt` → `Verify`
+on the restored tenant and returns the secrets to re-enter in the restore job result (decision 5).
+
+| Endpoint | Scope | Purpose |
+| --- | --- | --- |
+| `POST {tenantId}/v1/jobs/secret-sweep?mode=Verify\|Encrypt\|Reprotect\|ClearUnknownKid` | full access | Start a sweep of one tenant → `JobResponseDto` |
+| `GET {tenantId}/v1/jobs/secret-sweep/report` | read | Last report of the tenant (404 if none) |
+| `POST system/v1/secrets/sweep?mode=…` | full access, system tenant only | Start a sweep of all tenants |
+| `GET system/v1/secrets/reports` | read, system tenant only | Last report of every tenant |
+
+The Hangfire recurring job `secret-sweep-encrypt` is never scheduled and exists so the one-time
+`Encrypt` can be triggered from the dashboard.
+
+**Strict mode** (`Bot:SecretSweep:StrictModeSince`, a UTC timestamp per environment, decision 10: 14
+days after the sweep reported zero plaintext) means legacy clear text and `enc:v1` are no longer
+acceptable. From that moment every sweep that still finds such values logs an error and reports the
+tenant in the gauge `octo.secrets.strict_mode.violations{tenant}` (meter `Meshmakers.Octo.Secrets`,
+registered by `AddObservability()`); alert on `> 0`. The engine itself does not refuse legacy reads yet.
 
 ### The tenant gate was a no-op until AB#5054
 

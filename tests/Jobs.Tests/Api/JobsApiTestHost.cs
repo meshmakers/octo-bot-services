@@ -6,6 +6,7 @@ using Hangfire.States;
 using Hangfire.Storage.Monitoring;
 using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
@@ -25,6 +26,7 @@ using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.Core;
 using SystemJobsController = Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers.JobsController;
+using SystemSecretsController = Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers.SecretsController;
 using TenantJobsController = Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers.JobsController;
 
 namespace Meshmakers.Octo.Backend.Jobs.Tests.Api;
@@ -61,6 +63,7 @@ internal sealed class JobsApiTestHost : IDisposable
     private IBackgroundJobClient _backgroundJobClient = null!;
     private HttpClient _client = null!;
     private IJobStorageAccessor _jobStorage = null!;
+    private ISecretSweepReportStore _secretSweepReportStore = null!;
     private string _tusFilePath = null!;
 
     public void Dispose()
@@ -145,6 +148,11 @@ internal sealed class JobsApiTestHost : IDisposable
     public IJobStorageAccessor JobStorage => _jobStorage;
 
     /// <summary>
+    ///     The secret sweep report store (AB#5539), a substitute a test can seed.
+    /// </summary>
+    public ISecretSweepReportStore SecretSweepReportStore => _secretSweepReportStore;
+
+    /// <summary>
     ///     Makes <paramref name="jobId" /> resolvable, as a job that succeeded and left
     ///     <paramref name="resultPath" /> behind. <paramref name="job" /> is built with
     ///     <see cref="Job.FromExpression{T}(System.Linq.Expressions.Expression{Action{T}})" />, i.e.
@@ -215,6 +223,7 @@ internal sealed class JobsApiTestHost : IDisposable
         // AB#5070: the job store is a substitute so a test can seed a job of a chosen tenant; the
         // access guard below is the REAL one, because it is the thing under test.
         _jobStorage = Substitute.For<IJobStorageAccessor>();
+        _secretSweepReportStore = Substitute.For<ISecretSweepReportStore>();
 
         // parenttenant -> childtenant is the only relation in this hierarchy; every other pair,
         // including the reverse and any self-pair, answers false (NSubstitute's default).
@@ -230,6 +239,9 @@ internal sealed class JobsApiTestHost : IDisposable
         builder.Services.AddSingleton(Substitute.For<IDistributedCacheService>());
         builder.Services.AddSingleton(hierarchy);
         builder.Services.AddSingleton(_jobStorage);
+        builder.Services.AddSingleton(_secretSweepReportStore);
+        // System tenant of the instance-wide secret sweep routes (AB#5539); default "OctoSystem".
+        builder.Services.AddOptions<Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration.OctoSystemConfiguration>();
         builder.Services.AddScoped<IJobTenantAccessGuard, JobTenantAccessGuard>();
 
         if (configure != null)
@@ -290,7 +302,8 @@ internal sealed class JobsApiTestHost : IDisposable
         {
             return base.IsController(typeInfo) &&
                    (typeInfo.AsType() == typeof(TenantJobsController) ||
-                    typeInfo.AsType() == typeof(SystemJobsController));
+                    typeInfo.AsType() == typeof(SystemJobsController) ||
+                    typeInfo.AsType() == typeof(SystemSecretsController));
         }
     }
 

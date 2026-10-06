@@ -5,10 +5,12 @@ using Duende.IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
+using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Meshmakers.Octo.Services.Infrastructure.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -205,6 +207,51 @@ public class JobsController : JobsControllerBase
         [FromQuery] ArchiveImportMode mode = ArchiveImportMode.InsertOnly)
     {
         return EnqueueImportArchiveDataFromUpload(tusFileId, tenantId, archiveRtId, mode);
+    }
+
+    /// <summary>
+    ///     Starts the secret sweep of the tenant taken from the route (AB#5539, concept AB#5528 §5.2 phase 4).
+    ///     <c>Verify</c> only counts; <c>Encrypt</c> turns clear text and <c>enc:v1</c> into <c>enc:v2</c>
+    ///     with the active key; <c>Reprotect</c> re-encrypts everything not under the active key (key
+    ///     rotation); <c>ClearUnknownKid</c> sets values of unknown key ids to "not set" and lists them for
+    ///     re-entry. Every writing mode first takes a pre-sweep dump of the tenant and is skipped when that
+    ///     fails. The job's status is read through <c>system/v1/jobs?id=…</c>; the report through
+    ///     <see cref="GetSecretSweepReport" />.
+    /// </summary>
+    /// <param name="tenantId">The tenant id, from the route.</param>
+    /// <param name="mode">
+    ///     <c>Verify</c> (default), <c>Encrypt</c>, <c>Reprotect</c> or <c>ClearUnknownKid</c> (name or number).
+    ///     <c>Decrypt</c> is refused with <c>400</c>.
+    /// </param>
+    // POST: {tenantId}/v1/jobs/secret-sweep?mode=Encrypt
+    [HttpPost]
+    [Route("secret-sweep")]
+    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public IActionResult SecretSweep([FromRoute] [Required] string tenantId,
+        [FromQuery] SecretSweepMode mode = SecretSweepMode.Verify)
+    {
+        return EnqueueSecretSweep(tenantId, mode);
+    }
+
+    /// <summary>
+    ///     Returns the last secret sweep report of the tenant taken from the route (AB#5539): counts per
+    ///     stored form and key id, per CK type and slot, the secrets to re-enter and the failures. Never
+    ///     contains a value. Written by every sweep of the tenant - on demand, recurring and after a restore.
+    /// </summary>
+    /// <param name="tenantId">The tenant id, from the route.</param>
+    /// <param name="reportStore">Report store.</param>
+    // GET: {tenantId}/v1/jobs/secret-sweep/report
+    [HttpGet]
+    [Route("secret-sweep/report")]
+    [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [ProducesResponseType(typeof(SecretSweepReport), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
+    public Task<IActionResult> GetSecretSweepReport([FromRoute] [Required] string tenantId,
+        [FromServices] ISecretSweepReportStore reportStore)
+    {
+        return GetSecretSweepReportAsync(tenantId, reportStore);
     }
 
     /// <summary>

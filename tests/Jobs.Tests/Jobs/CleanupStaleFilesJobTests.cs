@@ -73,4 +73,27 @@ public class CleanupStaleFilesJobTests
 
         await _backupFileStorage.Received(1).CleanupStaleFilesAsync(TimeSpan.FromHours(hours));
     }
+
+    [Test]
+    public async Task Run_DeletesPreSweepSecretBackupsAfterTheirOwnRetention()
+    {
+        // AB#5539, decision 10: pre-sweep secret backups are kept 7 days, not the hours of other files.
+        _backupFileStorage.CleanupStaleFilesAsync(Arg.Any<TimeSpan>()).Returns(Task.FromResult(0));
+        var job = new CleanupStaleFilesJob(_logger, _backupFileStorage, 4);
+
+        await job.Run(null);
+
+        await _backupFileStorage.Received(1).CleanupStaleSecretBackupsAsync(TimeSpan.FromDays(7));
+    }
+
+    [Test]
+    public async Task Run_UsesTheConfiguredSecretBackupRetention()
+    {
+        _backupFileStorage.CleanupStaleFilesAsync(Arg.Any<TimeSpan>()).Returns(Task.FromResult(0));
+        var job = new CleanupStaleFilesJob(_logger, _backupFileStorage, 4, 3);
+
+        await job.Run(null);
+
+        await _backupFileStorage.Received(1).CleanupStaleSecretBackupsAsync(TimeSpan.FromDays(3));
+    }
 }

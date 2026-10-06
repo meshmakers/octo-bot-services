@@ -13,11 +13,13 @@ using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Extensions;
+using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Infrastructure;
@@ -61,6 +63,10 @@ try
         builder.Configuration.GetSection("Bot").Bind(options));
     builder.Services.Configure<OctoSystemConfiguration>(options =>
         builder.Configuration.GetSection("System").Bind(options));
+    // AB#5539: secret sweep (Bot:SecretSweep, env OCTO_BOT__SECRETSWEEP__*). The key ring is the engine's
+    // SecretEncryption section, bound by AddRuntimeEngine().
+    builder.Services.Configure<SecretSweepJobOptions>(options =>
+        builder.Configuration.GetSection(SecretSweepJobOptions.SectionName).Bind(options));
 
     // additional providers here needed.
     // allow environment variables to override values from other providers.
@@ -156,10 +162,15 @@ try
     var botOptions = new OctoBotServicesOptions();
     builder.Configuration.GetSection("Bot").Bind(botOptions);
 
+    var secretSweepOptions = new SecretSweepJobOptions();
+    builder.Configuration.GetSection(SecretSweepJobOptions.SectionName).Bind(secretSweepOptions);
+
     builder.Services.AddOctoJobs(
         tusStoragePath: botOptions.TusStoragePath,
         dumpStoragePath: botOptions.DumpStoragePath,
-        fileRetentionHours: botOptions.FileRetentionHours);
+        fileRetentionHours: botOptions.FileRetentionHours,
+        secretBackupStoragePath: secretSweepOptions.BackupStoragePath,
+        secretBackupRetentionDays: secretSweepOptions.BackupRetentionDays);
     builder.Services.AddOctoNotification();
     builder.Services.AddCkModelSystemBotV3();
 
@@ -528,6 +539,27 @@ try
     // Register recurring cleanup job for stale backup files
     RecurringJob.AddOrUpdate<ICleanupStaleFilesJob>("cleanup-stale-files",
         job => job.Run(BotCancellationToken.Null), Cron.Hourly);
+
+    // AB#5539 (concept AB#5528 §5.2 phase 4): recurring Verify over all tenants, and the one-time Encrypt
+    // as a never-scheduled recurring job so an operator can trigger it from the dashboard ("Trigger now")
+    // besides POST system/v1/secrets/sweep. Both are owned by the system tenant (job tenant binding).
+    var systemTenantId = app.Services.GetRequiredService<IOptions<OctoSystemConfiguration>>().Value.SystemTenantId;
+    if (string.IsNullOrWhiteSpace(secretSweepOptions.VerifyCron))
+    {
+        RecurringJob.RemoveIfExists(BotServiceConstants.SecretSweepVerifyRecurringJobId);
+    }
+    else
+    {
+        RecurringJob.AddOrUpdate<ISecretSweepJob>(BotServiceConstants.SecretSweepVerifyRecurringJobId,
+            job => job.RunAllTenants(systemTenantId, SecretSweepMode.Verify, SecretSweepTrigger.Recurring,
+                BotCancellationToken.Null),
+            secretSweepOptions.VerifyCron);
+    }
+
+    RecurringJob.AddOrUpdate<ISecretSweepJob>(BotServiceConstants.SecretSweepEncryptRecurringJobId,
+        job => job.RunAllTenants(systemTenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+            BotCancellationToken.Null),
+        Cron.Never());
 
     await app.RunAsync();
 }

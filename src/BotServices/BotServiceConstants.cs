@@ -43,6 +43,17 @@ internal static class BotServiceConstants
     public static readonly TimeSpan CookieExpireTimeSpan = TimeSpan.FromMinutes(60);
 
     /// <summary>
+    /// Recurring job id of the daily secret Verify sweep over all tenants (AB#5539).
+    /// </summary>
+    public const string SecretSweepVerifyRecurringJobId = "secret-sweep-verify";
+
+    /// <summary>
+    /// Recurring job id of the never-scheduled secret Encrypt sweep over all tenants, triggered on demand
+    /// from the dashboard (AB#5539).
+    /// </summary>
+    public const string SecretSweepEncryptRecurringJobId = "secret-sweep-encrypt";
+
+    /// <summary>
     /// Default prefix for instance name
     /// </summary>
     public const string  DefaultInstancePrefix = "default";

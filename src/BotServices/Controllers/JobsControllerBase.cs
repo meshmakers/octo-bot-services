@@ -5,10 +5,12 @@ using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
+using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Meshmakers.Octo.Backend.BotServices.Controllers;
@@ -208,6 +210,54 @@ public abstract class JobsControllerBase : ControllerBase
         {
             return BadRequest(new InternalServerErrorDto(e.Message));
         }
+    }
+
+    /// <summary>
+    ///     Enqueues the secret sweep of <paramref name="tenantId" /> (AB#5539).
+    ///     <see cref="SecretSweepMode.Decrypt" /> is refused: it is an emergency operation that writes clear
+    ///     text back and is not offered through this API.
+    /// </summary>
+    protected IActionResult EnqueueSecretSweep(string tenantId, SecretSweepMode mode)
+    {
+        if (!IsSweepModeOffered(mode))
+        {
+            return BadRequest(new InternalServerErrorDto(
+                $"Secret sweep mode '{mode}' is not available; use Verify, Encrypt, Reprotect or ClearUnknownKid."));
+        }
+
+        try
+        {
+            var id = _backgroundJobClient.Enqueue<ISecretSweepJob>(job =>
+                job.Run(tenantId, mode, BotCancellationToken.Null));
+
+            RecordStarter(id, tenantId);
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+    }
+
+    /// <summary>
+    ///     Returns the last secret sweep report of <paramref name="tenantId" /> (AB#5539), or <c>404</c>.
+    /// </summary>
+    protected static async Task<IActionResult> GetSecretSweepReportAsync(string tenantId,
+        ISecretSweepReportStore reportStore)
+    {
+        var report = await reportStore.GetLastAsync(tenantId);
+        return report == null
+            ? new NotFoundObjectResult(new NotFoundErrorDto($"No secret sweep report for tenant '{tenantId}'."))
+            : new JsonResult(report, SecretSweepReportJson.Options);
+    }
+
+    /// <summary>
+    ///     Whether <paramref name="mode" /> may be started through the API.
+    /// </summary>
+    internal static bool IsSweepModeOffered(SecretSweepMode mode)
+    {
+        return mode is SecretSweepMode.Verify or SecretSweepMode.Encrypt or SecretSweepMode.Reprotect
+            or SecretSweepMode.ClearUnknownKid;
     }
 
     /// <summary>

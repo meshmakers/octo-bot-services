@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
@@ -18,16 +19,19 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// <c>.octobak</c> and <c>restoreArchiveData</c> is set, each archive in the backup is restored into
 /// CrateDB via a clean drop/recreate/import sequence (concept §5.1); per-archive failures are
 /// recorded and the job still succeeds (continue + report, §2 decision #4).
+/// After the restore the secret sweep runs on the restored tenant (AB#5539, concept AB#5528 §6, decision 5):
+/// values of an unknown key id become "not set" and are reported for re-entry, older plaintext is encrypted.
 /// </summary>
 public class RestoreRepositoryJob(
     ILogger<RestoreRepositoryJob> logger,
     ISystemContext systemContext,
-    IBackupFileStorageService backupFileStorage) : IRestoreRepositoryJob
+    IBackupFileStorageService backupFileStorage,
+    ISecretSweepCoordinator? secretSweepCoordinator = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <inheritdoc />
-    public async Task Run(string tenantId, string databaseName, string cacheKey,
+    public async Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
         string? oldDatabaseName, bool restoreArchiveData,
         IBotCancellationToken? cancellationToken)
     {
@@ -42,7 +46,7 @@ public class RestoreRepositoryJob(
         {
             if (!await systemContext.IsSystemTenantExistingAsync())
             {
-                return;
+                return null;
             }
 
             if (!File.Exists(filePath))
@@ -72,11 +76,19 @@ public class RestoreRepositoryJob(
                 }
 
                 await RestoreMongoAsync(tenantId, databaseName, filePath, oldDatabaseName, ct);
-                return;
+            }
+            else
+            {
+                await RestoreOctoBakAsync(tenantId, databaseName, oldDatabaseName, filePath, manifest,
+                    restoreArchiveData, ct);
             }
 
-            await RestoreOctoBakAsync(tenantId, databaseName, oldDatabaseName, filePath, manifest, restoreArchiveData,
-                ct);
+            return new RestoreRepositoryResult
+            {
+                TenantId = tenantId,
+                DatabaseName = databaseName,
+                SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId, ct)
+            };
         }
         catch (Exception e)
         {
@@ -87,6 +99,29 @@ public class RestoreRepositoryJob(
         {
             await backupFileStorage.DeleteFileAsync(filePath);
         }
+    }
+
+    /// <summary>
+    ///     Runs the post-restore secret sweep (AB#5539). The restore itself has succeeded at this point, so
+    ///     a problem of the sweep is reported, never thrown.
+    /// </summary>
+    private async Task<SecretSweepReport?> RunPostRestoreSecretSweepAsync(string tenantId, CancellationToken ct)
+    {
+        if (secretSweepCoordinator == null)
+        {
+            return null;
+        }
+
+        var report = await secretSweepCoordinator.RunAfterRestoreAsync(tenantId, ct);
+        if (report.SecretsToReEnter.Count > 0)
+        {
+            logger.LogWarning(
+                "Restore of tenant '{TenantId}': {Count} secret(s) were encrypted with a key unknown to this " +
+                "environment and are now not set; they must be re-entered (listed in the job result and in " +
+                "the tenant's secret sweep report)", tenantId, report.SecretsToReEnter.Count);
+        }
+
+        return report;
     }
 
     /// <summary>
@@ -393,4 +428,26 @@ public class RestoreRepositoryJob(
         public static ArchiveRestoreResult Failed(string rtId, string reason) =>
             new(rtId, ArchiveRestoreOutcome.Failed, reason, 0, null);
     }
+}
+
+/// <summary>
+///     Result of a repository restore (job result).
+/// </summary>
+public class RestoreRepositoryResult
+{
+    /// <summary>
+    ///     Restored tenant.
+    /// </summary>
+    public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Restored database.
+    /// </summary>
+    public string DatabaseName { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     The post-restore secret sweep (AB#5539), including the secrets to re-enter
+    ///     (<see cref="SecretSweepReport.SecretsToReEnter" />); <c>null</c> when not wired.
+    /// </summary>
+    public SecretSweepReport? SecretSweep { get; set; }
 }

@@ -73,4 +73,35 @@ public interface IBackupFileStorageService
     /// Gets the configured dump storage path.
     /// </summary>
     string DumpStoragePath { get; }
+
+    /// <summary>
+    /// Gets the directory of the pre-sweep secret backups (AB#5539, decision 10). These dumps hold Secret
+    /// values as they were before the secret sweep - possibly clear text - and are secret material: they live
+    /// outside the tus and dump directories, are never offered as a job download, are owner-only on Unix and
+    /// are deleted by <see cref="CleanupStaleSecretBackupsAsync" /> after their own retention (7 days), not
+    /// by <see cref="CleanupStaleFilesAsync" />.
+    /// </summary>
+    string SecretBackupStoragePath { get; }
+
+    /// <summary>
+    /// Creates the tenant's secret backup directory (owner-only on Unix) and returns the path of a new,
+    /// not yet existing pre-sweep dump file (<c>&lt;tenant&gt;-&lt;utc&gt;-&lt;guid&gt;.presweep.tar.gz</c>).
+    /// </summary>
+    /// <param name="tenantId">The tenant identifier.</param>
+    /// <returns>The full path of the dump file to write.</returns>
+    /// <exception cref="ArgumentException">The tenant id is not usable as a path segment.</exception>
+    string CreateSecretBackupFilePath(string tenantId);
+
+    /// <summary>
+    /// Restricts a file to its owner (Unix mode 0600; no-op on Windows).
+    /// </summary>
+    /// <param name="filePath">The file.</param>
+    void RestrictToOwner(string filePath);
+
+    /// <summary>
+    /// Deletes pre-sweep secret backups older than <paramref name="retention" />.
+    /// </summary>
+    /// <param name="retention">The retention period.</param>
+    /// <returns>The number of files deleted.</returns>
+    Task<int> CleanupStaleSecretBackupsAsync(TimeSpan retention);
 }
