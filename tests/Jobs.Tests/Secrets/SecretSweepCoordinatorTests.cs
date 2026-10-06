@@ -660,6 +660,29 @@ public class SecretSweepCoordinatorTests : IDisposable
     }
 
     [Test]
+    public async Task AfterRestore_EncryptThatLeftValuesAsModifiedConcurrently_IsNotReportedAsSucceeded()
+    {
+        // The post-restore Encrypt step is a writing step like a manual Encrypt: skipped values stay in their old
+        // form, so the run must not say "Succeeded".
+        var runs = new InMemorySecretSweepRunStore();
+        SetupSweep("t-restore-skip", SecretSweepMode.Encrypt, r =>
+        {
+            AddPlaintext(r, 3);
+            r.SkippedConcurrentlyModified = 3;
+        });
+        SetupSweep("t-restore-skip", SecretSweepMode.Verify, r => AddPlaintext(r, 3));
+
+        var report = await CreateCoordinator(runStore: runs)
+            .RunAfterRestoreAsync("t-restore-skip", null, CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.CompletedWithFailures);
+        await Assert.That(report.Reason).Contains("3 value(s) changed while the sweep was working on them");
+        var run = (await runs.GetRunsAsync("t-restore-skip")).Single();
+        await Assert.That(run.Outcome).IsEqualTo(SecretSweepOutcomeDto.CompletedWithFailures);
+        await Assert.That(run.SkippedConcurrentlyModified).IsEqualTo(3);
+    }
+
+    [Test]
     public async Task Run_Verify_HasTheSameTotalsBeforeAndAfter()
     {
         var runs = new InMemorySecretSweepRunStore();

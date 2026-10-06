@@ -126,19 +126,7 @@ public class SecretSweepCoordinator(
             return await FinishAsync(report, run, SecretSweepOutcome.Failed, Describe(e));
         }
 
-        var outcome = OutcomeOfSteps(report);
-        var skipped = report.Steps.Sum(s => s.SkippedConcurrentlyModified);
-        if (writes && skipped > 0)
-        {
-            // AB#5539: values the run had to leave alone are not "Succeeded" - the follow-up Verify still finds
-            // them in their old form. Run the sweep again.
-            outcome = SecretSweepOutcome.CompletedWithFailures;
-            var skippedReason = $"{skipped} value(s) changed while the sweep was working on them and were left " +
-                                "as stored; run the sweep again.";
-            report.Reason = report.Reason == null ? skippedReason : report.Reason + " " + skippedReason;
-        }
-
-        return await FinishAsync(report, run, outcome, report.Reason);
+        return await FinishAsync(report, run, OutcomeOfRun(report), report.Reason);
     }
 
     /// <inheritdoc />
@@ -211,7 +199,7 @@ public class SecretSweepCoordinator(
             return await FinishAsync(report, run, SecretSweepOutcome.Failed, Describe(e));
         }
 
-        return await FinishAsync(report, run, OutcomeOfSteps(report), report.Reason);
+        return await FinishAsync(report, run, OutcomeOfRun(report), report.Reason);
     }
 
     private SecretSweepReport NewReport(string tenantId, SecretSweepMode mode, SecretSweepTrigger trigger)
@@ -311,6 +299,28 @@ public class SecretSweepCoordinator(
         return report.Steps.All(s => s.Success)
             ? SecretSweepOutcome.Succeeded
             : SecretSweepOutcome.CompletedWithFailures;
+    }
+
+    /// <summary>
+    ///     Outcome of a run whose steps all completed: <see cref="OutcomeOfSteps" />, and
+    ///     <see cref="SecretSweepOutcome.CompletedWithFailures" /> when a writing step left values as stored because
+    ///     they changed concurrently (AB#5539: such values are still in their old form - the run is not
+    ///     "Succeeded"; this applies to manual/scheduled runs and to the Encrypt step of the post-restore run). Only
+    ///     writing steps can skip values, so a Verify-only run is unaffected. Appends the hint to the report reason.
+    /// </summary>
+    private static SecretSweepOutcome OutcomeOfRun(SecretSweepReport report)
+    {
+        var outcome = OutcomeOfSteps(report);
+        var skipped = report.Steps.Sum(s => s.SkippedConcurrentlyModified);
+        if (skipped <= 0)
+        {
+            return outcome;
+        }
+
+        var skippedReason = $"{skipped} value(s) changed while the sweep was working on them and were left " +
+                            "as stored; run the sweep again.";
+        report.Reason = report.Reason == null ? skippedReason : report.Reason + " " + skippedReason;
+        return SecretSweepOutcome.CompletedWithFailures;
     }
 
     private async Task<SecretSweepRunDto> StartRunAsync(SecretSweepReport report, SecretSweepRunInfo? runInfo)
