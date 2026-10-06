@@ -34,6 +34,7 @@ public class SecretEnvironmentStatusServiceTests
         _encryption.Keys["k2"] = "FAKE-KEY-MATERIAL-2";
         _encryption.Keys["k1"] = "FAKE-KEY-MATERIAL-1";
         _encryption.LegacyV1Key = "FAKE-LEGACY";
+        _protector.IsLegacyV1KeyConfigured.Returns(true);
 
         var status = await CreateService().GetStatusAsync("t");
 
@@ -102,8 +103,35 @@ public class SecretEnvironmentStatusServiceTests
 
         // With the legacy key configured there is nothing to warn about for enc:v1.
         _encryption.LegacyV1Key = "FAKE-LEGACY";
+        _protector.IsLegacyV1KeyConfigured.Returns(true);
         await Assert.That((await CreateService().GetStatusAsync("t")).Warnings)
             .IsEquivalentTo(new List<string> { SecretEnvironmentWarningCodes.NoKeyRing });
+    }
+
+    [Test]
+    public async Task NoLegacyV1Key_WhenTheConfiguredLegacyKeyIsRejectedByTheEngine()
+    {
+        // Set in configuration but not usable (the engine skips an invalid key): enc:v1 values are key missing.
+        _protector.IsConfigured.Returns(true);
+        _protector.IsLegacyV1KeyConfigured.Returns(false);
+        _encryption.LegacyV1Key = "FAKE-INVALID-LEGACY";
+        await _runs.UpsertAsync("t", new SecretSweepRunDto
+        {
+            RunId = "1", Mode = SecretSweepModeDto.Verify, Outcome = SecretSweepOutcomeDto.Succeeded,
+            CompletedAt = _now.UtcDateTime.AddHours(-1),
+            Totals = new SecretFormCountsReportDto
+            {
+                UnknownKeyId = 1,
+                UnknownKeyIdByKeyId = { [SecretValueStates.LegacyV1KeyId] = 1 }
+            }
+        });
+
+        var status = await CreateService().GetStatusAsync("t");
+
+        await Assert.That(status.LegacyV1KeyConfigured).IsFalse();
+        await Assert.That(status.Warnings)
+            .IsEquivalentTo(new List<string> { SecretEnvironmentWarningCodes.NoLegacyV1Key });
+        await Assert.That(System.Text.Json.JsonSerializer.Serialize(status)).DoesNotContain("FAKE");
     }
 
     [Test]

@@ -30,7 +30,10 @@ public class SecretEnvironmentStatusService(
                         r.Outcome is SecretSweepOutcomeDto.Succeeded or SecretSweepOutcomeDto.CompletedWithFailures)
             .Max(r => r.CompletedAt);
 
-        var legacyV1KeyConfigured = !string.IsNullOrWhiteSpace(encryption.LegacyV1Key);
+        // The engine's parsed key ring is the truth: a LegacyV1Key that is set but invalid (not Base64 / 32 bytes)
+        // is skipped by the engine, and enc:v1 values are then key missing - report it as not configured.
+        var legacyV1KeyConfigured = !string.IsNullOrWhiteSpace(encryption.LegacyV1Key) &&
+                                    protector.IsLegacyV1KeyConfigured;
         var warnings = new List<string>();
         if (!configured)
         {
