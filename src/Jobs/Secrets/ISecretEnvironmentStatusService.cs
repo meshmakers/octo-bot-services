@@ -16,5 +16,5 @@ public interface ISecretEnvironmentStatusService
     ///     <c>DumpKeyMissing</c> (AB#5559) when an encrypted dump in the artifact store needs a key id that is not in
     ///     the key ring; <c>requiredKeyIds</c> lists the key ids of all encrypted dumps of the instance.
     /// </summary>
-    Task<BotSecretEnvironmentStatusDto> GetStatusAsync(string tenantId);
+    Task<SecretEnvironmentStatusDto> GetStatusAsync(string tenantId);
 }

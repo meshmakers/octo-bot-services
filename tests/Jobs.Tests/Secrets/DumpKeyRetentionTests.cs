@@ -89,14 +89,14 @@ public class DumpKeyRetentionTests : IDisposable
         // Same ring as the dump: no warning.
         var withKey = await CreateStatusService(attributeProtector, _env.Storage).GetStatusAsync(Tenant);
         await Assert.That(withKey.RequiredKeyIds.ToArray()).IsEquivalentTo(new[] { "k1" });
-        await Assert.That(withKey.Warnings).DoesNotContain(BotSecretEnvironmentWarningCodes.DumpKeyMissing);
+        await Assert.That(withKey.Warnings).DoesNotContain(SecretEnvironmentWarningCodes.DumpKeyMissing);
 
         // k1 removed from the ring while its dump still exists.
         var rotated = _env.CreateStorage(ArtifactTestEnvironment.CreateProtector(
             new Dictionary<string, byte[]> { ["k2"] = RandomNumberGenerator.GetBytes(32) }, "k2"));
         var withoutKey = await CreateStatusService(attributeProtector, rotated).GetStatusAsync(Tenant);
         await Assert.That(withoutKey.RequiredKeyIds.ToArray()).IsEquivalentTo(new[] { "k1" });
-        await Assert.That(withoutKey.Warnings).Contains(BotSecretEnvironmentWarningCodes.DumpKeyMissing);
+        await Assert.That(withoutKey.Warnings).Contains(SecretEnvironmentWarningCodes.DumpKeyMissing);
     }
 
     [Test]
@@ -116,7 +116,7 @@ public class DumpKeyRetentionTests : IDisposable
         var status = await CreateStatusService(attributeProtector, _env.Storage).GetStatusAsync(Tenant);
 
         await Assert.That(status.RequiredKeyIds.ToArray()).IsEquivalentTo(new[] { "k1" });
-        await Assert.That(status.Warnings).DoesNotContain(BotSecretEnvironmentWarningCodes.DumpKeyMissing);
+        await Assert.That(status.Warnings).DoesNotContain(SecretEnvironmentWarningCodes.DumpKeyMissing);
     }
 
     [Test]

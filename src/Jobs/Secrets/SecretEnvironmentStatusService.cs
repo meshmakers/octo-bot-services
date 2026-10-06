@@ -22,7 +22,7 @@ public class SecretEnvironmentStatusService(
     private readonly ILogger _logger = logger ?? NullLogger<SecretEnvironmentStatusService>.Instance;
 
     /// <inheritdoc />
-    public async Task<BotSecretEnvironmentStatusDto> GetStatusAsync(string tenantId)
+    public async Task<SecretEnvironmentStatusDto> GetStatusAsync(string tenantId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         var encryption = encryptionOptions.Value;
@@ -55,10 +55,10 @@ public class SecretEnvironmentStatusService(
         var requiredKeyIds = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         if (await RequiredKeyMissingAsync(requiredKeyIds))
         {
-            warnings.Add(BotSecretEnvironmentWarningCodes.DumpKeyMissing);
+            warnings.Add(SecretEnvironmentWarningCodes.DumpKeyMissing);
         }
 
-        return new BotSecretEnvironmentStatusDto
+        return new SecretEnvironmentStatusDto
         {
             RequiredKeyIds = requiredKeyIds.ToList(),
             KeyRingConfigured = configured,

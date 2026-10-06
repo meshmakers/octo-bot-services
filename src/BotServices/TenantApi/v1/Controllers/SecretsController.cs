@@ -74,7 +74,7 @@ public class SecretsController : ControllerBase
     // GET: {tenantId}/v1/secrets/status
     [HttpGet("status")]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
-    [ProducesResponseType(typeof(BotSecretEnvironmentStatusDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(SecretEnvironmentStatusDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStatus([FromRoute] [Required] string tenantId)
     {
         return new JsonResult(await _statusService.GetStatusAsync(tenantId), SecretSweepReportJson.Options);
@@ -179,7 +179,7 @@ public class SecretsController : ControllerBase
                 return Conflict(new CodedBadRequestErrorDto("DumpDeleted",
                     $"The pre-sweep dump of run '{runId}' was deleted (early or expired)."));
             case SecretSweepDumpRestoreState.KeyMissing:
-                return Conflict(new CodedBadRequestErrorDto(BotSecretEnvironmentWarningCodes.DumpKeyMissing,
+                return Conflict(new CodedBadRequestErrorDto(SecretEnvironmentWarningCodes.DumpKeyMissing,
                     $"The pre-sweep dump of run '{runId}' is encrypted with key id '{check.KeyId}', which is not in " +
                     "the key ring."));
         }

@@ -22,7 +22,7 @@ internal class SecretsAdminApiTests
     public async Task Status_AnyUserOfTheTenant_WithoutRoles_GetsTheStatusInContractShape()
     {
         using var host = await JobsApiTestHost.StartAsync();
-        host.SecretEnvironmentStatusService.GetStatusAsync(Child).Returns(new BotSecretEnvironmentStatusDto
+        host.SecretEnvironmentStatusService.GetStatusAsync(Child).Returns(new SecretEnvironmentStatusDto
         {
             KeyRingConfigured = true,
             ActiveKeyId = "k1",
