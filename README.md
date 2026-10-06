@@ -13,7 +13,7 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 - Construction-kit fixups (`RunFixupJob`)
 - Attribute-value aggregation for autocomplete (`AttributeValueAggregatorJob`)
 - Hourly cleanup of stale backup/upload files and of expired artifacts in the artifact store (`CleanupStaleFilesJob`)
-- Secret sweep over the `Secret` attribute values of every tenant (`SecretSweepJob`, AB#5539) and the secrets admin API (status, run history, dump deletion; AB#5544)
+- Secret sweep over the `Secret` attribute values of every tenant (`SecretSweepJob`, AB#5539) and the secrets admin API (status, run history, dump deletion; AB#5544; pre-sweep dump restore, AB#5559)
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
 
@@ -150,15 +150,32 @@ run started before it. Runs processing on a live server (another replica) are le
 | --- | --- | --- |
 | `POST {tenantId}/v1/jobs/secret-sweep?mode=Verify\|Encrypt\|Reprotect\|CleanupUnreadable&confirm=true` | full access + role `SecretManagement` | Start a sweep of one tenant → `JobResponseDto`; `Encrypt` / `CleanupUnreadable` without `confirm=true` → `400 ConfirmationRequired`; `Decrypt` → `400` |
 | `GET {tenantId}/v1/jobs/secret-sweep/report` | read + role `AdminPanelManagement` | Last report of the tenant (404 if none) |
-| `GET {tenantId}/v1/secrets/status` | read (any user of the tenant) | `SecretEnvironmentStatusDto`: key ring, active / known key ids, legacy key, strict mode, Verify cron, last Verify |
+| `GET {tenantId}/v1/secrets/status` | read (any user of the tenant) | `SecretEnvironmentStatusDto`: key ring, active / known key ids, legacy key, strict mode, Verify cron, last Verify; plus `requiredKeyIds` (key ids of the encrypted dumps in the artifact store) and the warning `DumpKeyMissing` |
 | `GET {tenantId}/v1/secrets/sweep-runs?limit=20` | read + role `AdminPanelManagement` | `SecretSweepRunDto[]`, newest first (limit 1..50) |
 | `DELETE {tenantId}/v1/secrets/sweep-runs/{runId}/dump` | full access + role `SecretManagement` | Delete a run's dump early: `204`, `404` (unknown run / no dump), `409` (already deleted) |
+| `POST {tenantId}/v1/secrets/sweep-runs/{runId}/restore-dump?confirm=true` | full access + role `SecretManagement` | Restore the run's pre-sweep dump into the same tenant (AB#5559) → `JobResponseDto`; without `confirm=true` → `400 ConfirmationRequired`; `404` unknown run / no dump / no longer stored; `409 DumpDeleted`, `409 DumpKeyMissing` |
 | `POST system/v1/secrets/sweep?mode=…` | full access, system tenant only | Start a sweep of all tenants (`CleanupUnreadable` needs `confirm=true`) |
 | `GET system/v1/secrets/reports` | read, system tenant only | Last report of every tenant |
 
 Roles are tenant roles carried in the token (`role` claims); missing role → `403`. The policies live in
 `Configuration/BotAuthorizationPolicies.cs`. The `secrets` routes match the token's tenant exactly (no
 parent-tenant administration marker, unlike the job routes).
+
+**Restoring a pre-sweep dump** (`restore-dump`, job `IRestorePreSweepDumpJob`): the run is looked up in the
+route tenant's own run history, so a dump can only go back into the tenant it was taken from. The job
+decrypts the dump from the store into the scratch directory (never streamed into mongorestore - a tampered
+or truncated dump is detected before anything is restored), drops and replaces the tenant database with
+mongorestore (the same mechanism as the repository restore), deletes the scratch file and runs a `Verify`
+(trigger `Restore`, visible in the run history). 🔴 A dump taken before the environment's first `Encrypt`
+holds **plaintext** secrets: restoring it brings them back (`secretSweep.remainingLegacyValues` in the job
+result) - run `Encrypt` again afterwards. Legacy plaintext dumps on the local disk (before AB#5561) are
+restored from there.
+
+**Key-id retention:** a key id must stay in the key ring until the newest dump encrypted with it has expired
+(7 days for pre-sweep dumps, 1 day for tenant dumps and staged uploads). `GET …/secrets/status` lists the key
+ids still needed (`requiredKeyIds`, read from the clear-text header of each `.octoenc` file, no decryption)
+and warns `DumpKeyMissing` when one is no longer in the ring - such a dump can neither be restored nor
+downloaded.
 
 The Hangfire recurring job `secret-sweep-encrypt` is never scheduled and exists so the one-time
 `Encrypt` can be triggered from the dashboard.
@@ -224,8 +241,8 @@ the store holds every category. A file system root inside the tus or dump direct
 (the hourly cleanup empties those).
 
 **Legacy local dumps** (`Bot:SecretSweep:BackupStoragePath/<tenant>/*.presweep.tar.gz`, written before
-AB#5561) are **not migrated**: the run history keeps showing them, early deletion still works on them, and
-the hourly cleanup deletes them when their 7 days are over.
+AB#5561) are **not migrated**: the run history keeps showing them, early deletion and restore still work on
+them, and the hourly cleanup deletes them when their 7 days are over.
 
 ### The tenant gate was a no-op until AB#5054
 

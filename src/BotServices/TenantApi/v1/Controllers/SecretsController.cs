@@ -1,7 +1,11 @@
 using System.ComponentModel.DataAnnotations;
 using Asp.Versioning;
 using Duende.IdentityModel;
+using Hangfire;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
+using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
@@ -12,8 +16,9 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 
 /// <summary>
 ///     Secrets administration of a tenant (AB#5544, contract §9): encryption status of the environment, the
-///     secret sweep run history and the early deletion of a run's pre-sweep dump. Sweeps themselves are
-///     started on <c>{tenantId}/v1/jobs/secret-sweep</c>. Dumps are never downloadable.
+///     secret sweep run history, the early deletion of a run's pre-sweep dump and (AB#5559) its restore into the
+///     same tenant. Sweeps themselves are started on <c>{tenantId}/v1/jobs/secret-sweep</c>. Dumps are never
+///     downloadable.
 /// </summary>
 /// <remarks>
 ///     The tenant is a route segment, so the transport tenant gate checks every call against the caller's
@@ -33,6 +38,9 @@ public class SecretsController : ControllerBase
     /// </summary>
     public const int DefaultRunLimit = 20;
 
+    private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IJobStorageAccessor _jobStorage;
+    private readonly ILogger<SecretsController> _logger;
     private readonly ISecretSweepRunService _runService;
     private readonly ISecretEnvironmentStatusService _statusService;
 
@@ -41,23 +49,32 @@ public class SecretsController : ControllerBase
     /// </summary>
     /// <param name="statusService">Encryption status.</param>
     /// <param name="runService">Run history and dump management.</param>
-    public SecretsController(ISecretEnvironmentStatusService statusService, ISecretSweepRunService runService)
+    /// <param name="backgroundJobClient">Enqueues the pre-sweep dump restore (AB#5559).</param>
+    /// <param name="jobStorage">Records who started the restore job.</param>
+    /// <param name="logger">Logger.</param>
+    public SecretsController(ISecretEnvironmentStatusService statusService, ISecretSweepRunService runService,
+        IBackgroundJobClient backgroundJobClient, IJobStorageAccessor jobStorage, ILogger<SecretsController> logger)
     {
         _statusService = statusService;
         _runService = runService;
+        _backgroundJobClient = backgroundJobClient;
+        _jobStorage = jobStorage;
+        _logger = logger;
     }
 
     /// <summary>
     ///     Returns the encryption status of the environment as seen from the tenant: key ring configured,
     ///     active and known key ids (never key material), legacy <c>enc:v1</c> key, strict mode, the recurring
-    ///     Verify schedule and the tenant's last Verify run. Any user with access to the tenant (editors use it
-    ///     to disable secret inputs when no key ring is configured).
+    ///     Verify schedule and the tenant's last Verify run, and (AB#5559) <c>requiredKeyIds</c>, the key ids of the
+    ///     encrypted dumps in the artifact store, with the warning <c>DumpKeyMissing</c> when one of them is not in
+    ///     the key ring. Any user with access to the tenant (editors use it to disable secret inputs when no key
+    ///     ring is configured).
     /// </summary>
     /// <param name="tenantId">The tenant id, from the route.</param>
     // GET: {tenantId}/v1/secrets/status
     [HttpGet("status")]
     [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
-    [ProducesResponseType(typeof(SecretEnvironmentStatusDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(BotSecretEnvironmentStatusDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStatus([FromRoute] [Required] string tenantId)
     {
         return new JsonResult(await _statusService.GetStatusAsync(tenantId), SecretSweepReportJson.Options);
@@ -115,5 +132,62 @@ public class SecretsController : ControllerBase
             SecretSweepDumpDeleteResultDto.AlreadyDeleted => Conflict(),
             _ => NotFound(new NotFoundErrorDto($"No pre-sweep dump for run '{runId}' of tenant '{tenantId}'."))
         };
+    }
+
+    /// <summary>
+    ///     Restores the pre-sweep dump of a run into the tenant (AB#5559) and runs a <c>Verify</c> afterwards. The
+    ///     tenant's database is dropped and replaced by the dump, exactly like a repository restore. 🔴 A dump taken
+    ///     before the first <c>Encrypt</c> holds plaintext secrets: restoring it brings the plaintext back - run
+    ///     <c>Encrypt</c> again afterwards. Only the run history of the route tenant is searched, so a dump can only
+    ///     be restored into the tenant it was taken from. Requires the tenant role <c>SecretManagement</c> and
+    ///     <c>confirm=true</c>.
+    /// </summary>
+    /// <param name="tenantId">The tenant id, from the route.</param>
+    /// <param name="runId">The run id (<see cref="SecretSweepRunDto.RunId" />).</param>
+    /// <param name="confirm">Must be <c>true</c>: the restore replaces the tenant's data.</param>
+    /// <response code="200">The restore job was enqueued (<see cref="JobResponseDto" />); follow it with the job API.</response>
+    /// <response code="400"><c>ConfirmationRequired</c> without <c>confirm=true</c>.</response>
+    /// <response code="404">Unknown run, the run has no dump, or the dump is no longer in the store.</response>
+    /// <response code="409">The dump was deleted (early or expired), or its key id is not in the key ring (<c>DumpKeyMissing</c>).</response>
+    // POST: {tenantId}/v1/secrets/sweep-runs/{runId}/restore-dump?confirm=true
+    [HttpPost("sweep-runs/{runId}/restore-dump")]
+    [Authorize(BotServiceConstants.SecretManagementPolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(CodedBadRequestErrorDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(CodedBadRequestErrorDto), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> RestoreSweepRunDump([FromRoute] [Required] string tenantId,
+        [FromRoute] [Required] string runId, [FromQuery] bool confirm = false)
+    {
+        if (!confirm)
+        {
+            return BadRequest(new CodedBadRequestErrorDto(CodedBadRequestErrorDto.ConfirmationRequired,
+                "Restoring a pre-sweep dump replaces the tenant's data and may bring back plaintext secrets; " +
+                "repeat the request with confirm=true."));
+        }
+
+        var check = await _runService.CheckDumpRestorableAsync(tenantId, runId);
+        switch (check.State)
+        {
+            case SecretSweepDumpRestoreState.NotFound:
+                return NotFound(new NotFoundErrorDto($"No pre-sweep dump for run '{runId}' of tenant '{tenantId}'."));
+            case SecretSweepDumpRestoreState.Missing:
+                return NotFound(new NotFoundErrorDto(
+                    $"The pre-sweep dump of run '{runId}' of tenant '{tenantId}' is no longer stored."));
+            case SecretSweepDumpRestoreState.Deleted:
+                return Conflict(new CodedBadRequestErrorDto("DumpDeleted",
+                    $"The pre-sweep dump of run '{runId}' was deleted (early or expired)."));
+            case SecretSweepDumpRestoreState.KeyMissing:
+                return Conflict(new CodedBadRequestErrorDto(BotSecretEnvironmentWarningCodes.DumpKeyMissing,
+                    $"The pre-sweep dump of run '{runId}' is encrypted with key id '{check.KeyId}', which is not in " +
+                    "the key ring."));
+        }
+
+        var triggeredBy = JobsControllerBase.GetUserName(User);
+        var id = _backgroundJobClient.Enqueue<IRestorePreSweepDumpJob>(job =>
+            job.Run(tenantId, runId, triggeredBy, null, BotCancellationToken.Null));
+        JobStarterRecorder.Record(_jobStorage, User, id, tenantId, _logger);
+        return Ok(new JobResponseDto(id));
     }
 }

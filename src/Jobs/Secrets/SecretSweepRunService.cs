@@ -89,6 +89,62 @@ public class SecretSweepRunService(
         return result;
     }
 
+    /// <inheritdoc />
+    public async Task<SecretSweepDumpRestoreCheck> CheckDumpRestorableAsync(string tenantId, string runId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return SecretSweepDumpRestoreCheck.Of(SecretSweepDumpRestoreState.NotFound);
+        }
+
+        var run = (await runStore.GetRunsAsync(tenantId)).FirstOrDefault(r => r.RunId == runId);
+        var dump = run?.Dump;
+        if (dump == null)
+        {
+            return SecretSweepDumpRestoreCheck.Of(SecretSweepDumpRestoreState.NotFound);
+        }
+
+        if (dump.DeletedAt != null)
+        {
+            return SecretSweepDumpRestoreCheck.Of(SecretSweepDumpRestoreState.Deleted, dump.FileName);
+        }
+
+        try
+        {
+            if (PreSweepDumps.IsStoredDump(dump.FileName) && artifactStorage != null)
+            {
+                var info = await artifactStorage.GetInfoAsync(ArtifactCategories.Presweep, tenantId, dump.FileName);
+                if (info == null)
+                {
+                    return SecretSweepDumpRestoreCheck.Of(SecretSweepDumpRestoreState.Missing, dump.FileName);
+                }
+
+                var header = await artifactStorage.ReadHeaderAsync(ArtifactCategories.Presweep, tenantId,
+                    dump.FileName);
+                if (header != null && !artifactStorage.CanUnprotect(header))
+                {
+                    return new SecretSweepDumpRestoreCheck(SecretSweepDumpRestoreState.KeyMissing, dump.FileName,
+                        header.KeyId);
+                }
+
+                return SecretSweepDumpRestoreCheck.Of(SecretSweepDumpRestoreState.Restorable, dump.FileName);
+            }
+
+            if (PreSweepDumps.IsLegacyDump(dump.FileName) &&
+                File.Exists(backupFileStorage.GetSecretBackupFilePath(tenantId, dump.FileName)))
+            {
+                return SecretSweepDumpRestoreCheck.Of(SecretSweepDumpRestoreState.Restorable, dump.FileName);
+            }
+        }
+        catch (ArgumentException)
+        {
+            // A file name that does not fit the layout cannot be restored.
+        }
+
+        return SecretSweepDumpRestoreCheck.Of(SecretSweepDumpRestoreState.Missing, dump.FileName);
+    }
+
     /// <summary>
     ///     Deletes the dump file; returns <c>true</c> when it still exists afterwards.
     /// </summary>
@@ -150,5 +206,43 @@ public class SecretSweepRunService(
                                  "'{TenantId}'", dump.FileName, tenantId);
             dump.Exists = false;
         }
+    }
+}
+
+/// <summary>
+///     Whether a run's pre-sweep dump can be restored (AB#5559).
+/// </summary>
+public enum SecretSweepDumpRestoreState
+{
+    /// <summary>The dump exists and its key id is in the key ring.</summary>
+    Restorable = 0,
+
+    /// <summary>Unknown run, or the run has no dump.</summary>
+    NotFound = 1,
+
+    /// <summary>The dump was deleted (early or expired).</summary>
+    Deleted = 2,
+
+    /// <summary>The run records a dump, but it is not in the store (any more).</summary>
+    Missing = 3,
+
+    /// <summary>The dump is encrypted with a key id that is not in the key ring.</summary>
+    KeyMissing = 4
+}
+
+/// <summary>
+///     Result of <see cref="ISecretSweepRunService.CheckDumpRestorableAsync" />.
+/// </summary>
+/// <param name="State">The state.</param>
+/// <param name="FileName">The dump file name, when the run has one.</param>
+/// <param name="KeyId">The missing key id for <see cref="SecretSweepDumpRestoreState.KeyMissing" />.</param>
+public sealed record SecretSweepDumpRestoreCheck(
+    SecretSweepDumpRestoreState State,
+    string? FileName = null,
+    string? KeyId = null)
+{
+    internal static SecretSweepDumpRestoreCheck Of(SecretSweepDumpRestoreState state, string? fileName = null)
+    {
+        return new SecretSweepDumpRestoreCheck(state, fileName);
     }
 }

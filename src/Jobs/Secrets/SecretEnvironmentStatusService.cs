@@ -1,6 +1,9 @@
+using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Meshmakers.Octo.Runtime.Engine.Secrets;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Meshmakers.Octo.Backend.Jobs.Secrets;
@@ -11,12 +14,15 @@ public class SecretEnvironmentStatusService(
     IOptions<SecretEncryptionOptions> encryptionOptions,
     IOptions<SecretSweepJobOptions> sweepOptions,
     ISecretSweepRunStore runStore,
-    TimeProvider? timeProvider = null) : ISecretEnvironmentStatusService
+    TimeProvider? timeProvider = null,
+    IBotArtifactStorage? artifactStorage = null,
+    ILogger<SecretEnvironmentStatusService>? logger = null) : ISecretEnvironmentStatusService
 {
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+    private readonly ILogger _logger = logger ?? NullLogger<SecretEnvironmentStatusService>.Instance;
 
     /// <inheritdoc />
-    public async Task<SecretEnvironmentStatusDto> GetStatusAsync(string tenantId)
+    public async Task<BotSecretEnvironmentStatusDto> GetStatusAsync(string tenantId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         var encryption = encryptionOptions.Value;
@@ -46,8 +52,15 @@ public class SecretEnvironmentStatusService(
             warnings.Add(SecretEnvironmentWarningCodes.NoLegacyV1Key);
         }
 
-        return new SecretEnvironmentStatusDto
+        var requiredKeyIds = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (await RequiredKeyMissingAsync(requiredKeyIds))
         {
+            warnings.Add(BotSecretEnvironmentWarningCodes.DumpKeyMissing);
+        }
+
+        return new BotSecretEnvironmentStatusDto
+        {
+            RequiredKeyIds = requiredKeyIds.ToList(),
             KeyRingConfigured = configured,
             ActiveKeyId = configured ? protector.ActiveKeyId : null,
             // Key ids only - never key material.
@@ -67,6 +80,43 @@ public class SecretEnvironmentStatusService(
             LastVerifyAt = lastVerify,
             Warnings = warnings
         };
+    }
+
+    /// <summary>
+    ///     Key-id retention (AB#5559): collects the key ids of every encrypted dump in the artifact store (from the
+    ///     clear-text header of each file, no decryption) and answers whether one of them is not in the key ring -
+    ///     such a dump can no longer be read. A store problem is logged and does not fail the status.
+    /// </summary>
+    private async Task<bool> RequiredKeyMissingAsync(ISet<string> requiredKeyIds)
+    {
+        if (artifactStorage == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var missing = false;
+            foreach (var artifact in await artifactStorage.GetEncryptedArtifactHeadersAsync())
+            {
+                requiredKeyIds.Add(artifact.Header.KeyId);
+                if (!artifactStorage.CanUnprotect(artifact.Header))
+                {
+                    missing = true;
+                    _logger.LogWarning(
+                        "Encrypted artifact '{Category}/{TenantId}/{FileName}' needs key id '{KeyId}', which is not " +
+                        "in the key ring: it cannot be decrypted. Keep a key id in the ring until its newest dump expired",
+                        artifact.Category, artifact.TenantId, artifact.FileName, artifact.Header.KeyId);
+                }
+            }
+
+            return missing;
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning(e, "Could not list the encrypted artifacts for the key-id retention check");
+            return false;
+        }
     }
 
     /// <summary>

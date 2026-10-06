@@ -23,4 +23,10 @@ public interface ISecretSweepRunService
     ///     (unknown run or no dump) or <see cref="SecretSweepDumpDeleteResultDto.AlreadyDeleted" />.
     /// </returns>
     Task<SecretSweepDumpDeleteResultDto> DeleteDumpAsync(string tenantId, string runId, string? deletedBy);
+
+    /// <summary>
+    ///     Checks whether the pre-sweep dump of run <paramref name="runId" /> of <paramref name="tenantId" /> can be
+    ///     restored (AB#5559): it exists, is not deleted, and its key id is in the key ring.
+    /// </summary>
+    Task<SecretSweepDumpRestoreCheck> CheckDumpRestorableAsync(string tenantId, string runId);
 }

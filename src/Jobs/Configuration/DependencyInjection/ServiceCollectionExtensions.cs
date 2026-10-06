@@ -67,6 +67,8 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IRunFixupJob, RunFixupJob>();
         services.AddTransient<IRestoreRepositoryJob, RestoreRepositoryJob>();
         services.AddTransient<IDumpRepositoryJob, DumpRepositoryJob>();
+        // AB#5559: restore of a run's pre-sweep dump (admin, SecretManagement, confirm).
+        services.AddTransient<IRestorePreSweepDumpJob, RestorePreSweepDumpJob>();
 
         // Archive data export/import (AB#4230). The jobs access the tenant's CrateDB-backed
         // stream-data repository directly through ISystemContext (registered by the runtime engine /
