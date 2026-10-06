@@ -20,6 +20,7 @@ internal sealed class InMemorySecretSweepRunStore : ISecretSweepRunStore
             var index = runs.FindIndex(r => r.RunId == run.RunId);
             if (index >= 0)
             {
+                HangfireSecretSweepRunStore.KeepDumpDeletion(runs[index], run);
                 runs[index] = run;
             }
             else

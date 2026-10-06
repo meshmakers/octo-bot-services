@@ -45,6 +45,7 @@ public class HangfireSecretSweepRunStore : ISecretSweepRunStore
             var index = runs.FindIndex(r => string.Equals(r.RunId, run.RunId, StringComparison.Ordinal));
             if (index >= 0)
             {
+                KeepDumpDeletion(runs[index], run);
                 runs[index] = run;
             }
             else
@@ -112,6 +113,24 @@ public class HangfireSecretSweepRunStore : ISecretSweepRunStore
             return changed;
         });
         return Task.FromResult(changed);
+    }
+
+    /// <summary>
+    ///     A dump deleted early (or expired) while its run was still being written stays deleted: copies the
+    ///     deletion of the <paramref name="stored" /> run's dump onto <paramref name="replacement" /> when both
+    ///     reference the same file. Called under the per-tenant lock of the replace.
+    /// </summary>
+    /// <param name="stored">The run as stored</param>
+    /// <param name="replacement">The run that replaces it</param>
+    public static void KeepDumpDeletion(SecretSweepRunDto stored, SecretSweepRunDto replacement)
+    {
+        if (stored.Dump?.DeletedAt != null && replacement.Dump != null &&
+            string.Equals(stored.Dump.FileName, replacement.Dump.FileName, StringComparison.Ordinal))
+        {
+            replacement.Dump.DeletedAt = stored.Dump.DeletedAt;
+            replacement.Dump.DeletedBy = stored.Dump.DeletedBy;
+            replacement.Dump.Exists = false;
+        }
     }
 
     internal static string RunsKey(string normalizedTenantId) => $"octo:secret-sweep:runs:{normalizedTenantId}";

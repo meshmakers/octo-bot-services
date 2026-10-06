@@ -16,7 +16,8 @@ public interface ISecretSweepRunStore
 
     /// <summary>
     ///     Inserts <paramref name="run" /> as the newest run of <paramref name="tenantId" />, or replaces the run
-    ///     with the same <see cref="SecretSweepRunDto.RunId" /> in place.
+    ///     with the same <see cref="SecretSweepRunDto.RunId" /> in place. A dump the stored run already marks as
+    ///     deleted stays deleted (same file name), atomically with the replace.
     /// </summary>
     Task UpsertAsync(string tenantId, SecretSweepRunDto run);
 

@@ -332,6 +332,29 @@ public class BackupFileStorageServiceTests
     }
 
     [Test]
+    public async Task SecretBackupPaths_TenantDirectoryIsCaseInsensitive()
+    {
+        // An all-tenants run creates the dump with the stored tenant id; the tenant route may use other casing.
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        try
+        {
+            var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+                _logger, Path.Combine(root, "secret-backups"));
+
+            var created = service.CreateSecretBackupFilePath("Tenant-A");
+            var fileName = Path.GetFileName(created);
+
+            await Assert.That(Path.GetDirectoryName(created)).IsEqualTo(Path.Combine(root, "secret-backups", "tenant-a"));
+            await Assert.That(service.GetSecretBackupFilePath("tenant-a", fileName)).IsEqualTo(created);
+            await Assert.That(service.GetSecretBackupFilePath("TENANT-A", fileName)).IsEqualTo(created);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
     public async Task CreateSecretBackupFilePath_TightensAPreExistingWideDirectory()
     {
         if (OperatingSystem.IsWindows())

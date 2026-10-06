@@ -263,7 +263,7 @@ public class SecretSweepCoordinator(
         {
             logger.LogError(e, "Pre-sweep secret backup of tenant '{TenantId}' failed", report.TenantId);
             await backupFileStorage.DeleteFileAsync(filePath);
-            return $"{e.GetType().Name}: {e.Message}";
+            return Describe(e);
         }
     }
 
@@ -298,19 +298,8 @@ public class SecretSweepCoordinator(
 
         try
         {
-            // A dump deleted early while the sweep was still running stays deleted.
-            await runStore.UpdateAsync(tenantId, run.RunId, stored =>
-            {
-                if (stored.Dump?.DeletedAt != null && run.Dump != null &&
-                    string.Equals(stored.Dump.FileName, run.Dump.FileName, StringComparison.Ordinal))
-                {
-                    run.Dump.DeletedAt = stored.Dump.DeletedAt;
-                    run.Dump.DeletedBy = stored.Dump.DeletedBy;
-                    run.Dump.Exists = false;
-                }
-
-                return false;
-            });
+            // A dump deleted early while the sweep was still running stays deleted: the store merges the
+            // deletion under the same per-tenant lock as the replace (no read-then-write window).
             await runStore.UpsertAsync(tenantId, run);
         }
         catch (Exception e)
@@ -447,9 +436,16 @@ public class SecretSweepCoordinator(
         };
     }
 
-    private static string Describe(Exception e)
+    internal static string Describe(Exception e)
     {
-        // Engine exceptions of the secret area are value-free by contract (AB#5532).
-        return $"{e.GetType().Name}: {e.Message}";
+        // Engine exceptions of the secret area are value-free by contract (AB#5532). Any other message (database
+        // driver, backup tool, serializer) may quote documents or connection strings: the report, the run list
+        // and the Hangfire failure text only get its type name; the full exception is in the error log.
+        var type = e.GetType();
+        return type.Namespace?.StartsWith(SecretExceptionNamespace, StringComparison.Ordinal) == true
+            ? $"{type.Name}: {e.Message}"
+            : type.Name;
     }
+
+    private const string SecretExceptionNamespace = "Meshmakers.Octo.Runtime.Contracts.Secrets";
 }

@@ -123,4 +123,25 @@ public class HangfireSecretSweepRunStoreTests
         await Assert.That(dump.DeletedBy).IsNull();
         await Assert.That(dump.Exists).IsFalse();
     }
+
+    [Test]
+    public async Task Upsert_ReplacingARunWhoseDumpWasDeleted_KeepsTheDeletion()
+    {
+        // The sweep writes its run again (outcome) after a dump DELETE: the deletion must not be lost.
+        var at = new DateTime(2026, 10, 13, 12, 0, 0, DateTimeKind.Utc);
+        var run = Run("a");
+        run.Dump = new SecretSweepDumpDto { FileName = "f.presweep.tar.gz", Exists = true };
+        await _store.UpsertAsync("t", run);
+        await _store.MarkDumpDeletedAsync("t", "f.presweep.tar.gz", at, "alice");
+
+        var final = Run("a", SecretSweepOutcomeDto.Succeeded);
+        final.Dump = new SecretSweepDumpDto { FileName = "f.presweep.tar.gz", Exists = true };
+        await _store.UpsertAsync("t", final);
+
+        var stored = (await _store.GetRunsAsync("t")).Single();
+        await Assert.That(stored.Outcome).IsEqualTo(SecretSweepOutcomeDto.Succeeded);
+        await Assert.That(stored.Dump!.DeletedAt).IsEqualTo(at);
+        await Assert.That(stored.Dump.DeletedBy).IsEqualTo("alice");
+        await Assert.That(stored.Dump.Exists).IsFalse();
+    }
 }

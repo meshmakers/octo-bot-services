@@ -226,6 +226,8 @@ public class SecretSweepCoordinatorTests : IDisposable
 
         await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Skipped);
         await Assert.That(report.Reason).Contains("Win32Exception");
+        // Messages of non-engine exceptions (driver, backup tool) may quote connection strings: type name only.
+        await Assert.That(report.Reason).DoesNotContain("mongodump not found");
         await _maintenance.DidNotReceiveWithAnyArgs()
             .SweepTenantAsync(default!, default, default(SecretSweepOptions)!, default);
     }

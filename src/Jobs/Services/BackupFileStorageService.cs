@@ -183,7 +183,7 @@ public class BackupFileStorageService : IBackupFileStorageService
     public string CreateSecretBackupFilePath(string tenantId)
     {
         // Validate the tenant id before anything touches the file system.
-        var directory = ResolveTenantDirectory(SecretBackupStoragePath, tenantId);
+        var directory = ResolveSecretBackupTenantDirectory(tenantId);
         CreateOwnerOnlyDirectory(SecretBackupStoragePath);
         CreateOwnerOnlyDirectory(directory);
 
@@ -226,7 +226,18 @@ public class BackupFileStorageService : IBackupFileStorageService
             throw new ArgumentException($"'{fileName}' is not a pre-sweep secret backup file name.", nameof(fileName));
         }
 
-        return Path.Combine(ResolveTenantDirectory(SecretBackupStoragePath, tenantId), fileName);
+        return Path.Combine(ResolveSecretBackupTenantDirectory(tenantId), fileName);
+    }
+
+    /// <summary>
+    /// The tenant directory of the pre-sweep secret backups. Lower-cased like the sweep run history, so a dump
+    /// created by an all-tenants run (tenant id as stored) and looked up through the tenant route (tenant id as
+    /// typed) resolve to the same file on a case-sensitive file system.
+    /// </summary>
+    private string ResolveSecretBackupTenantDirectory(string tenantId)
+    {
+        return ResolveTenantDirectory(SecretBackupStoragePath,
+            string.IsNullOrWhiteSpace(tenantId) ? tenantId : tenantId.ToLowerInvariant());
     }
 
     /// <inheritdoc />
