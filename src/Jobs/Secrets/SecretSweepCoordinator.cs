@@ -27,6 +27,14 @@ public class SecretSweepCoordinator(
     internal static readonly TimeSpan SweepLockTimeout = TimeSpan.FromSeconds(10);
     internal static readonly TimeSpan RestoreLockTimeout = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    ///     Reason of a post-restore run on a bot without key ring (AB#5539): the outcome is
+    ///     <see cref="SecretSweepOutcome.Succeeded" /> (or <see cref="SecretSweepOutcome.CompletedWithFailures" />
+    ///     when the Verify itself reported failures), the re-entry list is complete, nothing was written.
+    /// </summary>
+    internal const string NoKeyRingRestoreReason =
+        "No key ring configured: secrets were classified only; set the key ring and run Encrypt";
+
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
     /// <inheritdoc />
@@ -126,7 +134,12 @@ public class SecretSweepCoordinator(
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-        var report = NewReport(tenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Restore);
+        // AB#5539: without a key ring the restore still produces the re-entry list - a key-free Verify
+        // classifies the restored values by key id (every enc:v2 of a key id not in the empty ring and every
+        // enc:v1 without legacy key is "key missing") and nothing is written. The run is recorded as Verify.
+        var keyRingConfigured = protector.IsConfigured;
+        var report = NewReport(tenantId, keyRingConfigured ? SecretSweepMode.Encrypt : SecretSweepMode.Verify,
+            SecretSweepTrigger.Restore);
         var run = await StartRunAsync(report, runInfo);
 
         if (!options.Value.RunAfterRestore)
@@ -135,19 +148,33 @@ public class SecretSweepCoordinator(
                 "Disabled by configuration (Bot:SecretSweep:RunAfterRestore=false).");
         }
 
-        if (!protector.IsConfigured)
-        {
-            return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
-                "Secret encryption keys are not configured on the bot; restored secrets were left as found. " +
-                "Run the Encrypt sweep once keys are configured.");
-        }
-
         using var held = tenantLock?.TryAcquire(tenantId, RestoreLockTimeout);
         if (tenantLock != null && held == null)
         {
             return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
                 "Another secret sweep of this tenant kept running; run the Encrypt sweep on the restored " +
                 "tenant once it is done.");
+        }
+
+        if (!keyRingConfigured)
+        {
+            try
+            {
+                // Classification only: the engine's Verify needs no key material and never writes.
+                await RunStepAsync(report, SecretSweepMode.Verify, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                await FinishAsync(report, run, SecretSweepOutcome.Failed, "The sweep was cancelled.");
+                throw;
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Post-restore secret classification of tenant '{TenantId}' failed", tenantId);
+                return await FinishAsync(report, run, SecretSweepOutcome.Failed, Describe(e));
+            }
+
+            return await FinishAsync(report, run, OutcomeOfSteps(report), NoKeyRingRestoreReason);
         }
 
         try

@@ -673,15 +673,85 @@ public class SecretSweepCoordinatorTests : IDisposable
     }
 
     [Test]
-    public async Task AfterRestore_WithoutKeys_IsSkipped()
+    public async Task AfterRestore_WithoutKeys_ClassifiesOnly_AndStillListsTheSecretsToReEnter()
+    {
+        // AB#5539: a restore on a bot without key ring runs a key-free Verify only - never a writing mode -
+        // and still reports every unreadable value (unknown key id, enc:v1 without legacy key) for re-entry.
+        _protector.IsConfigured.Returns(false);
+        _protector.ActiveKeyId.Returns((string?)null);
+        var runs = new InMemorySecretSweepRunStore();
+        var rtId = new OctoObjectId("6512a1b2c3d4e5f601020304");
+        var k1 = new SecretSweepUnreadableValue("System.Communication/SftpConfiguration", rtId, "password", "k1");
+        var v1 = new SecretSweepUnreadableValue("System.Communication/SftpConfiguration", rtId, "apiKey",
+            SecretValueStates.LegacyV1KeyId);
+        SetupSweep("t-restore-nokeys", SecretSweepMode.Verify, r =>
+        {
+            AddPlaintext(r, 1);
+            r.Totals.Add(SecretValueForm.UnknownKeyId, "k1");
+            r.Totals.Add(SecretValueForm.UnknownKeyId, SecretValueStates.LegacyV1KeyId);
+            r.Unreadable.Add(k1);
+            r.Unreadable.Add(v1);
+        });
+
+        var report = await CreateCoordinator(runStore: runs)
+            .RunAfterRestoreAsync("t-restore-nokeys", new SecretSweepRunInfo("job-nokeys"), CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Succeeded);
+        await Assert.That(report.Reason).IsEqualTo(
+            "No key ring configured: secrets were classified only; set the key ring and run Encrypt");
+        await Assert.That(report.Mode).IsEqualTo(SecretSweepMode.Verify);
+        await Assert.That(report.Steps.Select(s => s.Mode).ToList())
+            .IsEquivalentTo(new List<SecretSweepMode> { SecretSweepMode.Verify });
+        await Assert.That(report.Unreadable.Count).IsEqualTo(2);
+        await Assert.That(report.SecretsToReEnter.Select(s => s.KeyId).ToList())
+            .IsEquivalentTo(new List<string?> { "k1", SecretValueStates.LegacyV1KeyId });
+        await Assert.That(report.RemainingLegacyValues).IsEqualTo(1);
+        await Assert.That(report.BackupFileName).IsNull();
+
+        // Nothing is written without keys: no writing mode, no dump.
+        await _maintenance.Received(1).SweepTenantAsync("t-restore-nokeys", SecretSweepMode.Verify,
+            Arg.Any<SecretSweepOptions>(), Arg.Any<CancellationToken>());
+        await _maintenance.DidNotReceive().SweepTenantAsync(Arg.Any<string>(),
+            Arg.Is<SecretSweepMode>(m => m != SecretSweepMode.Verify), Arg.Any<SecretSweepOptions>(),
+            Arg.Any<CancellationToken>());
+        await _systemContext.DidNotReceiveWithAnyArgs().BackupTenantAsync(default!, default!);
+
+        var run = (await runs.GetRunsAsync("t-restore-nokeys")).Single();
+        await Assert.That(run.RunId).IsEqualTo("job-nokeys");
+        await Assert.That(run.Mode).IsEqualTo(SecretSweepModeDto.Verify);
+        await Assert.That(run.Trigger).IsEqualTo(SecretSweepTriggerDto.Restore);
+        await Assert.That(run.Outcome).IsEqualTo(SecretSweepOutcomeDto.Succeeded);
+        await Assert.That(run.UnreadableCount).IsEqualTo(2);
+        await _reportStore.Received(1).SaveAsync(report);
+    }
+
+    [Test]
+    public async Task AfterRestore_WithoutKeys_VerifyFailures_CompleteWithFailures()
     {
         _protector.IsConfigured.Returns(false);
+        SetupSweep("t-restore-nokeys-fail", SecretSweepMode.Verify, r =>
+            r.Failures.Add(new SecretSweepFailure("Test/Type", new OctoObjectId("6512a1b2c3d4e5f601020305"),
+                "password", "An 'enc:v2' envelope is stored as a legacy string")));
 
-        var report = await CreateCoordinator().RunAfterRestoreAsync("t-restore-nokeys", null, CancellationToken.None);
+        var report = await CreateCoordinator()
+            .RunAfterRestoreAsync("t-restore-nokeys-fail", null, CancellationToken.None);
 
-        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Skipped);
-        await _maintenance.DidNotReceiveWithAnyArgs()
-            .SweepTenantAsync(default!, default, default(SecretSweepOptions)!, default);
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.CompletedWithFailures);
+        await Assert.That(report.Reason).Contains("No key ring configured");
+    }
+
+    [Test]
+    public async Task AfterRestore_WithoutKeys_VerifyThrows_IsReportedNotThrown()
+    {
+        _protector.IsConfigured.Returns(false);
+        _maintenance.SweepTenantAsync("t-restore-nokeys-err", SecretSweepMode.Verify,
+                Arg.Any<SecretSweepOptions>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("boom"));
+
+        var report = await CreateCoordinator()
+            .RunAfterRestoreAsync("t-restore-nokeys-err", null, CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Failed);
     }
 
     [Test]

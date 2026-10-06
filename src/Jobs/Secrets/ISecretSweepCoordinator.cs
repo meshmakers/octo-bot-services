@@ -35,8 +35,13 @@ public interface ISecretSweepCoordinator
     ///     Post-restore handling (concept §6, decisions 2026-10-06 item 2): <c>Verify</c>, <c>Encrypt</c> (older
     ///     plaintext / <c>enc:v1</c> dumps), <c>Verify</c>. Nothing is deleted: values whose key id is unknown
     ///     here stay encrypted and are reported in <see cref="SecretSweepReport.Unreadable" /> and
-    ///     <see cref="SecretSweepReport.SecretsToReEnter" />. Skipped when no key is configured or
-    ///     <c>Bot:SecretSweep:RunAfterRestore</c> is off. Never throws for tenant-level problems.
+    ///     <see cref="SecretSweepReport.SecretsToReEnter" />. Without a key ring on the bot (AB#5539) only a
+    ///     key-free <c>Verify</c> runs: it classifies by key id (every <c>enc:v2</c> whose key id is not in the
+    ///     empty ring and every <c>enc:v1</c> without legacy key counts as key missing and is listed for
+    ///     re-entry), writes nothing, and the run (mode <c>Verify</c>) ends <see cref="SecretSweepOutcome.Succeeded" />
+    ///     with the reason "No key ring configured: secrets were classified only; set the key ring and run
+    ///     Encrypt" (<see cref="SecretSweepOutcome.CompletedWithFailures" /> when the Verify reported failures).
+    ///     Skipped when <c>Bot:SecretSweep:RunAfterRestore</c> is off. Never throws for tenant-level problems.
     /// </summary>
     /// <param name="tenantId">Restored tenant</param>
     /// <param name="runInfo">Run id (the restore job) for the run history</param>
