@@ -80,14 +80,16 @@ public class SecretEnvironmentStatusService(
             .Where(r => r.CompletedAt != null &&
                         r.Outcome is SecretSweepOutcomeDto.Succeeded or SecretSweepOutcomeDto.CompletedWithFailures)
             .MaxBy(r => r.CompletedAt);
-        if (last?.Totals == null)
+        // The state after the run (AB#5539: Totals are the forms as found, TotalsAfter the follow-up Verify).
+        var totals = last?.TotalsAfter ?? last?.Totals;
+        if (totals == null)
         {
             return false;
         }
 
-        return last.Totals.EncV1 > 0 ||
-               (last.Totals.UnknownKeyIdByKeyId != null &&
-                last.Totals.UnknownKeyIdByKeyId.Any(p =>
+        return totals.EncV1 > 0 ||
+               (totals.UnknownKeyIdByKeyId != null &&
+                totals.UnknownKeyIdByKeyId.Any(p =>
                     string.Equals(p.Key, SecretValueStates.LegacyV1KeyId, StringComparison.OrdinalIgnoreCase) &&
                     p.Value > 0));
     }

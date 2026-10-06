@@ -126,7 +126,19 @@ public class SecretSweepCoordinator(
             return await FinishAsync(report, run, SecretSweepOutcome.Failed, Describe(e));
         }
 
-        return await FinishAsync(report, run, OutcomeOfSteps(report), report.Reason);
+        var outcome = OutcomeOfSteps(report);
+        var skipped = report.Steps.Sum(s => s.SkippedConcurrentlyModified);
+        if (writes && skipped > 0)
+        {
+            // AB#5539: values the run had to leave alone are not "Succeeded" - the follow-up Verify still finds
+            // them in their old form. Run the sweep again.
+            outcome = SecretSweepOutcome.CompletedWithFailures;
+            var skippedReason = $"{skipped} value(s) changed while the sweep was working on them and were left " +
+                                "as stored; run the sweep again.";
+            report.Reason = report.Reason == null ? skippedReason : report.Reason + " " + skippedReason;
+        }
+
+        return await FinishAsync(report, run, outcome, report.Reason);
     }
 
     /// <inheritdoc />
@@ -375,7 +387,14 @@ public class SecretSweepCoordinator(
 
         run.Outcome = (SecretSweepOutcomeDto)(int)outcome;
         run.CompletedAt = report.CompletedAt;
-        run.Totals = ToDto(finalStep?.Totals ?? new SecretFormCountsReport());
+        // Before AND after (AB#5539): the first step's counts are the forms as found; the final Verify (the
+        // follow-up of a writing run, or the Verify run itself) is the state after the run. A writing run that
+        // stopped before its Verify has no "after".
+        run.Totals = ToDto(report.Steps.FirstOrDefault()?.Totals ?? new SecretFormCountsReport());
+        run.TotalsAfter = finalStep?.Mode == SecretSweepMode.Verify ? ToDto(finalStep.Totals) : null;
+        run.ValuesRewritten = report.Steps.Sum(s => s.ValuesRewritten);
+        run.EncryptedCount = report.Steps.Sum(s => s.EncryptedCount);
+        run.SkippedConcurrentlyModified = report.Steps.Sum(s => s.SkippedConcurrentlyModified);
         run.Reason = reason;
         run.PlaceholdersNormalized = report.PlaceholdersNormalized;
         run.SkippedLegacyV1KeyMissing = report.SkippedLegacyV1KeyMissing;
@@ -431,12 +450,14 @@ public class SecretSweepCoordinator(
         logger.Log(level,
             "Secret sweep {Mode} ({Trigger}) of tenant '{TenantId}': {Outcome}{ReasonSeparator}{Reason}. Final state: " +
             "{Plaintext} plaintext, {EncV1} enc_v1, {EncV2} enc_v2, {UnknownKid} unknown kid, {Failed} failed; " +
-            "{Rewritten} value(s) rewritten, {Placeholders} legacy placeholder(s) normalised, {SkippedLegacyV1} enc_v1 " +
+            "{Rewritten} value(s) rewritten ({Encrypted} encrypted, {SkippedConcurrently} skipped as modified concurrently), " +
+            "{Placeholders} legacy placeholder(s) normalised, {SkippedLegacyV1} enc_v1 " +
             "kept (legacy key missing), {ReEnter} secret(s) to re-enter, backup '{BackupFileName}'",
             report.Mode, report.Trigger, report.TenantId, report.Outcome,
             report.Reason == null ? string.Empty : " - ", report.Reason ?? string.Empty,
             final?.Plaintext ?? 0, final?.EncV1 ?? 0, final?.EncV2 ?? 0, final?.UnknownKeyId ?? 0,
             report.Steps.Sum(s => s.Totals.Failed), report.Steps.Sum(s => s.ValuesRewritten),
+            report.Steps.Sum(s => s.EncryptedCount), report.Steps.Sum(s => s.SkippedConcurrentlyModified),
             report.PlaceholdersNormalized, report.SkippedLegacyV1KeyMissing, report.SecretsToReEnter.Count, report.BackupFileName ?? "<none>");
 
         foreach (var secret in report.SecretsToReEnter)

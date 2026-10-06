@@ -198,6 +198,12 @@ public class SecretSweepStepReport
     public long ValuesRewritten { get; set; }
 
     /// <summary>
+    ///     Values converted from legacy clear text or <c>enc:v1</c> to <c>enc:v2</c> by this step (included in
+    ///     <see cref="ValuesRewritten" />; AB#5539).
+    /// </summary>
+    public long EncryptedCount { get; set; }
+
+    /// <summary>
     ///     Placeholders normalised to "not set".
     /// </summary>
     public long PlaceholdersNormalized { get; set; }
@@ -514,6 +520,7 @@ internal static class SecretSweepReportMapper
             EntitiesScanned = result.EntitiesScanned,
             EntitiesRewritten = result.EntitiesRewritten,
             ValuesRewritten = result.ValuesRewritten,
+            EncryptedCount = result.ValuesEncrypted,
             PlaceholdersNormalized = result.PlaceholdersNormalized,
             SkippedConcurrentlyModified = result.SkippedConcurrentlyModified,
             SkippedLegacyV1KeyMissing = result.SkippedLegacyV1KeyMissing,

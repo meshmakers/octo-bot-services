@@ -579,9 +579,12 @@ public class SecretSweepCoordinatorTests : IDisposable
         await Assert.That(run.Outcome).IsEqualTo(SecretSweepOutcomeDto.Succeeded);
         await Assert.That(run.StartedAt).IsEqualTo(_time.GetUtcNow().UtcDateTime);
         await Assert.That(run.CompletedAt).IsEqualTo(_time.GetUtcNow().UtcDateTime);
-        await Assert.That(run.Totals.EncV2).IsEqualTo(1);
-        await Assert.That(run.Totals.UnknownKeyId).IsEqualTo(1);
-        await Assert.That(run.Totals.Total).IsEqualTo(2);
+        // Totals = the forms as found by the Encrypt step (none here), TotalsAfter = the follow-up Verify.
+        await Assert.That(run.Totals.Total).IsEqualTo(0);
+        await Assert.That(run.TotalsAfter).IsNotNull();
+        await Assert.That(run.TotalsAfter!.EncV2).IsEqualTo(1);
+        await Assert.That(run.TotalsAfter.UnknownKeyId).IsEqualTo(1);
+        await Assert.That(run.TotalsAfter.Total).IsEqualTo(2);
         await Assert.That(run.PlaceholdersNormalized).IsEqualTo(1);
         await Assert.That(run.UnreadableCount).IsEqualTo(1);
         await Assert.That(run.Dump).IsNotNull();
@@ -591,6 +594,84 @@ public class SecretSweepCoordinatorTests : IDisposable
         await Assert.That(run.Dump.CreatedAt).IsEqualTo(_time.GetUtcNow().UtcDateTime);
         await Assert.That(run.Dump.ExpiresAt).IsEqualTo(_time.GetUtcNow().UtcDateTime.AddDays(7));
         await Assert.That(run.Dump.DeletedAt).IsNull();
+    }
+
+    [Test]
+    public async Task Run_ShowsTheStateBeforeAndAfter_AndWhatWasWritten()
+    {
+        var runs = new InMemorySecretSweepRunStore();
+        SetupBackupSucceeds();
+        SetupSweep("t-ba", SecretSweepMode.Encrypt, r =>
+        {
+            AddPlaintext(r, 8);
+            r.Totals.Add(SecretValueForm.EncV2, "k1");
+            r.Totals.Add(SecretValueForm.EncV2, "k1");
+            r.ValuesRewritten = 12;
+            r.ValuesEncrypted = 8;
+            r.PlaceholdersNormalized = 4;
+        });
+        SetupSweep("t-ba", SecretSweepMode.Verify, r =>
+        {
+            for (var i = 0; i < 10; i++)
+            {
+                r.Totals.Add(SecretValueForm.EncV2, "k1");
+            }
+        });
+
+        var report = await CreateCoordinator(runStore: runs).SweepTenantAsync("t-ba", SecretSweepMode.Encrypt,
+            SecretSweepTrigger.Manual, null, CancellationToken.None);
+
+        var run = (await runs.GetRunsAsync("t-ba")).Single();
+        await Assert.That(run.Outcome).IsEqualTo(SecretSweepOutcomeDto.Succeeded);
+        await Assert.That(run.Totals.Plaintext).IsEqualTo(8);
+        await Assert.That(run.Totals.EncV2).IsEqualTo(2);
+        await Assert.That(run.TotalsAfter!.Plaintext).IsEqualTo(0);
+        await Assert.That(run.TotalsAfter.EncV2).IsEqualTo(10);
+        await Assert.That(run.ValuesRewritten).IsEqualTo(12);
+        await Assert.That(run.EncryptedCount).IsEqualTo(8);
+        await Assert.That(run.SkippedConcurrentlyModified).IsEqualTo(0);
+        await Assert.That(report.Steps[0].EncryptedCount).IsEqualTo(8);
+    }
+
+    [Test]
+    public async Task Encrypt_ThatLeftValuesAsModifiedConcurrently_IsNotReportedAsSucceeded()
+    {
+        // AB#5539 live defect 2026-10-06: every rewrite matched nothing, the run said "Succeeded" and showed the
+        // same 8 plaintext before and after.
+        var runs = new InMemorySecretSweepRunStore();
+        SetupBackupSucceeds();
+        SetupSweep("t-skip", SecretSweepMode.Encrypt, r =>
+        {
+            AddPlaintext(r, 8);
+            r.SkippedConcurrentlyModified = 12;
+        });
+        SetupSweep("t-skip", SecretSweepMode.Verify, r => AddPlaintext(r, 8));
+
+        var report = await CreateCoordinator(runStore: runs).SweepTenantAsync("t-skip", SecretSweepMode.Encrypt,
+            SecretSweepTrigger.Manual, null, CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.CompletedWithFailures);
+        await Assert.That(report.Reason).Contains("12 value(s) changed while the sweep was working on them");
+        var run = (await runs.GetRunsAsync("t-skip")).Single();
+        await Assert.That(run.Outcome).IsEqualTo(SecretSweepOutcomeDto.CompletedWithFailures);
+        await Assert.That(run.SkippedConcurrentlyModified).IsEqualTo(12);
+        await Assert.That(run.EncryptedCount).IsEqualTo(0);
+        await Assert.That(run.TotalsAfter!.Plaintext).IsEqualTo(8);
+    }
+
+    [Test]
+    public async Task Run_Verify_HasTheSameTotalsBeforeAndAfter()
+    {
+        var runs = new InMemorySecretSweepRunStore();
+        SetupSweep("t-v-ba", SecretSweepMode.Verify, r => AddPlaintext(r, 3));
+
+        await CreateCoordinator(runStore: runs).SweepTenantAsync("t-v-ba", SecretSweepMode.Verify,
+            SecretSweepTrigger.Manual, null, CancellationToken.None);
+
+        var run = (await runs.GetRunsAsync("t-v-ba")).Single();
+        await Assert.That(run.Totals.Plaintext).IsEqualTo(3);
+        await Assert.That(run.TotalsAfter!.Plaintext).IsEqualTo(3);
+        await Assert.That(run.ValuesRewritten).IsEqualTo(0);
     }
 
     [Test]
