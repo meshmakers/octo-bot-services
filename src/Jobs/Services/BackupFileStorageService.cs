@@ -245,7 +245,9 @@ public class BackupFileStorageService : IBackupFileStorageService
     {
         var cutoff = DateTime.UtcNow - retention;
         var deleted = new List<string>();
-        CleanupDirectory(SecretBackupStoragePath, cutoff, deleted);
+        // Legacy layout only: <root>/<tenant>/<file>.presweep.tar.gz. The root may be shared with the artifact
+        // store of the pre-sweep dumps (AB#5561, BackupStoragePath alias), whose files the store cleanup owns.
+        CleanupLegacySecretBackups(cutoff, deleted);
 
         if (deleted.Count > 0)
         {
@@ -254,6 +256,47 @@ public class BackupFileStorageService : IBackupFileStorageService
         }
 
         return Task.FromResult<IReadOnlyList<string>>(deleted);
+    }
+
+    private void CleanupLegacySecretBackups(DateTime cutoff, List<string> deleted)
+    {
+        if (!Directory.Exists(SecretBackupStoragePath))
+        {
+            return;
+        }
+
+        foreach (var tenantDirectory in Directory.EnumerateDirectories(SecretBackupStoragePath))
+        {
+            foreach (var file in Directory.EnumerateFiles(tenantDirectory, "*" + SecretBackupFileSuffix,
+                         SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) < cutoff)
+                    {
+                        File.Delete(file);
+                        deleted.Add(file);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete stale secret backup '{FilePath}'", file);
+                }
+            }
+
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(tenantDirectory).Any())
+                {
+                    Directory.Delete(tenantDirectory);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete empty secret backup directory '{DirectoryPath}'",
+                    tenantDirectory);
+            }
+        }
     }
 
     private void CreateOwnerOnlyDirectory(string path)
@@ -281,7 +324,7 @@ public class BackupFileStorageService : IBackupFileStorageService
         return candidateFull.StartsWith(rootFull, StringComparison.Ordinal);
     }
 
-    private int CleanupDirectory(string directoryPath, DateTime cutoff, List<string>? deletedFiles = null)
+    private int CleanupDirectory(string directoryPath, DateTime cutoff)
     {
         var deletedCount = 0;
 
@@ -299,7 +342,6 @@ public class BackupFileStorageService : IBackupFileStorageService
                 {
                     File.Delete(file);
                     deletedCount++;
-                    deletedFiles?.Add(file);
                     _logger.LogDebug("Deleted stale file '{FilePath}' (last modified: {LastWrite})", file,
                         lastWriteTime);
                 }

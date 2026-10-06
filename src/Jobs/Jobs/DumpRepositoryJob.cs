@@ -7,6 +7,7 @@ using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.StreamData;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.Extensions.Logging;
 using RepositoryUpdate;
 
@@ -17,11 +18,17 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// <c>includeArchiveData</c> is set, the mongodump blob is wrapped together with the tenant's CrateDB
 /// archive rows into an <c>.octobak.zip</c> container (concept AB#4231 §3/§4); otherwise the legacy
 /// single <c>.tar.gz</c> mongodump artifact is produced unchanged.
+/// AB#5561: the finished artifact is moved into the artifact store (<c>tenant-dumps/&lt;tenant&gt;/…</c>), encrypted
+/// with the key ring when one is configured (<c>…octoenc</c>: tenant dumps hold secret ciphertext and all business
+/// data), and the job result is a store reference (<see cref="StoredArtifact.ToResultReference" />); the download
+/// endpoint decrypts it on the fly, so clients receive the same file as before. Without an artifact store the
+/// local file path is the result (legacy).
 /// </summary>
 public class DumpRepositoryJob(
     ILogger<DumpRepositoryJob> logger,
     ISystemContext systemContext,
-    IBackupFileStorageService backupFileStorage) : IDumpRepositoryJob
+    IBackupFileStorageService backupFileStorage,
+    IBotArtifactStorage? artifactStorage = null) : IDumpRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -77,12 +84,13 @@ public class DumpRepositoryJob(
                 // Default path — the mongodump blob IS the downloadable result, unchanged.
                 logger.LogInformation("Dump completed for tenant '{TenantId}' at '{FilePath}'", tenantId,
                     mongoFilePath);
-                return mongoFilePath;
+                return await PublishAsync(tenantId, mongoFilePath, ct);
             }
 
             // 2. includeArchiveData — wrap the mongo blob + archive rows into an .octobak.zip and
             //    register that as the downloadable result. The intermediate mongo blob is deleted.
-            return await BuildBackupArchiveAsync(tenantId, tenantContext, mongoFilePath, ct);
+            var archivePath = await BuildBackupArchiveAsync(tenantId, tenantContext, mongoFilePath, ct);
+            return await PublishAsync(tenantId, archivePath, ct);
         }
         catch (OperationCanceledException)
         {
@@ -307,6 +315,33 @@ public class DumpRepositoryJob(
             rowCount, rtId);
 
         return new BackupManifestArchive(schema, snapshot.Status.ToString(), rowCount, ndjsonEntryName);
+    }
+
+    /// <summary>
+    ///     Moves the finished dump into the artifact store and returns the job result: the store reference, or the
+    ///     local path when no artifact store is wired. The local file is deleted either way once uploaded (or when
+    ///     the upload fails, so no copy lingers on the pod).
+    /// </summary>
+    private async Task<string> PublishAsync(string tenantId, string localPath, CancellationToken ct)
+    {
+        if (artifactStorage == null)
+        {
+            return localPath;
+        }
+
+        try
+        {
+            var stored = await artifactStorage.StoreFileAsync(ArtifactCategories.TenantDumps, tenantId,
+                Path.GetFileName(localPath), localPath, ArtifactEncryption.IfConfigured, ct);
+            logger.LogInformation(
+                "Dump of tenant '{TenantId}' stored as artifact '{FileName}' ({Size} bytes, encrypted: {Encrypted})",
+                tenantId, stored.FileName, stored.Size, stored.Encrypted);
+            return stored.ToResultReference();
+        }
+        finally
+        {
+            await backupFileStorage.DeleteFileAsync(localPath);
+        }
     }
 
     private static string BuildBackupArchiveFileName(string tenantId)

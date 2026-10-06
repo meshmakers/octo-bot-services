@@ -86,6 +86,9 @@ public interface IBackupFileStorageService
     /// <summary>
     /// Creates the tenant's secret backup directory (owner-only on Unix) and returns the path of a new,
     /// not yet existing pre-sweep dump file (<c>&lt;tenant&gt;-&lt;utc&gt;-&lt;guid&gt;.presweep.tar.gz</c>).
+    /// 🔴 Legacy layout (before AB#5561): the secret sweep no longer writes plaintext dumps here - they are
+    /// encrypted into the artifact store (<see cref="IBotArtifactStorage" />). Kept for the expiry of existing
+    /// legacy dumps.
     /// </summary>
     /// <param name="tenantId">The tenant identifier.</param>
     /// <returns>The full path of the dump file to write.</returns>
@@ -110,7 +113,9 @@ public interface IBackupFileStorageService
     string GetSecretBackupFilePath(string tenantId, string fileName);
 
     /// <summary>
-    /// Deletes pre-sweep secret backups older than <paramref name="retention" />.
+    /// Deletes legacy pre-sweep secret backups (<c>&lt;root&gt;/&lt;tenant&gt;/*.presweep.tar.gz</c>, written before
+    /// AB#5561) older than <paramref name="retention" />. Other files below the root (e.g. an artifact store that
+    /// shares it) are left alone.
     /// </summary>
     /// <param name="retention">The retention period.</param>
     /// <returns>The full paths of the deleted files (below the tenant subdirectories).</returns>

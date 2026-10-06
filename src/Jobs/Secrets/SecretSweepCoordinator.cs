@@ -2,6 +2,7 @@ using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -13,7 +14,7 @@ public class SecretSweepCoordinator(
     ISystemContext systemContext,
     ISecretMaintenanceService maintenanceService,
     ISecretAttributeProtector protector,
-    IBackupFileStorageService backupFileStorage,
+    IBotArtifactStorage artifactStorage,
     ISecretSweepReportStore reportStore,
     IOptions<SecretSweepJobOptions> options,
     TimeProvider? timeProvider = null,
@@ -235,46 +236,58 @@ public class SecretSweepCoordinator(
     }
 
     /// <summary>
-    ///     Takes the pre-sweep dump. Returns <c>null</c> on success, otherwise a value-free reason.
+    ///     Takes the pre-sweep dump (AB#5559, AB#5561): mongodump into the local scratch directory, encrypt it with
+    ///     the key ring (<c>OCTOENC1</c>) while uploading it to the artifact store
+    ///     (<c>presweep/&lt;tenant&gt;/&lt;tenant&gt;-&lt;utc&gt;-&lt;guid&gt;.presweep.octoenc</c>), delete the scratch
+    ///     copy. A pre-sweep dump is never stored unencrypted. Returns <c>null</c> on success, otherwise a
+    ///     value-free reason.
     /// </summary>
     private async Task<string?> TakeBackupAsync(SecretSweepReport report, SecretSweepRunDto run,
         CancellationToken cancellationToken)
     {
-        string filePath;
+        if (!artifactStorage.CanEncrypt)
+        {
+            // Unreachable through SweepTenantAsync (writing modes need the key ring), kept as the hard rule.
+            return "the key ring has no active key to encrypt the dump";
+        }
+
+        string scratchPath;
         try
         {
-            filePath = backupFileStorage.CreateSecretBackupFilePath(report.TenantId);
+            scratchPath = artifactStorage.CreateScratchFilePath(PreSweepDumps.ScratchSuffix);
         }
         catch (Exception e)
         {
             logger.LogError(e, "Cannot prepare the pre-sweep secret backup of tenant '{TenantId}'", report.TenantId);
-            return $"backup directory not usable: {e.GetType().Name}";
+            return $"scratch directory not usable: {e.GetType().Name}";
         }
 
         try
         {
-            logger.LogInformation("Taking pre-sweep secret backup of tenant '{TenantId}' to '{FilePath}'",
-                report.TenantId, filePath);
-            var result = await systemContext.BackupTenantAsync(report.TenantId, filePath, timeout: BackupTimeout,
+            logger.LogInformation("Taking pre-sweep secret backup of tenant '{TenantId}' to scratch '{FilePath}'",
+                report.TenantId, scratchPath);
+            var result = await systemContext.BackupTenantAsync(report.TenantId, scratchPath, timeout: BackupTimeout,
                 cancellationToken: cancellationToken);
 
-            if (!result.Success || !File.Exists(filePath))
+            if (!result.Success || !File.Exists(scratchPath))
             {
-                await backupFileStorage.DeleteFileAsync(filePath);
                 // Exit code only: the tool output is not needed here and is logged by the backup service.
                 return result.Success
                     ? "mongodump reported success but wrote no file"
                     : $"mongodump failed with exit code {result.ExitCode}";
             }
 
-            backupFileStorage.RestrictToOwner(filePath);
-            report.BackupFileName = Path.GetFileName(filePath);
+            var stored = await artifactStorage.StoreFileAsync(ArtifactCategories.Presweep, report.TenantId,
+                PreSweepDumps.NewBaseFileName(report.TenantId, _time.GetUtcNow().UtcDateTime),
+                scratchPath, ArtifactEncryption.Required, cancellationToken);
+
+            report.BackupFileName = stored.FileName;
             var createdAt = _time.GetUtcNow().UtcDateTime;
             run.Dump = new SecretSweepDumpDto
             {
-                FileName = report.BackupFileName,
+                FileName = stored.FileName,
                 Exists = true,
-                SizeBytes = TryGetSize(filePath),
+                SizeBytes = stored.Size,
                 CreatedAt = createdAt,
                 ExpiresAt = createdAt.AddDays(Math.Max(0, options.Value.BackupRetentionDays))
             };
@@ -283,14 +296,17 @@ public class SecretSweepCoordinator(
         }
         catch (OperationCanceledException)
         {
-            await backupFileStorage.DeleteFileAsync(filePath);
             throw;
         }
         catch (Exception e)
         {
             logger.LogError(e, "Pre-sweep secret backup of tenant '{TenantId}' failed", report.TenantId);
-            await backupFileStorage.DeleteFileAsync(filePath);
             return Describe(e);
+        }
+        finally
+        {
+            // The scratch copy is plaintext; it never outlives the upload.
+            artifactStorage.DeleteScratchFile(scratchPath);
         }
     }
 
@@ -356,18 +372,6 @@ public class SecretSweepCoordinator(
             // The run history is bookkeeping; losing an entry must not fail or skip the sweep.
             logger.LogWarning(e, "Could not store secret sweep run '{RunId}' of tenant '{TenantId}'", run.RunId,
                 tenantId);
-        }
-    }
-
-    private static long? TryGetSize(string filePath)
-    {
-        try
-        {
-            return new FileInfo(filePath).Length;
-        }
-        catch (Exception)
-        {
-            return null;
         }
     }
 

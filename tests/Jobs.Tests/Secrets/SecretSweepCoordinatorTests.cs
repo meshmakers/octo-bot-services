@@ -7,6 +7,7 @@ using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Services;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -19,7 +20,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Tests.Secrets;
 /// </summary>
 public class SecretSweepCoordinatorTests : IDisposable
 {
-    private readonly IBackupFileStorageService _storage = Substitute.For<IBackupFileStorageService>();
+    private readonly IBotArtifactStorage _storage = Substitute.For<IBotArtifactStorage>();
     private readonly ISecretMaintenanceService _maintenance = Substitute.For<ISecretMaintenanceService>();
     private readonly SecretSweepJobOptions _options = new();
     private readonly ISecretAttributeProtector _protector = Substitute.For<ISecretAttributeProtector>();
@@ -33,8 +34,15 @@ public class SecretSweepCoordinatorTests : IDisposable
         Directory.CreateDirectory(_tempDirectory);
         _protector.IsConfigured.Returns(true);
         _protector.ActiveKeyId.Returns("k1");
-        _storage.CreateSecretBackupFilePath(Arg.Any<string>())
-            .Returns(ci => Path.Combine(_tempDirectory, $"{ci.Arg<string>()}.presweep.tar.gz"));
+        // AB#5561: the dump goes to scratch, then encrypted into the artifact store. The stored name is derived
+        // from the tenant here so the assertions stay readable; the real naming is covered by PreSweepDumps.
+        _storage.CanEncrypt.Returns(true);
+        _storage.CreateScratchFilePath(Arg.Any<string>())
+            .Returns(ci => Path.Combine(_tempDirectory, $"{Guid.NewGuid():N}{ci.Arg<string>()}"));
+        _storage.StoreFileAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<ArtifactEncryption>(), Arg.Any<CancellationToken>())
+            .Returns(ci => new StoredArtifact(ci.ArgAt<string>(0), ci.ArgAt<string>(1).ToLowerInvariant(),
+                $"{ci.ArgAt<string>(1)}.presweep.octoenc", new FileInfo(ci.ArgAt<string>(3)).Length, true));
     }
 
     public void Dispose()
@@ -165,9 +173,13 @@ public class SecretSweepCoordinatorTests : IDisposable
         await Assert.That(report.Steps[0].ValuesRewritten).IsEqualTo(3);
         await Assert.That(report.Steps[1].Totals.EncV2ByKeyId["k1"]).IsEqualTo(1);
         await Assert.That(report.RemainingLegacyValues).IsEqualTo(0);
-        await Assert.That(report.BackupFileName).IsEqualTo("t-enc.presweep.tar.gz");
+        await Assert.That(report.BackupFileName).IsEqualTo("t-enc.presweep.octoenc");
         await Assert.That(report.ActiveKeyId).IsEqualTo("k1");
-        _storage.Received(1).RestrictToOwner(Path.Combine(_tempDirectory, "t-enc.presweep.tar.gz"));
+        // AB#5559/AB#5561: encrypted (Required) into the presweep category, scratch copy removed.
+        await _storage.Received(1).StoreFileAsync(ArtifactCategories.Presweep, "t-enc",
+            Arg.Is<string>(n => n.StartsWith("t-enc-") && n.EndsWith(".presweep")), Arg.Any<string>(),
+            ArtifactEncryption.Required, Arg.Any<CancellationToken>());
+        _storage.Received(1).DeleteScratchFile(Arg.Is<string>(p => p.StartsWith(_tempDirectory)));
 
         Received.InOrder(() =>
         {
@@ -211,7 +223,8 @@ public class SecretSweepCoordinatorTests : IDisposable
         await Assert.That(report.Steps).IsEmpty();
         await _maintenance.DidNotReceiveWithAnyArgs()
             .SweepTenantAsync(default!, default, default(SecretSweepOptions)!, default);
-        await _storage.Received(1).DeleteFileAsync(Path.Combine(_tempDirectory, "t-nodump.presweep.tar.gz"));
+        _storage.Received(1).DeleteScratchFile(Arg.Is<string>(p => p.StartsWith(_tempDirectory)));
+        await _storage.DidNotReceiveWithAnyArgs().StoreFileAsync(default!, default!, default!, default!, default);
     }
 
     [Test]
@@ -235,13 +248,46 @@ public class SecretSweepCoordinatorTests : IDisposable
     [Test]
     public async Task Encrypt_BackupDirectoryUnusable_IsSkipped()
     {
-        _storage.CreateSecretBackupFilePath("t-baddir").Throws(new UnauthorizedAccessException("denied"));
+        _storage.CreateScratchFilePath(Arg.Any<string>()).Throws(new UnauthorizedAccessException("denied"));
 
         var report = await CreateCoordinator().SweepTenantAsync("t-baddir", SecretSweepMode.Encrypt,
             SecretSweepTrigger.Manual, null, CancellationToken.None);
 
         await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Skipped);
-        await Assert.That(report.Reason).Contains("backup directory not usable");
+        await Assert.That(report.Reason).Contains("scratch directory not usable");
+    }
+
+    [Test]
+    public async Task Encrypt_StoreUploadFails_IsSkipped_AndTheScratchCopyIsDeleted()
+    {
+        SetupBackupSucceeds();
+        _storage.StoreFileAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<ArtifactEncryption>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new IOException("bucket unreachable"));
+
+        var report = await CreateCoordinator().SweepTenantAsync("t-nostore", SecretSweepMode.Encrypt,
+            SecretSweepTrigger.Manual, null, CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Skipped);
+        await Assert.That(report.Reason).Contains("IOException");
+        await Assert.That(report.Reason).DoesNotContain("bucket unreachable");
+        await _maintenance.DidNotReceiveWithAnyArgs()
+            .SweepTenantAsync(default!, default, default(SecretSweepOptions)!, default);
+        _storage.Received(1).DeleteScratchFile(Arg.Is<string>(p => p.StartsWith(_tempDirectory)));
+    }
+
+    [Test]
+    public async Task Encrypt_WithoutDumpEncryptionKey_NeverStoresAPlainDump()
+    {
+        // The writing sweep needs the key ring anyway; the dump rule holds on its own as well.
+        _storage.CanEncrypt.Returns(false);
+
+        var report = await CreateCoordinator().SweepTenantAsync("t-nokey", SecretSweepMode.Encrypt,
+            SecretSweepTrigger.Manual, null, CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Skipped);
+        await _systemContext.DidNotReceiveWithAnyArgs().BackupTenantAsync(default!, default!);
+        await _storage.DidNotReceiveWithAnyArgs().StoreFileAsync(default!, default!, default!, default!, default);
     }
 
     [Test]
@@ -474,7 +520,7 @@ public class SecretSweepCoordinatorTests : IDisposable
             SecretSweepTrigger.Manual, null, CancellationToken.None);
 
         await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Succeeded);
-        await Assert.That(report.BackupFileName).IsEqualTo("t-cleanup.presweep.tar.gz");
+        await Assert.That(report.BackupFileName).IsEqualTo("t-cleanup.presweep.octoenc");
         await _maintenance.Received(1).SweepTenantAsync("t-cleanup", SecretSweepMode.CleanupUnreadable,
             Arg.Is<SecretSweepOptions>(o => o.ConfirmCleanupUnreadable && !o.ConfirmDecrypt),
             Arg.Any<CancellationToken>());
@@ -588,7 +634,7 @@ public class SecretSweepCoordinatorTests : IDisposable
         await Assert.That(run.PlaceholdersNormalized).IsEqualTo(1);
         await Assert.That(run.UnreadableCount).IsEqualTo(1);
         await Assert.That(run.Dump).IsNotNull();
-        await Assert.That(run.Dump!.FileName).IsEqualTo("t-run.presweep.tar.gz");
+        await Assert.That(run.Dump!.FileName).IsEqualTo("t-run.presweep.octoenc");
         await Assert.That(run.Dump.Exists).IsTrue();
         await Assert.That(run.Dump.SizeBytes).IsEqualTo(4);
         await Assert.That(run.Dump.CreatedAt).IsEqualTo(_time.GetUtcNow().UtcDateTime);
@@ -732,7 +778,7 @@ public class SecretSweepCoordinatorTests : IDisposable
         var deletedAt = new DateTime(2026, 10, 6, 12, 30, 0, DateTimeKind.Utc);
         SetupBackupSucceeds();
         SetupSweep("t-run-del", SecretSweepMode.Encrypt, _ =>
-            runs.MarkDumpDeletedAsync("t-run-del", "t-run-del.presweep.tar.gz", deletedAt, "carol")
+            runs.MarkDumpDeletedAsync("t-run-del", "t-run-del.presweep.octoenc", deletedAt, "carol")
                 .GetAwaiter().GetResult());
         SetupSweep("t-run-del", SecretSweepMode.Verify);
 

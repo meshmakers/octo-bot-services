@@ -9,6 +9,7 @@ using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
+using Meshmakers.Octo.Backend.Jobs.Tests.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Services.Infrastructure;
@@ -70,11 +71,18 @@ internal sealed class JobsApiTestHost : IDisposable
     private ISecretEnvironmentStatusService _secretEnvironmentStatusService = null!;
     private string _tusFilePath = null!;
 
+    /// <summary>
+    ///     A real file system artifact store with a generated key ring (AB#5561): tenant dumps and staged restore
+    ///     uploads a test puts there are served by the real download / restore-validation code.
+    /// </summary>
+    public ArtifactTestEnvironment Artifacts { get; } = new("k1");
+
     public void Dispose()
     {
         _client.Dispose();
         _app.StopAsync().GetAwaiter().GetResult();
         ((IDisposable)_app).Dispose();
+        Artifacts.Dispose();
         if (File.Exists(_tusFilePath))
         {
             File.Delete(_tusFilePath);
@@ -262,6 +270,7 @@ internal sealed class JobsApiTestHost : IDisposable
 
         builder.Services.AddSingleton(_backgroundJobClient);
         builder.Services.AddSingleton(backupFileStorage);
+        builder.Services.AddSingleton<IBotArtifactStorage>(Artifacts.Storage);
         builder.Services.AddSingleton(Substitute.For<IDistributedCacheService>());
         builder.Services.AddSingleton(hierarchy);
         builder.Services.AddSingleton(_jobStorage);

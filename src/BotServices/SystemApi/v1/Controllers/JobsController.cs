@@ -73,12 +73,14 @@ public class JobsController : JobsControllerBase
     /// <param name="backupFileStorage"></param>
     /// <param name="jobStorage"></param>
     /// <param name="tenantAccessGuard"></param>
+    /// <param name="artifactStorage">Artifact store of tenant dumps and staged restore uploads (AB#5561).</param>
     /// <param name="logger"></param>
     public JobsController(IDistributedCacheService distributedCache,
         IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage,
         IJobStorageAccessor jobStorage, IJobTenantAccessGuard tenantAccessGuard,
-        ILogger<JobsControllerBase> logger)
-        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache, logger)
+        IBotArtifactStorage artifactStorage, ILogger<JobsControllerBase> logger)
+        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache,
+            artifactStorage, logger)
     {
     }
 

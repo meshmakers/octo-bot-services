@@ -26,12 +26,14 @@ using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Authorization;
 using Meshmakers.Octo.Services.Infrastructure.Configuration;
 using Meshmakers.Octo.Services.Infrastructure.Services;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Meshmakers.Octo.Services.Observability;
 using Meshmakers.Octo.Services.Swagger.Configuration;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -39,6 +41,7 @@ using MongoDB.Driver;
 using NLog;
 using NLog.Web;
 using tusdotnet;
+using tusdotnet.Interfaces;
 using tusdotnet.Models;
 using tusdotnet.Models.Configuration;
 using tusdotnet.Stores;
@@ -55,7 +58,10 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
     builder.AddObservability()
-        .AddSystemContextHealthCheck();
+        .AddSystemContextHealthCheck()
+        // AB#5561: reachability of the artifact store (pre-sweep dumps, tenant dumps, restore staging). Degraded,
+        // not "ready": an unreachable store breaks dumps, restores and writing sweeps, not the other jobs.
+        .AddArtifactStorageHealthCheck(failureStatus: HealthStatus.Degraded, tags: ["artifact-storage"]);
 
     JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
@@ -170,7 +176,12 @@ try
         dumpStoragePath: botOptions.DumpStoragePath,
         fileRetentionHours: botOptions.FileRetentionHours,
         secretBackupStoragePath: secretSweepOptions.BackupStoragePath,
-        secretBackupRetentionDays: secretSweepOptions.BackupRetentionDays);
+        secretBackupRetentionDays: secretSweepOptions.BackupRetentionDays,
+        artifactRetentionHours: botOptions.ArtifactRetentionHours);
+    // AB#5561: platform artifact store (ArtifactStorage section, OCTO_ARTIFACTSTORAGE__*). Without configuration it
+    // is the file system below <temp>/octo-bot/artifacts, so a local start needs no new settings. Precedence of the
+    // file system root and the Bot:SecretSweep:BackupStoragePath alias: see AddOctoBotArtifactStorage / README.
+    builder.Services.AddOctoBotArtifactStorage(builder.Configuration, botOptions.ScratchPath);
     builder.Services.AddOctoNotification();
     builder.Services.AddCkModelSystemBotV3();
 
@@ -351,6 +362,7 @@ try
     // Ensure backup storage directories exist
     var fileStorage = app.Services.GetRequiredService<IBackupFileStorageService>();
     fileStorage.EnsureDirectoriesExist();
+    var artifactStorage = app.Services.GetRequiredService<IBotArtifactStorage>();
 
     app.MapObservability();
 
@@ -476,6 +488,40 @@ try
                         ctx.FailRequest(
                             $"Upload metadata names tenant '{declared}' but the request addresses '{routeTenant}'.");
                     }
+                }
+            },
+            // AB#5561: a completed restore upload moves into the artifact store (restore-staging/<tenant>/<id>,
+            // encrypted when a key ring is configured), so the restore survives a pod restart and runs on any
+            // replica. Archive data import uploads stay on the local disk (consumed by path).
+            OnFileCompleteAsync = async ctx =>
+            {
+                var file = await ctx.GetFileAsync();
+                var metadata = await file.GetMetadataAsync(ctx.CancellationToken);
+                if (!metadata.ContainsKey("databaseName"))
+                {
+                    return;
+                }
+
+                var tenantId = ctx.HttpContext.GetTenantId()
+                               ?? throw new InvalidOperationException(
+                                   "The tus upload endpoint was reached without a tenant route value.");
+                var localPath = fileStorage.GetTusUploadFilePath(tenantId, ctx.FileId);
+                try
+                {
+                    await artifactStorage.StoreFileAsync(ArtifactCategories.RestoreStaging, tenantId, ctx.FileId,
+                        localPath, ArtifactEncryption.IfConfigured, ctx.CancellationToken);
+                }
+                catch (Exception e)
+                {
+                    // The upload stays on this pod's disk; the restore falls back to it (legacy path).
+                    logger.Error(e, "Could not stage the restore upload '{0}' of tenant '{1}' in the artifact " +
+                                    "store; it stays on the local disk", ctx.FileId, tenantId);
+                    return;
+                }
+
+                if (ctx.Store is ITusTerminationStore terminationStore)
+                {
+                    await terminationStore.DeleteFileAsync(ctx.FileId, ctx.CancellationToken);
                 }
             }
         }

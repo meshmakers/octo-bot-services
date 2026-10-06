@@ -26,6 +26,8 @@
 
     <ItemGroup>
         <PackageReference Include="Meshmakers.Octo.Services.Contracts" Version="$(OctoCoreLibVersion)" />
+        <!-- AB#5561: pre-sweep dumps, tenant dumps and restore staging live in the platform artifact store. -->
+        <PackageReference Include="Meshmakers.Octo.Services.ArtifactStorage" Version="$(OctoCoreLibVersion)" />
         <ProjectReference Include="..\RepositoryUpdate\RepositoryUpdate.csproj" />
     </ItemGroup>
 

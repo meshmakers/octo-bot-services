@@ -87,6 +87,19 @@ public class OctoBotServicesOptions
     public string DumpStoragePath { get; set; } = Path.Combine(Path.GetTempPath(), "octo-bot", "dumps");
 
     /// <summary>
+    /// Local scratch directory (owner-only) where mongodump writes before the dump is encrypted into the artifact
+    /// store, and where stored artifacts are decrypted for mongorestore (AB#5561). Files live there only while a job
+    /// runs. Default <c>&lt;temp&gt;/octo-bot/scratch</c>; the chart mounts a scratch volume at <c>/tmp</c>.
+    /// </summary>
+    public string ScratchPath { get; set; } = Path.Combine(Path.GetTempPath(), "octo-bot", "scratch");
+
+    /// <summary>
+    /// Hours tenant dumps and staged restore uploads are kept in the artifact store before the hourly cleanup
+    /// deletes them (AB#5561, default 24; the store's 1-day lifecycle rule is the backstop).
+    /// </summary>
+    public int ArtifactRetentionHours { get; set; } = 24;
+
+    /// <summary>
     /// Gets or sets the maximum upload size in bytes (default: 10 GB).
     /// </summary>
     public long MaxUploadSizeBytes { get; set; } = 10L * 1024 * 1024 * 1024;

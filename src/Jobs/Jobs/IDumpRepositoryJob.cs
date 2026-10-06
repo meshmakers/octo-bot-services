@@ -18,7 +18,10 @@ public interface IDumpRepositoryJob
     /// mongodump <c>.tar.gz</c> is produced exactly as before.
     /// </param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
-    /// <returns>The path of the produced backup file (downloadable job result)</returns>
+    /// <returns>
+    /// The downloadable job result: a reference to the artifact in the artifact store (AB#5561,
+    /// <c>octo-artifact:tenant-dumps/&lt;tenant&gt;/&lt;file&gt;</c>), or the local file path without an artifact store
+    /// </returns>
     [DisplayName("Dump repository of tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution

@@ -87,11 +87,14 @@ public class JobsController : JobsControllerBase
     /// <param name="jobStorage">Reads job details and writes job parameters (AB#5070).</param>
     /// <param name="tenantAccessGuard">Authorizes a job instance against its tenant (AB#5070).</param>
     /// <param name="distributedCache">Backing store of the legacy GridFS artifact fallback.</param>
+    /// <param name="artifactStorage">Artifact store of tenant dumps and staged restore uploads (AB#5561).</param>
     /// <param name="logger">Logger.</param>
     public JobsController(IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage,
         IJobStorageAccessor jobStorage, IJobTenantAccessGuard tenantAccessGuard,
-        IDistributedCacheService distributedCache, ILogger<JobsControllerBase> logger)
-        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache, logger)
+        IDistributedCacheService distributedCache, IBotArtifactStorage artifactStorage,
+        ILogger<JobsControllerBase> logger)
+        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache,
+            artifactStorage, logger)
     {
     }
 
@@ -126,14 +129,14 @@ public class JobsController : JobsControllerBase
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult RestoreFromUpload(
+    public Task<IActionResult> RestoreFromUpload(
         [FromRoute] [Required] string tenantId,
         [Required] string tusFileId,
         [Required] string databaseName,
         string? oldDatabaseName = null,
         [FromQuery] bool restoreArchiveData = false)
     {
-        return EnqueueRestoreFromUpload(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData);
+        return EnqueueRestoreFromUploadAsync(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData);
     }
 
     /// <summary>

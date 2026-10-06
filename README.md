@@ -12,7 +12,7 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 - Repository dump and restore (`DumpRepositoryJob`, `RestoreRepositoryJob`)
 - Construction-kit fixups (`RunFixupJob`)
 - Attribute-value aggregation for autocomplete (`AttributeValueAggregatorJob`)
-- Hourly cleanup of stale backup/upload files (`CleanupStaleFilesJob`)
+- Hourly cleanup of stale backup/upload files and of expired artifacts in the artifact store (`CleanupStaleFilesJob`)
 - Secret sweep over the `Secret` attribute values of every tenant (`SecretSweepJob`, AB#5539) and the secrets admin API (status, run history, dump deletion; AB#5544)
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
@@ -122,9 +122,12 @@ included):
 Every other mode **keeps** values with an unknown key id: they read as "key missing", are listed in the
 report's `unreadable[]` / `secretsToReEnter[]` and become readable again once their key is added to the
 ring (decisions 2026-10-06, item 2). `Decrypt` is never offered. Every writing mode first takes a fresh
-mongodump of the tenant into `Bot:SecretSweep:BackupStoragePath/<tenant>/…presweep.tar.gz` (owner-only,
+mongodump of the tenant, encrypts it with the key ring and stores it in the artifact store as
+`presweep/<tenant>/<tenant>-<utc>-<guid>.presweep.octoenc` (AB#5559/AB#5561, see "Artifact storage" below;
 never downloadable, deleted after `BackupRetentionDays` = 7 by the hourly cleanup, or earlier through the
-API); if that dump fails the tenant is **skipped** unless `RequirePreSweepBackup=false`. A writing run is
+API); if that dump fails the tenant is **skipped** unless `RequirePreSweepBackup=false`. A pre-sweep dump is
+never stored unencrypted - without a key ring no writing sweep runs at all (a restore then only runs the
+key-free `Verify`). A writing run is
 followed by a `Verify`, so the report and the engine gauge `octo.secrets.values` describe the state after
 the sweep. After every repository restore the job runs `Verify` → `Encrypt` → `Verify` on the restored
 tenant and returns the secrets to re-enter in the restore job result - nothing is deleted after a
@@ -165,6 +168,64 @@ days after the sweep reported zero plaintext) means legacy clear text and `enc:v
 acceptable. From that moment every sweep that still finds such values logs an error and reports the
 tenant in the gauge `octo.secrets.strict_mode.violations{tenant}` (meter `Meshmakers.Octo.Secrets`,
 registered by `AddObservability()`); alert on `> 0`. The engine itself does not refuse legacy reads yet.
+
+### Artifact storage (AB#5561, AB#5559)
+
+Pre-sweep dumps, tenant dumps (`DumpRepositoryJob`) and staged restore uploads live in the platform
+artifact store (`Meshmakers.Octo.Services.ArtifactStorage`, `IArtifactStore`; providers `FileSystem`, `S3`,
+`AzureBlob`), so they survive pod restarts and work with any number of replicas. Keys:
+`<instancePrefix>/<category>/<tenant>/<file>`.
+
+| Category | Written by | Encryption (`OCTOENC1`, key ring, `.octoenc`) | App-side retention (hourly cleanup) | Lifecycle backstop |
+| --- | --- | --- | --- | --- |
+| `presweep` | writing secret sweeps | always (no key ring → no writing sweep) | `Bot:SecretSweep:BackupRetentionDays` (7 d) | 8 d |
+| `tenant-dumps` | `DumpRepositoryJob` | when a key ring is configured, else plain | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
+| `restore-staging` | tus restore uploads (metadata `databaseName`) on completion | when a key ring is configured, else plain | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
+
+- **Tenant dumps** contain secret ciphertext and every piece of business data, so they are encrypted too
+  when a key ring exists. The job result is a store reference (`octo-artifact:tenant-dumps/<tenant>/<file>`);
+  `GET {tenantId}/v1/jobs/download?id=…` (and the System variant) streams it and decrypts on the fly - the
+  client receives the same plain `.tar.gz` / `.octobak.zip` under the same name as before (content type
+  `application/gzip`, `Content-Length` = plaintext length). A decryption failure in the middle aborts the
+  response, so a client never gets a short file that looks complete. Only the job's own tenant and only the
+  `tenant-dumps` category are served; an expired dump answers `404`.
+- **Restore uploads**: when a tus upload with `databaseName` completes, it is moved into
+  `restore-staging/<tenant>/<tusFileId>[.octoenc]` and the local tus files are deleted. `restore-from-upload`
+  validates and `RestoreRepositoryJob` reads it from the store (plain or `.octoenc`, and an uploaded
+  `.octoenc` file of this environment is unwrapped as well), decrypting into the scratch directory; the staged
+  artifact is consumed by the restore. If staging fails, or the upload predates AB#5561, the local tus file is
+  used as before. Archive data import uploads (`archiveRtId`) stay on the local disk.
+- **Scratch**: mongodump writes to and decryption reads from `Bot:ScratchPath`
+  (default `<temp>/octo-bot/scratch`, owner-only; the chart mounts a scratch volume at `/tmp`). Scratch
+  files are deleted right after use and by the hourly cleanup after `Bot:FileRetentionHours`.
+- **Health**: `/health` includes the check `artifact-storage` (reachability; status `Degraded`, not part of
+  readiness - an unreachable store breaks dumps, restores and writing sweeps, not the other jobs).
+
+Configuration (section `ArtifactStorage`, environment `OCTO_ARTIFACTSTORAGE__*`; credentials only from a
+Kubernetes Secret, never in values or appsettings):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `Provider` | `FileSystem` | `FileSystem`, `S3` or `AzureBlob` |
+| `InstancePrefix` | `default` | first key segment(s); the chart sets the release name |
+| `FileSystem:RootPath` | `<temp>/octo-bot/artifacts` (bot default) | root directory of the file system store |
+| `S3:ServiceUrl`, `S3:Region`, `S3:Bucket`, `S3:AccessKeyId`, `S3:SecretAccessKey`, `S3:ForcePathStyle`, `S3:ServerSideEncryption` | | S3-compatible store (Hetzner: leave `ServerSideEncryption` empty) |
+| `AzureBlob:ConnectionString` / `AccountUrl` + `AccountKey` / `AccountUrl` + `UseManagedIdentity`, `AzureBlob:Container` | | Azure Blob |
+| `HealthCheckWriteProbe` | `false` | health check also writes/reads/deletes a probe object |
+| `Bot:ScratchPath` | `<temp>/octo-bot/scratch` | local scratch directory |
+| `Bot:ArtifactRetentionHours` | `24` | retention of `tenant-dumps` and `restore-staging` |
+
+**File system root precedence** (`AddOctoBotArtifactStorage`): (1) `ArtifactStorage:FileSystem:RootPath`
+when set, for every category; (2) otherwise, if `Bot:SecretSweep:BackupStoragePath`
+(`OCTO_BOT__SECRETSWEEP__BACKUPSTORAGEPATH`) is set explicitly - the chart's PVC stop-gap - pre-sweep dumps are
+stored below that path (backwards-compatible alias) and the other categories below
+`<temp>/octo-bot/artifacts`; (3) otherwise `<temp>/octo-bot/artifacts` for everything. With `S3` / `AzureBlob`
+the store holds every category. A file system root inside the tus or dump directory is refused at start-up
+(the hourly cleanup empties those).
+
+**Legacy local dumps** (`Bot:SecretSweep:BackupStoragePath/<tenant>/*.presweep.tar.gz`, written before
+AB#5561) are **not migrated**: the run history keeps showing them, early deletion still works on them, and
+the hourly cleanup deletes them when their 7 days are over.
 
 ### The tenant gate was a no-op until AB#5054
 

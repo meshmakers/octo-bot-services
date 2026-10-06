@@ -9,6 +9,7 @@ using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.StreamData;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -22,12 +23,16 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// recorded and the job still succeeds (continue + report, §2 decision #4).
 /// After the restore the secret sweep runs on the restored tenant (AB#5539, concept AB#5528 §6, decision 5):
 /// values of an unknown key id become "not set" and are reported for re-entry, older plaintext is encrypted.
+/// AB#5561: the staged upload is read from the artifact store (<c>restore-staging/&lt;tenant&gt;/&lt;uploadId&gt;</c>,
+/// plain or <c>.octoenc</c>) into the local scratch directory, decrypted when needed; an upload staged on the local
+/// disk before AB#5561 (or when staging into the store failed) is still restored from there.
 /// </summary>
 public class RestoreRepositoryJob(
     ILogger<RestoreRepositoryJob> logger,
     ISystemContext systemContext,
     IBackupFileStorageService backupFileStorage,
-    ISecretSweepCoordinator? secretSweepCoordinator = null) : IRestoreRepositoryJob
+    ISecretSweepCoordinator? secretSweepCoordinator = null,
+    IBotArtifactStorage? artifactStorage = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -39,9 +44,13 @@ public class RestoreRepositoryJob(
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
 
         // cacheKey is used as the tus file ID (or legacy cache key). The tenant is part of the
-        // address since AB#5060: uploads live under a per-tenant directory, so a restore can only
-        // ever resolve a file staged for the very tenant it is restoring.
-        var filePath = backupFileStorage.GetTusUploadFilePath(tenantId, cacheKey);
+        // address since AB#5060: uploads live under a per-tenant directory (and, since AB#5561, under the
+        // tenant's restore-staging prefix of the artifact store), so a restore can only ever resolve a file
+        // staged for the very tenant it is restoring.
+        var localUploadPath = backupFileStorage.GetTusUploadFilePath(tenantId, cacheKey);
+        var filePath = localUploadPath;
+        string? stagedFileName = null;
+        string? scratchPath = null;
 
         try
         {
@@ -50,7 +59,27 @@ public class RestoreRepositoryJob(
                 return null;
             }
 
-            if (!File.Exists(filePath))
+            var staged = artifactStorage == null
+                ? null
+                : await artifactStorage.FindRestoreStagingAsync(tenantId, cacheKey, ct);
+            if (staged != null)
+            {
+                stagedFileName = staged.Value.FileName;
+                scratchPath = artifactStorage!.CreateScratchFilePath(".restore");
+                logger.LogInformation(
+                    "Reading staged upload '{FileName}' of tenant '{TenantId}' from the artifact store", stagedFileName,
+                    tenantId);
+                if (!await artifactStorage.TryWritePlainToFileAsync(ArtifactCategories.RestoreStaging, tenantId,
+                        stagedFileName, scratchPath, ct))
+                {
+                    throw new JobFailedException(
+                        $"The staged upload for tus file ID '{cacheKey}' disappeared from the artifact store " +
+                        "(expired?). Upload the backup again.");
+                }
+
+                filePath = scratchPath;
+            }
+            else if (!File.Exists(filePath))
             {
                 throw new JobFailedException(
                     $"Backup file not found at '{filePath}' for tus file ID '{cacheKey}'.");
@@ -98,7 +127,29 @@ public class RestoreRepositoryJob(
         }
         finally
         {
-            await backupFileStorage.DeleteFileAsync(filePath);
+            await backupFileStorage.DeleteFileAsync(localUploadPath);
+            artifactStorage?.DeleteScratchFile(scratchPath);
+            if (stagedFileName != null)
+            {
+                await DeleteStagedUploadAsync(tenantId, stagedFileName);
+            }
+        }
+    }
+
+    /// <summary>
+    ///     A staged upload is consumed by its restore attempt (as the local tus file always was); the retention and
+    ///     the store's lifecycle rule remove it otherwise.
+    /// </summary>
+    private async Task DeleteStagedUploadAsync(string tenantId, string fileName)
+    {
+        try
+        {
+            await artifactStorage!.DeleteAsync(ArtifactCategories.RestoreStaging, tenantId, fileName);
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Could not delete the staged upload '{FileName}' of tenant '{TenantId}'", fileName,
+                tenantId);
         }
     }
 

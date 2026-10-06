@@ -11,6 +11,7 @@ using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Meshmakers.Octo.Backend.BotServices.Controllers;
@@ -63,6 +64,7 @@ namespace Meshmakers.Octo.Backend.BotServices.Controllers;
 /// </remarks>
 public abstract class JobsControllerBase : ControllerBase
 {
+    private readonly IBotArtifactStorage _artifactStorage;
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IBackupFileStorageService _backupFileStorage;
     private readonly IDistributedCacheService _distributedCache;
@@ -78,14 +80,17 @@ public abstract class JobsControllerBase : ControllerBase
     /// <param name="jobStorage">Reads job details and writes job parameters (AB#5070).</param>
     /// <param name="tenantAccessGuard">Authorizes a job instance against its tenant (AB#5070).</param>
     /// <param name="distributedCache">Backing store of the legacy GridFS artifact fallback.</param>
+    /// <param name="artifactStorage">Artifact store of tenant dumps and staged restore uploads (AB#5561).</param>
     /// <param name="logger">Logger.</param>
     protected JobsControllerBase(IBackgroundJobClient backgroundJobClient,
         IBackupFileStorageService backupFileStorage,
         IJobStorageAccessor jobStorage,
         IJobTenantAccessGuard tenantAccessGuard,
         IDistributedCacheService distributedCache,
+        IBotArtifactStorage artifactStorage,
         ILogger<JobsControllerBase> logger)
     {
+        _artifactStorage = artifactStorage;
         _backgroundJobClient = backgroundJobClient;
         _backupFileStorage = backupFileStorage;
         _jobStorage = jobStorage;
@@ -120,13 +125,13 @@ public abstract class JobsControllerBase : ControllerBase
     /// <summary>
     ///     Enqueues the repository restore of <paramref name="tenantId" /> from a completed tus upload.
     /// </summary>
-    protected IActionResult EnqueueRestoreFromUpload(string tusFileId, string tenantId, string databaseName,
-        string? oldDatabaseName, bool restoreArchiveData)
+    protected async Task<IActionResult> EnqueueRestoreFromUploadAsync(string tusFileId, string tenantId,
+        string databaseName, string? oldDatabaseName, bool restoreArchiveData)
     {
         try
         {
-            // Verify the tus upload file exists on disk and has content
-            var uploadCheck = ValidateTusUpload(tenantId, tusFileId, out _);
+            // Verify the upload is staged (artifact store, AB#5561; or on disk for a legacy upload) and has content
+            var uploadCheck = await ValidateRestoreUploadAsync(tenantId, tusFileId);
             if (uploadCheck != null)
             {
                 return uploadCheck;
@@ -396,7 +401,13 @@ public abstract class JobsControllerBase : ControllerBase
 
                 var key = result.Replace("\"", "");
 
-                // New path: result is a file path on disk
+                // AB#5561: result is an artifact in the artifact store (decrypted on the fly when encrypted).
+                if (StoredArtifact.TryParseResultReference(key, out var artifact))
+                {
+                    return await DownloadArtifactAsync(id, artifact!, jobTenantId);
+                }
+
+                // Legacy path: result is a file path on disk
                 if (System.IO.File.Exists(key))
                 {
                     var fileStream = new FileStream(key, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -500,29 +511,38 @@ public abstract class JobsControllerBase : ControllerBase
     /// </remarks>
     private void RecordStarter(string jobId, string tenantId)
     {
-        try
-        {
-            var subject = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!string.IsNullOrEmpty(subject))
-            {
-                _jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedBySubjectParameter, subject);
-            }
+        JobStarterRecorder.Record(_jobStorage, User, jobId, tenantId, _logger);
+    }
 
-            var clientId = User.FindFirstValue("client_id");
-            if (!string.IsNullOrEmpty(clientId))
-            {
-                _jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedByClientIdParameter, clientId);
-            }
-
-            _jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedForTenantParameter, tenantId);
-        }
-        catch (Exception e)
+    /// <summary>
+    ///     Streams a tenant dump from the artifact store (AB#5561). The client receives the same plain
+    ///     <c>.tar.gz</c> / <c>.octobak.zip</c> as before; an encrypted artifact is decrypted on the fly.
+    /// </summary>
+    /// <remarks>
+    ///     🔴 The artifact must belong to the tenant the job ran for (the reference is written by the job, but the
+    ///     check costs nothing and keeps a forged or corrupted job result from reaching another tenant's dump).
+    ///     Only the tenant-dump category is downloadable - pre-sweep dumps never are.
+    /// </remarks>
+    private async Task<IActionResult> DownloadArtifactAsync(string jobId, ArtifactKeyParts artifact,
+        string? jobTenantId)
+    {
+        if (artifact.Category != ArtifactCategories.TenantDumps || jobTenantId == null ||
+            !string.Equals(artifact.TenantId, jobTenantId, StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning(e,
-                "Could not record the starting subject of job '{JobId}' for tenant '{TenantId}'; the job " +
-                "itself was enqueued (AB#5070)",
-                jobId, tenantId);
+            _logger.LogWarning("Job '{JobId}' of tenant '{TenantId}' names an artifact it may not serve", jobId,
+                jobTenantId);
+            return StatusCode(StatusCodes.Status403Forbidden);
         }
+
+        var download = await _artifactStorage.OpenDownloadAsync(artifact.Category, artifact.TenantId,
+            artifact.FileName, HttpContext.RequestAborted);
+        if (download == null)
+        {
+            return NotFound(new NotFoundErrorDto(
+                "The result of the job with id: " + jobId + " is no longer available (expired after its retention)."));
+        }
+
+        return new ArtifactDownloadResult(download, _artifactStorage, "application/gzip", _logger);
     }
 
     private static JobDto CreateJobDto(string id, JobDetailsDto jobDetails)
@@ -560,6 +580,36 @@ public abstract class JobsControllerBase : ControllerBase
         }
 
         return new Tuple<string, Stream>(cacheStream.ContentType, cacheStream.Stream);
+    }
+
+    /// <summary>
+    ///     Verifies that the restore upload is staged for this tenant and not empty: in the artifact store
+    ///     (<c>restore-staging/&lt;tenant&gt;/&lt;id&gt;</c>, AB#5561), else on the local disk (see
+    ///     <see cref="ValidateTusUpload" />). The store key carries the tenant like the local directory does, so a
+    ///     foreign id answers 404 either way.
+    /// </summary>
+    private async Task<IActionResult?> ValidateRestoreUploadAsync(string tenantId, string tusFileId)
+    {
+        (string FileName, long Size)? staged;
+        try
+        {
+            staged = await _artifactStorage.FindRestoreStagingAsync(tenantId, tusFileId, HttpContext.RequestAborted);
+        }
+        catch (ArgumentException)
+        {
+            staged = null;
+        }
+
+        if (staged == null)
+        {
+            // An upload staged on the local disk (before AB#5561, or when staging into the store failed).
+            return ValidateTusUpload(tenantId, tusFileId, out _);
+        }
+
+        return staged.Value.Size == 0
+            ? BadRequest(new InternalServerErrorDto(
+                $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."))
+            : null;
     }
 
     /// <summary>
