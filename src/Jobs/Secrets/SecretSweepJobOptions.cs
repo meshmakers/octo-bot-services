@@ -24,7 +24,7 @@ public class SecretSweepJobOptions
 
     /// <summary>
     ///     When <c>true</c> (default), every sweep that writes (<c>Encrypt</c>, <c>Reprotect</c>,
-    ///     <c>ClearUnknownKid</c>) first takes a fresh mongodump of the tenant (decision 10). If that dump
+    ///     <c>CleanupUnreadable</c>) first takes a fresh mongodump of the tenant (decision 10). If that dump
     ///     cannot be taken, the sweep of that tenant is skipped with the reason in its report - it fails
     ///     safe. Set to <c>false</c> only deliberately (e.g. a local environment without the MongoDB
     ///     database tools); the sweep then runs without a rollback dump.
@@ -51,9 +51,9 @@ public class SecretSweepJobOptions
     public int BatchSize { get; set; } = 500;
 
     /// <summary>
-    ///     When <c>true</c> (default), a repository restore runs <c>Verify</c>, <c>ClearUnknownKid</c> (only
-    ///     for unknown key ids, after a pre-clear dump), <c>Encrypt</c> and <c>Verify</c> on the restored tenant (concept §6, decision 5) and reports the secrets that have to
-    ///     be re-entered.
+    ///     When <c>true</c> (default), a repository restore runs <c>Verify</c>, <c>Encrypt</c> and <c>Verify</c>
+    ///     on the restored tenant (concept §6, decisions 2026-10-06 item 2) and reports the secrets that have
+    ///     to be re-entered (unknown key id - kept encrypted, never deleted after a restore).
     /// </summary>
     public bool RunAfterRestore { get; set; } = true;
 

@@ -392,7 +392,10 @@ public class BackupFileStorageServiceTests
             await Assert.That(File.Exists(backup)).IsTrue();
 
             var deleted = await service.CleanupStaleSecretBackupsAsync(TimeSpan.FromHours(12));
-            await Assert.That(deleted).IsEqualTo(1);
+            await Assert.That(deleted.Count).IsEqualTo(1);
+            // AB#5544: the deleted path (tenant directory + file name) is reported for the run history.
+            await Assert.That(Path.GetFileName(Path.GetDirectoryName(deleted[0]))).IsEqualTo("tenant-a");
+            await Assert.That(Path.GetFileName(deleted[0])).IsEqualTo(Path.GetFileName(backup));
             await Assert.That(File.Exists(backup)).IsFalse();
             await Assert.That(File.Exists(freshBackup)).IsTrue();
         }
@@ -400,5 +403,33 @@ public class BackupFileStorageServiceTests
         {
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
+    }
+
+    [Test]
+    public async Task GetSecretBackupFilePath_ResolvesInsideTheTenantDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+            _logger, Path.Combine(root, "secret-backups"));
+
+        var path = service.GetSecretBackupFilePath("tenant-a", "tenant-a-20261006-120000-abcd1234.presweep.tar.gz");
+
+        await Assert.That(path).IsEqualTo(Path.Combine(Path.GetFullPath(Path.Combine(root, "secret-backups")),
+            "tenant-a", "tenant-a-20261006-120000-abcd1234.presweep.tar.gz"));
+    }
+
+    [Test]
+    [Arguments("../other/x.presweep.tar.gz")]
+    [Arguments("sub/x.presweep.tar.gz")]
+    [Arguments("..presweep.tar.gz")]
+    [Arguments("dump.tar.gz")]
+    [Arguments("")]
+    public async Task GetSecretBackupFilePath_RejectsAnythingButAPlainDumpName(string fileName)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+            _logger, Path.Combine(root, "secret-backups"));
+
+        await Assert.That(() => service.GetSecretBackupFilePath("tenant-a", fileName)).Throws<ArgumentException>();
     }
 }

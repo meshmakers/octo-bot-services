@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Hangfire.Server;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
@@ -32,7 +33,7 @@ public class RestoreRepositoryJob(
 
     /// <inheritdoc />
     public async Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
-        string? oldDatabaseName, bool restoreArchiveData,
+        string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext,
         IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
@@ -87,7 +88,7 @@ public class RestoreRepositoryJob(
             {
                 TenantId = tenantId,
                 DatabaseName = databaseName,
-                SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId, ct)
+                SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId, performContext?.BackgroundJob?.Id, ct)
             };
         }
         catch (Exception e)
@@ -105,20 +106,22 @@ public class RestoreRepositoryJob(
     ///     Runs the post-restore secret sweep (AB#5539). The restore itself has succeeded at this point, so
     ///     a problem of the sweep is reported, never thrown.
     /// </summary>
-    private async Task<SecretSweepReport?> RunPostRestoreSecretSweepAsync(string tenantId, CancellationToken ct)
+    private async Task<SecretSweepReport?> RunPostRestoreSecretSweepAsync(string tenantId, string? jobId,
+        CancellationToken ct)
     {
         if (secretSweepCoordinator == null)
         {
             return null;
         }
 
-        var report = await secretSweepCoordinator.RunAfterRestoreAsync(tenantId, ct);
+        var report = await secretSweepCoordinator.RunAfterRestoreAsync(tenantId, new SecretSweepRunInfo(jobId), ct);
         if (report.SecretsToReEnter.Count > 0)
         {
             logger.LogWarning(
-                "Restore of tenant '{TenantId}': {Count} secret(s) were encrypted with a key unknown to this " +
-                "environment and are now not set; they must be re-entered (listed in the job result and in " +
-                "the tenant's secret sweep report)", tenantId, report.SecretsToReEnter.Count);
+                "Restore of tenant '{TenantId}': {Count} secret(s) are encrypted with a key unknown to this " +
+                "environment; they were kept, read as not set (key missing) and must be re-entered unless the " +
+                "key is added to the key ring (listed in the job result and in the tenant's secret sweep report)",
+                tenantId, report.SecretsToReEnter.Count);
         }
 
         return report;

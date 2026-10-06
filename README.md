@@ -13,7 +13,7 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 - Construction-kit fixups (`RunFixupJob`)
 - Attribute-value aggregation for autocomplete (`AttributeValueAggregatorJob`)
 - Hourly cleanup of stale backup/upload files (`CleanupStaleFilesJob`)
-- Secret sweep over the `Secret` attribute values of every tenant (`SecretSweepJob`, AB#5539)
+- Secret sweep over the `Secret` attribute values of every tenant (`SecretSweepJob`, AB#5539) and the secrets admin API (status, run history, dump deletion; AB#5544)
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
 
@@ -103,40 +103,52 @@ child route, unrelated tenant 403, parent **service** token 403 under `Enforce` 
 passes, identical enqueued job on both surfaces, and the marker present on the tenant controller and
 nowhere else in the assembly.
 
-### Secret sweep (AB#5539)
+### Secret sweep and secrets admin API (AB#5539, AB#5544)
 
 Implements phases 4 and 5 of the SECRET attribute value type (concept
 `octo-construction-kit-engine/docs/concept-secret-attribute-type.md`, §5.2–§6) on top of the engine's
-`ISecretMaintenanceService`. `SecretSweepJob` sweeps one tenant or every tenant of the instance (the
-system tenant first, then every registered tenant, child tenants included):
+`ISecretMaintenanceService`; the REST contract is §9/§10 of
+`octo-construction-kit-engine/docs/secret-frontend-handover.md`. `SecretSweepJob` sweeps one tenant or
+every tenant of the instance (the system tenant first, then every registered tenant, child tenants
+included):
 
 | Mode | Effect |
 | --- | --- |
 | `Verify` | Counts the stored forms only. Recurring, daily (`Bot:SecretSweep:VerifyCron`). |
-| `Encrypt` | Clear text and `enc:v1` become `enc:v2` with the active key; placeholders become "not set". Once per environment. |
-| `Reprotect` | Everything not under the active key is re-encrypted (key rotation). |
-| `ClearUnknownKid` | Values of an unknown key id become "not set" and are listed for re-entry. |
+| `Encrypt` | Clear text and `enc:v1` become `enc:v2` with the active key; legacy clear-text placeholders become "not set" once (`placeholdersNormalized`). Once per environment. |
+| `Reprotect` | Everything not under the active key is re-encrypted (key rotation; CLI / ops). |
+| `CleanupUnreadable` | Values whose key id is not in the key ring are **deleted** and listed in `cleared[]` (irreversible except via the dump). |
 
-`Decrypt` (the emergency rollback) is deliberately not offered by the bot. Every writing mode first takes
-a fresh mongodump of the tenant into `Bot:SecretSweep:BackupStoragePath/<tenant>/…presweep.tar.gz`
-(owner-only, never a job download, deleted after `BackupRetentionDays` = 7 by the hourly cleanup); if
-that dump fails the tenant is **skipped** unless `RequirePreSweepBackup=false`. A writing run is
-followed by a `Verify`, so the report and the engine gauge `octo.secrets.values` describe the state
-after the sweep. After every repository restore the job runs `Verify` → (`ClearUnknownKid`) → `Encrypt`
-→ `Verify` on the restored tenant and returns the secrets to re-enter in the restore job result
-(decision 5). `ClearUnknownKid` runs only when the first `Verify` found unknown key ids, and only after a
-pre-clear dump into the secret backup directory succeeded (the uploaded file is deleted after the
-restore, and a misconfigured bot key ring would see this environment's own key ids as unknown); without
-that dump the unknown values are left untouched and the report says so. Sweeps of the same tenant
-exclude each other (Hangfire distributed lock): a sweep that finds its tenant busy is skipped, the
-post-restore sweep waits up to 30 minutes.
+Every other mode **keeps** values with an unknown key id: they read as "key missing", are listed in the
+report's `unreadable[]` / `secretsToReEnter[]` and become readable again once their key is added to the
+ring (decisions 2026-10-06, item 2). `Decrypt` is never offered. Every writing mode first takes a fresh
+mongodump of the tenant into `Bot:SecretSweep:BackupStoragePath/<tenant>/…presweep.tar.gz` (owner-only,
+never downloadable, deleted after `BackupRetentionDays` = 7 by the hourly cleanup, or earlier through the
+API); if that dump fails the tenant is **skipped** unless `RequirePreSweepBackup=false`. A writing run is
+followed by a `Verify`, so the report and the engine gauge `octo.secrets.values` describe the state after
+the sweep. After every repository restore the job runs `Verify` → `Encrypt` → `Verify` on the restored
+tenant and returns the secrets to re-enter in the restore job result - nothing is deleted after a
+restore. Sweeps of the same tenant exclude each other (Hangfire distributed lock): a sweep that finds its
+tenant busy is skipped, the post-restore sweep waits up to 30 minutes.
 
-| Endpoint | Scope | Purpose |
+Every run (manual, recurring, restore) is kept in the tenant's run history (Hangfire storage, last 50 per
+tenant): run id = Hangfire job id, mode, trigger, outcome (`Running` while in progress), starter, counts
+and the dump state (`createdAt`, `expiresAt`, `deletedAt`, `deletedBy`; the hourly cleanup records
+`deletedAt` on expiry).
+
+| Endpoint | Requires | Purpose |
 | --- | --- | --- |
-| `POST {tenantId}/v1/jobs/secret-sweep?mode=Verify\|Encrypt\|Reprotect\|ClearUnknownKid` | full access | Start a sweep of one tenant → `JobResponseDto` |
-| `GET {tenantId}/v1/jobs/secret-sweep/report` | read | Last report of the tenant (404 if none) |
-| `POST system/v1/secrets/sweep?mode=…` | full access, system tenant only | Start a sweep of all tenants |
+| `POST {tenantId}/v1/jobs/secret-sweep?mode=Verify\|Encrypt\|Reprotect\|CleanupUnreadable&confirm=true` | full access + role `SecretManagement` | Start a sweep of one tenant → `JobResponseDto`; `Encrypt` / `CleanupUnreadable` without `confirm=true` → `400 ConfirmationRequired`; `Decrypt` → `400` |
+| `GET {tenantId}/v1/jobs/secret-sweep/report` | read + role `AdminPanelManagement` | Last report of the tenant (404 if none) |
+| `GET {tenantId}/v1/secrets/status` | read (any user of the tenant) | `SecretEnvironmentStatusDto`: key ring, active / known key ids, legacy key, strict mode, Verify cron, last Verify |
+| `GET {tenantId}/v1/secrets/sweep-runs?limit=20` | read + role `AdminPanelManagement` | `SecretSweepRunDto[]`, newest first (limit 1..50) |
+| `DELETE {tenantId}/v1/secrets/sweep-runs/{runId}/dump` | full access + role `SecretManagement` | Delete a run's dump early: `204`, `404` (unknown run / no dump), `409` (already deleted) |
+| `POST system/v1/secrets/sweep?mode=…` | full access, system tenant only | Start a sweep of all tenants (`CleanupUnreadable` needs `confirm=true`) |
 | `GET system/v1/secrets/reports` | read, system tenant only | Last report of every tenant |
+
+Roles are tenant roles carried in the token (`role` claims); missing role → `403`. The policies live in
+`Configuration/BotAuthorizationPolicies.cs`. The `secrets` routes match the token's tenant exactly (no
+parent-tenant administration marker, unlike the job routes).
 
 The Hangfire recurring job `secret-sweep-encrypt` is never scheduled and exists so the one-time
 `Encrypt` can be triggered from the dashboard.

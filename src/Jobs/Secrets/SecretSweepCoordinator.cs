@@ -1,4 +1,5 @@
 using Meshmakers.Octo.Backend.Jobs.Services;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Microsoft.Extensions.Logging;
@@ -16,7 +17,8 @@ public class SecretSweepCoordinator(
     ISecretSweepReportStore reportStore,
     IOptions<SecretSweepJobOptions> options,
     TimeProvider? timeProvider = null,
-    ISecretSweepTenantLock? tenantLock = null) : ISecretSweepCoordinator
+    ISecretSweepTenantLock? tenantLock = null,
+    ISecretSweepRunStore? runStore = null) : ISecretSweepCoordinator
 {
     private static readonly TimeSpan BackupTimeout = TimeSpan.FromHours(1);
 
@@ -49,21 +51,22 @@ public class SecretSweepCoordinator(
 
     /// <inheritdoc />
     public async Task<SecretSweepReport> SweepTenantAsync(string tenantId, SecretSweepMode mode,
-        SecretSweepTrigger trigger, CancellationToken cancellationToken)
+        SecretSweepTrigger trigger, SecretSweepRunInfo? runInfo, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         var report = NewReport(tenantId, mode, trigger);
+        var run = await StartRunAsync(report, runInfo);
 
         if (mode == SecretSweepMode.Decrypt)
         {
-            return await FinishAsync(report, SecretSweepOutcome.Skipped,
+            return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
                 "Decrypt is an emergency operation and not available through the secret sweep job.");
         }
 
         var writes = mode != SecretSweepMode.Verify;
         if (writes && !protector.IsConfigured)
         {
-            return await FinishAsync(report, SecretSweepOutcome.Skipped,
+            return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
                 "Secret encryption keys are not configured on the bot (SecretEncryption:Keys / ActiveKeyId); " +
                 "only Verify is possible.");
         }
@@ -71,7 +74,7 @@ public class SecretSweepCoordinator(
         using var held = tenantLock?.TryAcquire(tenantId, SweepLockTimeout);
         if (tenantLock != null && held == null)
         {
-            return await FinishAsync(report, SecretSweepOutcome.Skipped,
+            return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
                 "Another secret sweep of this tenant is running; this run was not started.");
         }
 
@@ -79,12 +82,12 @@ public class SecretSweepCoordinator(
         {
             if (writes)
             {
-                var backupError = await TakeBackupAsync(report, cancellationToken);
+                var backupError = await TakeBackupAsync(report, run, cancellationToken);
                 if (backupError != null)
                 {
                     if (options.Value.RequirePreSweepBackup)
                     {
-                        return await FinishAsync(report, SecretSweepOutcome.Skipped,
+                        return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
                             $"The pre-sweep backup could not be taken ({backupError}); the sweep was not started. " +
                             "Fix the dump infrastructure or set Bot:SecretSweep:RequirePreSweepBackup=false deliberately.");
                     }
@@ -106,33 +109,35 @@ public class SecretSweepCoordinator(
         }
         catch (OperationCanceledException)
         {
-            await FinishAsync(report, SecretSweepOutcome.Failed, "The sweep was cancelled.");
+            await FinishAsync(report, run, SecretSweepOutcome.Failed, "The sweep was cancelled.");
             throw;
         }
         catch (Exception e)
         {
             logger.LogError(e, "Secret sweep {Mode} of tenant '{TenantId}' failed", mode, tenantId);
-            return await FinishAsync(report, SecretSweepOutcome.Failed, Describe(e));
+            return await FinishAsync(report, run, SecretSweepOutcome.Failed, Describe(e));
         }
 
-        return await FinishAsync(report, OutcomeOfSteps(report), report.Reason);
+        return await FinishAsync(report, run, OutcomeOfSteps(report), report.Reason);
     }
 
     /// <inheritdoc />
-    public async Task<SecretSweepReport> RunAfterRestoreAsync(string tenantId, CancellationToken cancellationToken)
+    public async Task<SecretSweepReport> RunAfterRestoreAsync(string tenantId, SecretSweepRunInfo? runInfo,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         var report = NewReport(tenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Restore);
+        var run = await StartRunAsync(report, runInfo);
 
         if (!options.Value.RunAfterRestore)
         {
-            return await FinishAsync(report, SecretSweepOutcome.Skipped,
+            return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
                 "Disabled by configuration (Bot:SecretSweep:RunAfterRestore=false).");
         }
 
         if (!protector.IsConfigured)
         {
-            return await FinishAsync(report, SecretSweepOutcome.Skipped,
+            return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
                 "Secret encryption keys are not configured on the bot; restored secrets were left as found. " +
                 "Run the Encrypt sweep once keys are configured.");
         }
@@ -140,65 +145,34 @@ public class SecretSweepCoordinator(
         using var held = tenantLock?.TryAcquire(tenantId, RestoreLockTimeout);
         if (tenantLock != null && held == null)
         {
-            return await FinishAsync(report, SecretSweepOutcome.Skipped,
-                "Another secret sweep of this tenant kept running; run the Encrypt sweep (and ClearUnknownKid " +
-                "if needed) on the restored tenant once it is done.");
+            return await FinishAsync(report, run, SecretSweepOutcome.Skipped,
+                "Another secret sweep of this tenant kept running; run the Encrypt sweep on the restored " +
+                "tenant once it is done.");
         }
 
-        var clearWithheld = false;
         try
         {
-            // Decision 5: values of another key ring (cross-environment / child-tenant restore) cannot be
-            // decrypted here - they become "not set" and are reported for re-entry. Clearing is
-            // irreversible and a bot whose key ring is misconfigured would see even this environment's
-            // own key ids as unknown, so: count first, and only when unknown key ids exist take a pre-clear
-            // dump (secret backup, kept 7 days) before clearing. The uploaded file is deleted after the
-            // restore, so without that dump the foreign ciphertext would be gone for good.
-            var found = await RunStepAsync(report, SecretSweepMode.Verify, cancellationToken);
-            if (found.Totals.UnknownKeyId > 0)
-            {
-                var backupError = await TakeBackupAsync(report, cancellationToken);
-                if (backupError != null && options.Value.RequirePreSweepBackup)
-                {
-                    clearWithheld = true;
-                    report.Reason =
-                        $"{found.Totals.UnknownKeyId} Secret value(s) with key id(s) unknown to this environment " +
-                        $"({string.Join(", ", found.Totals.UnknownKeyIdByKeyId.Keys)}) were left untouched because " +
-                        $"the pre-clear backup could not be taken ({backupError}). Check the bot's key ring, then " +
-                        "run the ClearUnknownKid sweep on this tenant.";
-                    logger.LogWarning(
-                        "Post-restore secret sweep of tenant '{TenantId}': ClearUnknownKid withheld, pre-clear " +
-                        "backup failed: {Reason}", tenantId, backupError);
-                }
-                else
-                {
-                    if (backupError != null)
-                    {
-                        report.Reason = $"Pre-clear backup not taken ({backupError}); not required by configuration.";
-                    }
-
-                    var clear = await RunStepAsync(report, SecretSweepMode.ClearUnknownKid, cancellationToken);
-                    report.SecretsToReEnter.AddRange(clear.Cleared);
-                }
-            }
-
+            // Decisions 2026-10-06, item 2: nothing is deleted after a restore. Values of another key ring
+            // (cross-environment / child-tenant restore) stay encrypted, read as "key missing" and are
+            // reported for re-entry (Unreadable / SecretsToReEnter); they become readable again as soon as
+            // their key is added to the ring. Only the admin sweep CleanupUnreadable removes them.
+            await RunStepAsync(report, SecretSweepMode.Verify, cancellationToken);
             // Older (pre phase 4) dumps carry plaintext / enc:v1.
             await RunStepAsync(report, SecretSweepMode.Encrypt, cancellationToken);
             await RunStepAsync(report, SecretSweepMode.Verify, cancellationToken);
         }
         catch (OperationCanceledException)
         {
-            await FinishAsync(report, SecretSweepOutcome.Failed, "The sweep was cancelled.");
+            await FinishAsync(report, run, SecretSweepOutcome.Failed, "The sweep was cancelled.");
             throw;
         }
         catch (Exception e)
         {
             logger.LogError(e, "Post-restore secret sweep of tenant '{TenantId}' failed", tenantId);
-            return await FinishAsync(report, SecretSweepOutcome.Failed, Describe(e));
+            return await FinishAsync(report, run, SecretSweepOutcome.Failed, Describe(e));
         }
 
-        return await FinishAsync(report,
-            clearWithheld ? SecretSweepOutcome.CompletedWithFailures : OutcomeOfSteps(report), report.Reason);
+        return await FinishAsync(report, run, OutcomeOfSteps(report), report.Reason);
     }
 
     private SecretSweepReport NewReport(string tenantId, SecretSweepMode mode, SecretSweepTrigger trigger)
@@ -219,7 +193,13 @@ public class SecretSweepCoordinator(
     private async Task<SecretSweepStepReport> RunStepAsync(SecretSweepReport report, SecretSweepMode mode,
         CancellationToken cancellationToken)
     {
-        var sweepOptions = new SecretSweepOptions { BatchSize = Math.Max(1, options.Value.BatchSize) };
+        // CleanupUnreadable is confirmed by the caller (API: confirm=true and the SecretManagement role) before
+        // the job is enqueued; the engine requires the explicit flag on top.
+        var sweepOptions = new SecretSweepOptions
+        {
+            BatchSize = Math.Max(1, options.Value.BatchSize),
+            ConfirmCleanupUnreadable = mode == SecretSweepMode.CleanupUnreadable
+        };
         var result = await maintenanceService.SweepTenantAsync(report.TenantId, mode, sweepOptions,
             cancellationToken);
         var step = SecretSweepReportMapper.ToStepReport(result);
@@ -230,7 +210,8 @@ public class SecretSweepCoordinator(
     /// <summary>
     ///     Takes the pre-sweep dump. Returns <c>null</c> on success, otherwise a value-free reason.
     /// </summary>
-    private async Task<string?> TakeBackupAsync(SecretSweepReport report, CancellationToken cancellationToken)
+    private async Task<string?> TakeBackupAsync(SecretSweepReport report, SecretSweepRunDto run,
+        CancellationToken cancellationToken)
     {
         string filePath;
         try
@@ -261,6 +242,16 @@ public class SecretSweepCoordinator(
 
             backupFileStorage.RestrictToOwner(filePath);
             report.BackupFileName = Path.GetFileName(filePath);
+            var createdAt = _time.GetUtcNow().UtcDateTime;
+            run.Dump = new SecretSweepDumpDto
+            {
+                FileName = report.BackupFileName,
+                Exists = true,
+                SizeBytes = TryGetSize(filePath),
+                CreatedAt = createdAt,
+                ExpiresAt = createdAt.AddDays(Math.Max(0, options.Value.BackupRetentionDays))
+            };
+            await SaveRunAsync(report.TenantId, run);
             return null;
         }
         catch (OperationCanceledException)
@@ -283,21 +274,94 @@ public class SecretSweepCoordinator(
             : SecretSweepOutcome.CompletedWithFailures;
     }
 
-    private async Task<SecretSweepReport> FinishAsync(SecretSweepReport report, SecretSweepOutcome outcome,
-        string? reason)
+    private async Task<SecretSweepRunDto> StartRunAsync(SecretSweepReport report, SecretSweepRunInfo? runInfo)
+    {
+        var run = new SecretSweepRunDto
+        {
+            RunId = string.IsNullOrWhiteSpace(runInfo?.RunId) ? Guid.NewGuid().ToString("N") : runInfo.RunId,
+            Mode = (SecretSweepModeDto)(int)report.Mode,
+            Trigger = (SecretSweepTriggerDto)(int)report.Trigger,
+            Outcome = SecretSweepOutcomeDto.Running,
+            StartedAt = report.StartedAt,
+            TriggeredBy = string.IsNullOrWhiteSpace(runInfo?.TriggeredBy) ? null : runInfo.TriggeredBy
+        };
+        await SaveRunAsync(report.TenantId, run);
+        return run;
+    }
+
+    private async Task SaveRunAsync(string tenantId, SecretSweepRunDto run)
+    {
+        if (runStore == null)
+        {
+            return;
+        }
+
+        try
+        {
+            // A dump deleted early while the sweep was still running stays deleted.
+            await runStore.UpdateAsync(tenantId, run.RunId, stored =>
+            {
+                if (stored.Dump?.DeletedAt != null && run.Dump != null &&
+                    string.Equals(stored.Dump.FileName, run.Dump.FileName, StringComparison.Ordinal))
+                {
+                    run.Dump.DeletedAt = stored.Dump.DeletedAt;
+                    run.Dump.DeletedBy = stored.Dump.DeletedBy;
+                    run.Dump.Exists = false;
+                }
+
+                return false;
+            });
+            await runStore.UpsertAsync(tenantId, run);
+        }
+        catch (Exception e)
+        {
+            // The run history is bookkeeping; losing an entry must not fail or skip the sweep.
+            logger.LogWarning(e, "Could not store secret sweep run '{RunId}' of tenant '{TenantId}'", run.RunId,
+                tenantId);
+        }
+    }
+
+    private static long? TryGetSize(string filePath)
+    {
+        try
+        {
+            return new FileInfo(filePath).Length;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private async Task<SecretSweepReport> FinishAsync(SecretSweepReport report, SecretSweepRunDto run,
+        SecretSweepOutcome outcome, string? reason)
     {
         report.Outcome = outcome;
         report.Reason = reason;
         report.CompletedAt = _time.GetUtcNow().UtcDateTime;
+        report.PlaceholdersNormalized = report.Steps.Sum(s => s.PlaceholdersNormalized);
 
         var finalStep = report.Steps.LastOrDefault();
         if (finalStep != null)
         {
             report.RemainingLegacyValues = finalStep.Totals.Legacy;
+            // The state after the sweep: what is still stored with a key id unknown here (kept, re-entry).
+            report.Unreadable = finalStep.Unreadable.ToList();
             EvaluateStrictMode(report, finalStep);
         }
 
+        report.SecretsToReEnter = report.Unreadable.Select(SecretValueReference.From)
+            .Concat(report.Steps.SelectMany(s => s.Cleared))
+            .ToList();
+
         Log(report);
+
+        run.Outcome = (SecretSweepOutcomeDto)(int)outcome;
+        run.CompletedAt = report.CompletedAt;
+        run.Totals = ToDto(finalStep?.Totals ?? new SecretFormCountsReport());
+        run.PlaceholdersNormalized = report.PlaceholdersNormalized;
+        run.UnreadableCount = report.Unreadable.Count;
+        await SaveRunAsync(report.TenantId, run);
 
         try
         {
@@ -348,12 +412,13 @@ public class SecretSweepCoordinator(
         logger.Log(level,
             "Secret sweep {Mode} ({Trigger}) of tenant '{TenantId}': {Outcome}{ReasonSeparator}{Reason}. Final state: " +
             "{Plaintext} plaintext, {EncV1} enc_v1, {EncV2} enc_v2, {UnknownKid} unknown kid, {Failed} failed; " +
-            "{Rewritten} value(s) rewritten, {ReEnter} secret(s) to re-enter, backup '{BackupFileName}'",
+            "{Rewritten} value(s) rewritten, {Placeholders} legacy placeholder(s) normalised, {ReEnter} secret(s) " +
+            "to re-enter, backup '{BackupFileName}'",
             report.Mode, report.Trigger, report.TenantId, report.Outcome,
             report.Reason == null ? string.Empty : " - ", report.Reason ?? string.Empty,
             final?.Plaintext ?? 0, final?.EncV1 ?? 0, final?.EncV2 ?? 0, final?.UnknownKeyId ?? 0,
             report.Steps.Sum(s => s.Totals.Failed), report.Steps.Sum(s => s.ValuesRewritten),
-            report.SecretsToReEnter.Count, report.BackupFileName ?? "<none>");
+            report.PlaceholdersNormalized, report.SecretsToReEnter.Count, report.BackupFileName ?? "<none>");
 
         foreach (var secret in report.SecretsToReEnter)
         {
@@ -361,6 +426,25 @@ public class SecretSweepCoordinator(
                 "Secret to re-enter in tenant '{TenantId}': {CkTypeId} {RtId} {AttributePath} (key id '{KeyId}' unknown here)",
                 report.TenantId, secret.CkTypeId, secret.RtId, secret.AttributePath, secret.KeyId);
         }
+    }
+
+    private static SecretFormCountsReportDto ToDto(SecretFormCountsReport counts)
+    {
+        return new SecretFormCountsReportDto
+        {
+            NotSet = counts.NotSet,
+            Placeholder = counts.Placeholder,
+            Plaintext = counts.Plaintext,
+            EncV1 = counts.EncV1,
+            EncV2 = counts.EncV2,
+            EncV2ByKeyId = new Dictionary<string, long>(counts.EncV2ByKeyId, StringComparer.OrdinalIgnoreCase),
+            UnknownKeyId = counts.UnknownKeyId,
+            UnknownKeyIdByKeyId =
+                new Dictionary<string, long>(counts.UnknownKeyIdByKeyId, StringComparer.OrdinalIgnoreCase),
+            Failed = counts.Failed,
+            Total = counts.Total,
+            Legacy = counts.Legacy
+        };
     }
 
     private static string Describe(Exception e)

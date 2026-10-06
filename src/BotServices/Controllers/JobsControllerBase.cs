@@ -133,7 +133,7 @@ public abstract class JobsControllerBase : ControllerBase
             }
 
             var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, null,
                     BotCancellationToken.Null));
 
             RecordStarter(id, tenantId);
@@ -213,22 +213,32 @@ public abstract class JobsControllerBase : ControllerBase
     }
 
     /// <summary>
-    ///     Enqueues the secret sweep of <paramref name="tenantId" /> (AB#5539).
-    ///     <see cref="SecretSweepMode.Decrypt" /> is refused: it is an emergency operation that writes clear
-    ///     text back and is not offered through this API.
+    ///     Enqueues the secret sweep of <paramref name="tenantId" /> (AB#5539, AB#5544).
+    ///     <see cref="SecretSweepMode.Decrypt" /> is refused: no API decrypts or exports plaintext.
+    ///     <see cref="SecretSweepMode.Encrypt" /> and <see cref="SecretSweepMode.CleanupUnreadable" /> change
+    ///     data and need <paramref name="confirm" /> (<c>400 ConfirmationRequired</c> otherwise);
+    ///     <see cref="SecretSweepMode.Reprotect" /> is accepted for CLI / ops (not offered in Studio).
     /// </summary>
-    protected IActionResult EnqueueSecretSweep(string tenantId, SecretSweepMode mode)
+    protected IActionResult EnqueueSecretSweep(string tenantId, SecretSweepMode mode, bool confirm)
     {
         if (!IsSweepModeOffered(mode))
         {
             return BadRequest(new InternalServerErrorDto(
-                $"Secret sweep mode '{mode}' is not available; use Verify, Encrypt, Reprotect or ClearUnknownKid."));
+                $"Secret sweep mode '{mode}' is not available; use Verify, Encrypt, Reprotect or CleanupUnreadable."));
+        }
+
+        if (RequiresConfirmation(mode) && !confirm)
+        {
+            return BadRequest(new CodedBadRequestErrorDto(CodedBadRequestErrorDto.ConfirmationRequired,
+                $"The secret sweep mode '{mode}' changes stored secrets and takes a pre-sweep dump first; " +
+                "repeat the request with confirm=true."));
         }
 
         try
         {
+            var triggeredBy = GetUserName(User);
             var id = _backgroundJobClient.Enqueue<ISecretSweepJob>(job =>
-                job.Run(tenantId, mode, BotCancellationToken.Null));
+                job.Run(tenantId, mode, triggeredBy, null, BotCancellationToken.Null));
 
             RecordStarter(id, tenantId);
             return Ok(new JobResponseDto(id));
@@ -257,7 +267,31 @@ public abstract class JobsControllerBase : ControllerBase
     internal static bool IsSweepModeOffered(SecretSweepMode mode)
     {
         return mode is SecretSweepMode.Verify or SecretSweepMode.Encrypt or SecretSweepMode.Reprotect
-            or SecretSweepMode.ClearUnknownKid;
+            or SecretSweepMode.CleanupUnreadable;
+    }
+
+    /// <summary>
+    ///     Whether <paramref name="mode" /> needs <c>confirm=true</c> on the tenant route (contract §9).
+    /// </summary>
+    internal static bool RequiresConfirmation(SecretSweepMode mode)
+    {
+        return mode is SecretSweepMode.Encrypt or SecretSweepMode.CleanupUnreadable;
+    }
+
+    /// <summary>
+    ///     The user name of the caller for the run history (<c>triggeredBy</c>, <c>deletedBy</c>): the
+    ///     <c>name</c> claim, else <c>preferred_username</c>; <c>null</c> for a token without a user name
+    ///     (client credentials).
+    /// </summary>
+    internal static string? GetUserName(ClaimsPrincipal user)
+    {
+        var name = user.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = user.FindFirstValue("name") ?? user.FindFirstValue("preferred_username");
+        }
+
+        return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
     /// <summary>

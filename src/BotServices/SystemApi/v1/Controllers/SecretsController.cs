@@ -61,8 +61,13 @@ public class SecretsController : ControllerBase
     ///     reasons are in <see cref="GetReports" />.
     /// </summary>
     /// <param name="mode">
-    ///     <c>Verify</c> (default), <c>Encrypt</c>, <c>Reprotect</c> or <c>ClearUnknownKid</c> (name or number).
+    ///     <c>Verify</c> (default), <c>Encrypt</c>, <c>Reprotect</c> or <c>CleanupUnreadable</c> (name or number).
     ///     <c>Decrypt</c> is refused with <c>400</c>.
+    /// </param>
+    /// <param name="confirm">
+    ///     Must be <c>true</c> for <c>CleanupUnreadable</c> (deletes every value whose key id is unknown, in
+    ///     every tenant); otherwise <c>400</c> with the error code <c>ConfirmationRequired</c>. The other modes
+    ///     are unchanged (ops).
     /// </param>
     // POST: system/v1/secrets/sweep?mode=Encrypt
     [HttpPost("sweep")]
@@ -70,7 +75,8 @@ public class SecretsController : ControllerBase
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> Sweep([FromQuery] SecretSweepMode mode = SecretSweepMode.Verify)
+    public async Task<IActionResult> Sweep([FromQuery] SecretSweepMode mode = SecretSweepMode.Verify,
+        [FromQuery] bool confirm = false)
     {
         var systemTenantId = _systemConfiguration.Value.SystemTenantId;
         if (!await _tenantAccessGuard.MayAccessJobAsync(User, systemTenantId, "secret-sweep:all-tenants"))
@@ -81,13 +87,22 @@ public class SecretsController : ControllerBase
         if (!JobsControllerBase.IsSweepModeOffered(mode))
         {
             return BadRequest(new InternalServerErrorDto(
-                $"Secret sweep mode '{mode}' is not available; use Verify, Encrypt, Reprotect or ClearUnknownKid."));
+                $"Secret sweep mode '{mode}' is not available; use Verify, Encrypt, Reprotect or CleanupUnreadable."));
+        }
+
+        if (mode == SecretSweepMode.CleanupUnreadable && !confirm)
+        {
+            return BadRequest(new CodedBadRequestErrorDto(CodedBadRequestErrorDto.ConfirmationRequired,
+                "CleanupUnreadable deletes every Secret value whose key id is not in the key ring, in every " +
+                "tenant; repeat the request with confirm=true."));
         }
 
         try
         {
+            var triggeredBy = JobsControllerBase.GetUserName(User);
             var id = _backgroundJobClient.Enqueue<ISecretSweepJob>(job =>
-                job.RunAllTenants(systemTenantId, mode, SecretSweepTrigger.Manual, BotCancellationToken.Null));
+                job.RunAllTenants(systemTenantId, mode, SecretSweepTrigger.Manual, triggeredBy, null,
+                    BotCancellationToken.Null));
             return Ok(new JobResponseDto(id));
         }
         catch (InvalidOperationException e)

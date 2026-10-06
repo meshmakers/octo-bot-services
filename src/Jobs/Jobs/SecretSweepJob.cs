@@ -1,3 +1,4 @@
+using Hangfire.Server;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Microsoft.Extensions.Logging;
@@ -10,11 +11,12 @@ public class SecretSweepJob(
     ISecretSweepCoordinator coordinator) : ISecretSweepJob
 {
     /// <inheritdoc />
-    public async Task<SecretSweepReport> Run(string tenantId, SecretSweepMode mode,
-        IBotCancellationToken? cancellationToken)
+    public async Task<SecretSweepReport> Run(string tenantId, SecretSweepMode mode, string? triggeredBy,
+        PerformContext? performContext, IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
-        var report = await coordinator.SweepTenantAsync(tenantId, mode, SecretSweepTrigger.Manual, ct);
+        var runInfo = new SecretSweepRunInfo(performContext?.BackgroundJob?.Id, triggeredBy);
+        var report = await coordinator.SweepTenantAsync(tenantId, mode, SecretSweepTrigger.Manual, runInfo, ct);
 
         if (report.Outcome is SecretSweepOutcome.Skipped or SecretSweepOutcome.Failed)
         {
@@ -27,8 +29,11 @@ public class SecretSweepJob(
 
     /// <inheritdoc />
     public async Task<SecretSweepRunSummary> RunAllTenants(string tenantId, SecretSweepMode mode,
-        SecretSweepTrigger trigger, IBotCancellationToken? cancellationToken)
+        SecretSweepTrigger trigger, string? triggeredBy, PerformContext? performContext,
+        IBotCancellationToken? cancellationToken)
     {
+        // One job, one run id: every tenant's run history gets an entry with this job's id.
+        var runInfo = new SecretSweepRunInfo(performContext?.BackgroundJob?.Id, triggeredBy);
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
         var summary = new SecretSweepRunSummary
         {
@@ -44,7 +49,7 @@ public class SecretSweepJob(
         foreach (var id in tenantIds)
         {
             ct.ThrowIfCancellationRequested();
-            summary.Tenants.Add(await coordinator.SweepTenantAsync(id, mode, trigger, ct));
+            summary.Tenants.Add(await coordinator.SweepTenantAsync(id, mode, trigger, runInfo, ct));
         }
 
         summary.CompletedAt = DateTime.UtcNow;

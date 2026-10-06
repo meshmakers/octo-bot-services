@@ -99,9 +99,20 @@ public interface IBackupFileStorageService
     void RestrictToOwner(string filePath);
 
     /// <summary>
+    /// Returns the full path of the pre-sweep dump <paramref name="fileName" /> of <paramref name="tenantId" />
+    /// (AB#5544, early deletion of a run's dump). Does not check that the file exists.
+    /// </summary>
+    /// <param name="tenantId">The tenant identifier.</param>
+    /// <param name="fileName">The plain file name as recorded in the run history.</param>
+    /// <exception cref="ArgumentException">
+    /// The tenant id is not usable as a path segment, or the file name is not a plain pre-sweep dump name.
+    /// </exception>
+    string GetSecretBackupFilePath(string tenantId, string fileName);
+
+    /// <summary>
     /// Deletes pre-sweep secret backups older than <paramref name="retention" />.
     /// </summary>
     /// <param name="retention">The retention period.</param>
-    /// <returns>The number of files deleted.</returns>
-    Task<int> CleanupStaleSecretBackupsAsync(TimeSpan retention);
+    /// <returns>The full paths of the deleted files (below the tenant subdirectories).</returns>
+    Task<IReadOnlyList<string>> CleanupStaleSecretBackupsAsync(TimeSpan retention);
 }

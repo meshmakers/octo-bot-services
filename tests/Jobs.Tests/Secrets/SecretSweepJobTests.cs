@@ -33,10 +33,10 @@ public class SecretSweepJobTests
     public async Task Run_Completed_ReturnsTheReport(SecretSweepOutcome outcome)
     {
         var report = Report("t1", outcome);
-        _coordinator.SweepTenantAsync("t1", SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+        _coordinator.SweepTenantAsync("t1", SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, Arg.Any<SecretSweepRunInfo?>(),
             Arg.Any<CancellationToken>()).Returns(report);
 
-        var result = await CreateJob().Run("t1", SecretSweepMode.Encrypt, null);
+        var result = await CreateJob().Run("t1", SecretSweepMode.Encrypt, "alice", null, null);
 
         await Assert.That(result).IsSameReferenceAs(report);
     }
@@ -46,10 +46,10 @@ public class SecretSweepJobTests
     [Arguments(SecretSweepOutcome.Failed)]
     public async Task Run_SkippedOrFailed_FailsTheJob(SecretSweepOutcome outcome)
     {
-        _coordinator.SweepTenantAsync("t1", SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+        _coordinator.SweepTenantAsync("t1", SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, Arg.Any<SecretSweepRunInfo?>(),
             Arg.Any<CancellationToken>()).Returns(Report("t1", outcome));
 
-        await Assert.That(async () => await CreateJob().Run("t1", SecretSweepMode.Encrypt, null))
+        await Assert.That(async () => await CreateJob().Run("t1", SecretSweepMode.Encrypt, "alice", null, null))
             .Throws<JobFailedException>();
     }
 
@@ -57,12 +57,12 @@ public class SecretSweepJobTests
     public async Task RunAllTenants_SweepsEveryTenant_WithTheTrigger()
     {
         _coordinator.GetTenantIdsAsync().Returns(new[] { "octosystem", "parent", "child" });
-        _coordinator.SweepTenantAsync(Arg.Any<string>(), SecretSweepMode.Verify, SecretSweepTrigger.Recurring,
+        _coordinator.SweepTenantAsync(Arg.Any<string>(), SecretSweepMode.Verify, SecretSweepTrigger.Recurring, Arg.Any<SecretSweepRunInfo?>(),
                 Arg.Any<CancellationToken>())
             .Returns(ci => Report(ci.Arg<string>(), SecretSweepOutcome.Succeeded, 1));
 
         var summary = await CreateJob().RunAllTenants("octosystem", SecretSweepMode.Verify,
-            SecretSweepTrigger.Recurring, null);
+            SecretSweepTrigger.Recurring, null, null, null);
 
         await Assert.That(summary.Tenants.Select(t => t.TenantId).ToArray())
             .IsEquivalentTo(new[] { "octosystem", "parent", "child" });
@@ -75,16 +75,29 @@ public class SecretSweepJobTests
     public async Task RunAllTenants_OneTenantSkipped_StillSweepsTheOthers_ThenFails()
     {
         _coordinator.GetTenantIdsAsync().Returns(new[] { "octosystem", "broken", "child" });
-        _coordinator.SweepTenantAsync(Arg.Any<string>(), SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+        _coordinator.SweepTenantAsync(Arg.Any<string>(), SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, Arg.Any<SecretSweepRunInfo?>(),
                 Arg.Any<CancellationToken>())
             .Returns(ci => Report(ci.Arg<string>(),
                 ci.Arg<string>() == "broken" ? SecretSweepOutcome.Skipped : SecretSweepOutcome.Succeeded));
 
         await Assert.That(async () => await CreateJob().RunAllTenants("octosystem", SecretSweepMode.Encrypt,
-                SecretSweepTrigger.Manual, null))
+                SecretSweepTrigger.Manual, null, null, null))
             .Throws<JobFailedException>().WithMessageContaining("broken (Skipped)");
 
-        await _coordinator.Received(1).SweepTenantAsync("child", SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+        await _coordinator.Received(1).SweepTenantAsync("child", SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, Arg.Any<SecretSweepRunInfo?>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task Run_PassesTheStarter_AndNoJobIdOutsideHangfire()
+    {
+        _coordinator.SweepTenantAsync("t1", SecretSweepMode.Verify, SecretSweepTrigger.Manual,
+            Arg.Any<SecretSweepRunInfo?>(), Arg.Any<CancellationToken>()).Returns(Report("t1", SecretSweepOutcome.Succeeded));
+
+        await CreateJob().Run("t1", SecretSweepMode.Verify, "alice", null, null);
+
+        await _coordinator.Received(1).SweepTenantAsync("t1", SecretSweepMode.Verify, SecretSweepTrigger.Manual,
+            Arg.Is<SecretSweepRunInfo?>(r => r != null && r.TriggeredBy == "alice" && r.RunId == null),
             Arg.Any<CancellationToken>());
     }
 }

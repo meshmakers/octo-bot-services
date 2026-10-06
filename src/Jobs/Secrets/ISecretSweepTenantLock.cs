@@ -4,7 +4,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Secrets;
 ///     Mutual exclusion of secret sweeps per tenant (AB#5539). Hangfire's
 ///     <c>DisableConcurrentExecution</c> locks per job <i>method</i>, so a single-tenant run, the
 ///     all-tenants run and the post-restore sweep could otherwise work on the same tenant at the same time
-///     (two pre-sweep dumps, interleaved reports, a ClearUnknownKid racing an Encrypt).
+///     (two pre-sweep dumps, interleaved reports, a CleanupUnreadable racing an Encrypt).
 /// </summary>
 public interface ISecretSweepTenantLock
 {

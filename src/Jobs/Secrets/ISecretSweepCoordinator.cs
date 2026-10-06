@@ -22,20 +22,25 @@ public interface ISecretSweepCoordinator
     ///     bot).
     /// </summary>
     /// <param name="tenantId">Tenant</param>
-    /// <param name="mode">Verify, Encrypt, Reprotect or ClearUnknownKid</param>
+    /// <param name="mode">
+    ///     Verify, Encrypt, Reprotect or CleanupUnreadable (callers confirm CleanupUnreadable before enqueuing)
+    /// </param>
     /// <param name="trigger">What started the sweep</param>
+    /// <param name="runInfo">Run id and starter for the run history</param>
     /// <param name="cancellationToken">Cancellation</param>
     Task<SecretSweepReport> SweepTenantAsync(string tenantId, SecretSweepMode mode, SecretSweepTrigger trigger,
-        CancellationToken cancellationToken);
+        SecretSweepRunInfo? runInfo, CancellationToken cancellationToken);
 
     /// <summary>
-    ///     Post-restore handling (concept §6, decision 5): <c>Verify</c>; when it found unknown key ids, a
-    ///     pre-clear dump and <c>ClearUnknownKid</c> (values from another environment become "not set" and are
-    ///     listed in <see cref="SecretSweepReport.SecretsToReEnter" />; withheld when the dump fails and
-    ///     <c>RequirePreSweepBackup</c> is on), then <c>Encrypt</c> (older plaintext dumps), then <c>Verify</c>. Skipped when no key is configured or
+    ///     Post-restore handling (concept §6, decisions 2026-10-06 item 2): <c>Verify</c>, <c>Encrypt</c> (older
+    ///     plaintext / <c>enc:v1</c> dumps), <c>Verify</c>. Nothing is deleted: values whose key id is unknown
+    ///     here stay encrypted and are reported in <see cref="SecretSweepReport.Unreadable" /> and
+    ///     <see cref="SecretSweepReport.SecretsToReEnter" />. Skipped when no key is configured or
     ///     <c>Bot:SecretSweep:RunAfterRestore</c> is off. Never throws for tenant-level problems.
     /// </summary>
     /// <param name="tenantId">Restored tenant</param>
+    /// <param name="runInfo">Run id (the restore job) for the run history</param>
     /// <param name="cancellationToken">Cancellation</param>
-    Task<SecretSweepReport> RunAfterRestoreAsync(string tenantId, CancellationToken cancellationToken);
+    Task<SecretSweepReport> RunAfterRestoreAsync(string tenantId, SecretSweepRunInfo? runInfo,
+        CancellationToken cancellationToken);
 }

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Hangfire;
+using Hangfire.Server;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
 
@@ -18,13 +19,19 @@ public interface ISecretSweepJob
     ///     success.
     /// </summary>
     /// <param name="tenantId">The tenant to sweep</param>
-    /// <param name="mode">Verify, Encrypt, Reprotect or ClearUnknownKid (Decrypt is refused)</param>
+    /// <param name="mode">
+    ///     Verify, Encrypt, Reprotect or CleanupUnreadable (Decrypt is refused). The API confirms Encrypt and
+    ///     CleanupUnreadable (<c>confirm=true</c>, role <c>SecretManagement</c>) before enqueuing.
+    /// </param>
+    /// <param name="triggeredBy">User name of whoever started the run (run history), or <c>null</c></param>
+    /// <param name="performContext">Supplied by Hangfire (pass <c>null</c>); its job id is the run id</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns>The tenant's report</returns>
     [DisplayName("Secret sweep {1} of tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 60)]
-    Task<SecretSweepReport> Run(string tenantId, SecretSweepMode mode, IBotCancellationToken? cancellationToken);
+    Task<SecretSweepReport> Run(string tenantId, SecretSweepMode mode, string? triggeredBy,
+        PerformContext? performContext, IBotCancellationToken? cancellationToken);
 
     /// <summary>
     ///     Sweeps every tenant of the instance: the system tenant and every registered tenant, child tenants
@@ -36,13 +43,15 @@ public interface ISecretSweepJob
     ///     instance endpoints bind a job to the tenant in this argument (AB#5070), so only callers of the
     ///     system tenant can read or delete the run.
     /// </param>
-    /// <param name="mode">Verify, Encrypt, Reprotect or ClearUnknownKid (Decrypt is refused)</param>
+    /// <param name="mode">Verify, Encrypt, Reprotect or CleanupUnreadable (Decrypt is refused)</param>
     /// <param name="trigger">Recorded in the reports (recurring job or on demand)</param>
+    /// <param name="triggeredBy">User name of whoever started the run (run history), or <c>null</c></param>
+    /// <param name="performContext">Supplied by Hangfire (pass <c>null</c>); its job id is the run id</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns>A summary with one report per tenant</returns>
     [DisplayName("Secret sweep {1} of all tenants")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 60 * 6)]
     Task<SecretSweepRunSummary> RunAllTenants(string tenantId, SecretSweepMode mode, SecretSweepTrigger trigger,
-        IBotCancellationToken? cancellationToken);
+        string? triggeredBy, PerformContext? performContext, IBotCancellationToken? cancellationToken);
 }

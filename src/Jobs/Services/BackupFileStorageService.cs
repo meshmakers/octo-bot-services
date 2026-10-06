@@ -216,18 +216,33 @@ public class BackupFileStorageService : IBackupFileStorageService
     }
 
     /// <inheritdoc />
-    public Task<int> CleanupStaleSecretBackupsAsync(TimeSpan retention)
+    public string GetSecretBackupFilePath(string tenantId, string fileName)
     {
-        var cutoff = DateTime.UtcNow - retention;
-        var deletedCount = CleanupDirectory(SecretBackupStoragePath, cutoff);
-
-        if (deletedCount > 0)
+        // A plain file name of a pre-sweep dump only - never a path that could leave the tenant directory.
+        if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName ||
+            fileName.Contains("..", StringComparison.Ordinal) ||
+            !fileName.EndsWith(SecretBackupFileSuffix, StringComparison.Ordinal))
         {
-            _logger.LogInformation("Cleaned up {Count} pre-sweep secret backups older than {Retention}",
-                deletedCount, retention);
+            throw new ArgumentException($"'{fileName}' is not a pre-sweep secret backup file name.", nameof(fileName));
         }
 
-        return Task.FromResult(deletedCount);
+        return Path.Combine(ResolveTenantDirectory(SecretBackupStoragePath, tenantId), fileName);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<string>> CleanupStaleSecretBackupsAsync(TimeSpan retention)
+    {
+        var cutoff = DateTime.UtcNow - retention;
+        var deleted = new List<string>();
+        CleanupDirectory(SecretBackupStoragePath, cutoff, deleted);
+
+        if (deleted.Count > 0)
+        {
+            _logger.LogInformation("Cleaned up {Count} pre-sweep secret backups older than {Retention}",
+                deleted.Count, retention);
+        }
+
+        return Task.FromResult<IReadOnlyList<string>>(deleted);
     }
 
     private void CreateOwnerOnlyDirectory(string path)
@@ -255,7 +270,7 @@ public class BackupFileStorageService : IBackupFileStorageService
         return candidateFull.StartsWith(rootFull, StringComparison.Ordinal);
     }
 
-    private int CleanupDirectory(string directoryPath, DateTime cutoff)
+    private int CleanupDirectory(string directoryPath, DateTime cutoff, List<string>? deletedFiles = null)
     {
         var deletedCount = 0;
 
@@ -273,6 +288,7 @@ public class BackupFileStorageService : IBackupFileStorageService
                 {
                     File.Delete(file);
                     deletedCount++;
+                    deletedFiles?.Add(file);
                     _logger.LogDebug("Deleted stale file '{FilePath}' (last modified: {LastWrite})", file,
                         lastWriteTime);
                 }

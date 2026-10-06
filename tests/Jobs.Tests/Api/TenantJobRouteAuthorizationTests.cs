@@ -38,7 +38,7 @@ internal class TenantJobRouteAuthorizationTests
     private const string ExportQuery = "?archiveRtId=6512a1b2c3d4e5f601020304";
     private const string RestoreQuery = "?tusFileId=upload-1&databaseName=octo-child";
     private const string ImportQuery = "?tusFileId=upload-1&archiveRtId=6512a1b2c3d4e5f601020304";
-    private const string SecretSweepQuery = "?mode=Encrypt";
+    private const string SecretSweepQuery = "?mode=Encrypt&confirm=true";
 
     /// <summary>The equality case: a user token of the addressed tenant. Unchanged by AB#5060.</summary>
     [Test]

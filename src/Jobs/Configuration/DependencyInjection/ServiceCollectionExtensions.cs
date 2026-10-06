@@ -68,13 +68,18 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<CleanupStaleFilesJob>>(),
                 sp.GetRequiredService<IBackupFileStorageService>(),
                 fileRetentionHours,
-                secretBackupRetentionDays));
+                secretBackupRetentionDays,
+                sp.GetService<ISecretSweepRunStore>()));
 
         // Secret sweep (AB#5539). ISecretMaintenanceService and ISecretAttributeProtector come from
         // AddRuntimeEngine().
         services.AddOptions<SecretSweepJobOptions>();
         services.AddSingleton<ISecretSweepReportStore>(_ => new HangfireSecretSweepReportStore());
         services.AddSingleton<ISecretSweepTenantLock>(_ => new HangfireSecretSweepTenantLock());
+        // AB#5544: run history, dump management and the environment status of the secrets admin API.
+        services.AddSingleton<ISecretSweepRunStore>(_ => new HangfireSecretSweepRunStore());
+        services.AddTransient<ISecretSweepRunService, SecretSweepRunService>();
+        services.AddTransient<ISecretEnvironmentStatusService, SecretEnvironmentStatusService>();
         services.AddTransient<ISecretSweepCoordinator, SecretSweepCoordinator>();
         services.AddTransient<ISecretSweepJob, SecretSweepJob>();
 

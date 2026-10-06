@@ -210,44 +210,54 @@ public class JobsController : JobsControllerBase
     }
 
     /// <summary>
-    ///     Starts the secret sweep of the tenant taken from the route (AB#5539, concept AB#5528 §5.2 phase 4).
+    ///     Starts the secret sweep of the tenant taken from the route (AB#5539, AB#5544, contract §9).
     ///     <c>Verify</c> only counts; <c>Encrypt</c> turns clear text and <c>enc:v1</c> into <c>enc:v2</c>
     ///     with the active key; <c>Reprotect</c> re-encrypts everything not under the active key (key
-    ///     rotation); <c>ClearUnknownKid</c> sets values of unknown key ids to "not set" and lists them for
-    ///     re-entry. Every writing mode first takes a pre-sweep dump of the tenant and is skipped when that
-    ///     fails. The job's status is read through <c>system/v1/jobs?id=…</c>; the report through
-    ///     <see cref="GetSecretSweepReport" />.
+    ///     rotation; CLI / ops); <c>CleanupUnreadable</c> deletes values whose key id is not in the key ring
+    ///     (irreversible except via the pre-sweep dump). Values with an unknown key id are kept by every other
+    ///     mode and reported for re-entry. Every writing mode first takes a pre-sweep dump of the tenant and is
+    ///     skipped when that fails. The job's status is read through <c>system/v1/jobs?id=…</c>, the report
+    ///     through <see cref="GetSecretSweepReport" />, the run through <c>{tenantId}/v1/secrets/sweep-runs</c>.
+    ///     Requires the tenant role <c>SecretManagement</c> (<c>403</c> otherwise).
     /// </summary>
     /// <param name="tenantId">The tenant id, from the route.</param>
     /// <param name="mode">
-    ///     <c>Verify</c> (default), <c>Encrypt</c>, <c>Reprotect</c> or <c>ClearUnknownKid</c> (name or number).
+    ///     <c>Verify</c> (default), <c>Encrypt</c>, <c>Reprotect</c> or <c>CleanupUnreadable</c> (name or number).
     ///     <c>Decrypt</c> is refused with <c>400</c>.
     /// </param>
-    // POST: {tenantId}/v1/jobs/secret-sweep?mode=Encrypt
+    /// <param name="confirm">
+    ///     Must be <c>true</c> for <c>Encrypt</c> and <c>CleanupUnreadable</c>; otherwise <c>400</c> with the
+    ///     error code <c>ConfirmationRequired</c>.
+    /// </param>
+    // POST: {tenantId}/v1/jobs/secret-sweep?mode=Encrypt&confirm=true
     [HttpPost]
     [Route("secret-sweep")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [Authorize(BotServiceConstants.SecretManagementPolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(CodedBadRequestErrorDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public IActionResult SecretSweep([FromRoute] [Required] string tenantId,
-        [FromQuery] SecretSweepMode mode = SecretSweepMode.Verify)
+        [FromQuery] SecretSweepMode mode = SecretSweepMode.Verify, [FromQuery] bool confirm = false)
     {
-        return EnqueueSecretSweep(tenantId, mode);
+        return EnqueueSecretSweep(tenantId, mode, confirm);
     }
 
     /// <summary>
     ///     Returns the last secret sweep report of the tenant taken from the route (AB#5539): counts per
-    ///     stored form and key id, per CK type and slot, the secrets to re-enter and the failures. Never
-    ///     contains a value. Written by every sweep of the tenant - on demand, recurring and after a restore.
+    ///     stored form and key id, per CK type and slot, the unreadable values (unknown key id, re-entry list),
+    ///     the secrets to re-enter and the failures. Never contains a value. Written by every sweep of the
+    ///     tenant - on demand, recurring and after a restore. Requires the tenant role
+    ///     <c>AdminPanelManagement</c> (<c>403</c> otherwise).
     /// </summary>
     /// <param name="tenantId">The tenant id, from the route.</param>
     /// <param name="reportStore">Report store.</param>
     // GET: {tenantId}/v1/jobs/secret-sweep/report
     [HttpGet]
     [Route("secret-sweep/report")]
-    [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [Authorize(BotServiceConstants.SecretAdministrationReadPolicy)]
     [ProducesResponseType(typeof(SecretSweepReport), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public Task<IActionResult> GetSecretSweepReport([FromRoute] [Required] string tenantId,
         [FromServices] ISecretSweepReportStore reportStore)
     {

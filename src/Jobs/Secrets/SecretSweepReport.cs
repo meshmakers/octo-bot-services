@@ -64,8 +64,8 @@ public class SecretSweepReport
 
     /// <summary>
     ///     The requested mode. Writing modes are followed by a <see cref="SecretSweepMode.Verify" /> step that
-    ///     describes the state after the sweep; a restore runs <c>Verify</c>, <c>ClearUnknownKid</c> (only when
-    ///     unknown key ids were found and the pre-clear dump succeeded), <c>Encrypt</c>, <c>Verify</c>.
+    ///     describes the state after the sweep; a restore runs <c>Verify</c>, <c>Encrypt</c>, <c>Verify</c> and
+    ///     never deletes anything (decisions 2026-10-06, item 2).
     /// </summary>
     public SecretSweepMode Mode { get; set; }
 
@@ -129,10 +129,24 @@ public class SecretSweepReport
     public List<SecretSweepStepReport> Steps { get; set; } = [];
 
     /// <summary>
-    ///     The secrets that were lost (unknown key id, typically after a cross-environment or child-tenant
-    ///     restore) and must be re-entered (decision 5).
+    ///     The secrets that must be re-entered: values stored with a key id unknown to this environment
+    ///     (typically after a cross-environment or child-tenant restore; kept encrypted, see
+    ///     <see cref="Unreadable" />) and, after <see cref="SecretSweepMode.CleanupUnreadable" />, the values it
+    ///     deleted.
     /// </summary>
     public List<SecretValueReference> SecretsToReEnter { get; set; } = [];
+
+    /// <summary>
+    ///     Legacy clear-text placeholders converted once to "not set" over all steps (migration only).
+    /// </summary>
+    public long PlaceholdersNormalized { get; set; }
+
+    /// <summary>
+    ///     Stored values whose key id is not in this environment's key ring, in the final state (the last
+    ///     step): kept encrypted, read as "key missing", readable again once the key is added to the ring -
+    ///     the re-entry list (decisions 2026-10-06, item 2).
+    /// </summary>
+    public List<SecretUnreadableValueReport> Unreadable { get; set; } = [];
 }
 
 /// <summary>
@@ -201,9 +215,16 @@ public class SecretSweepStepReport
     public List<SecretSlotCountsReport> Slots { get; set; } = [];
 
     /// <summary>
-    ///     Values set to "not set" because their key id is unknown.
+    ///     Values deleted because their key id is unknown - only filled by
+    ///     <see cref="SecretSweepMode.CleanupUnreadable" />.
     /// </summary>
     public List<SecretValueReference> Cleared { get; set; } = [];
+
+    /// <summary>
+    ///     Values kept although their key id is unknown (every mode except
+    ///     <see cref="SecretSweepMode.CleanupUnreadable" />).
+    /// </summary>
+    public List<SecretUnreadableValueReport> Unreadable { get; set; } = [];
 
     /// <summary>
     ///     Values that could not be processed.
@@ -352,6 +373,56 @@ public class SecretValueReference
             KeyId = cleared.KeyId
         };
     }
+
+    internal static SecretValueReference From(SecretUnreadableValueReport unreadable)
+    {
+        return new SecretValueReference
+        {
+            CkTypeId = unreadable.CkTypeId,
+            RtId = unreadable.RtId,
+            AttributePath = unreadable.AttributePath,
+            PreviousForm = SecretValueForm.UnknownKeyId,
+            KeyId = unreadable.KeyId
+        };
+    }
+}
+
+/// <summary>
+///     A stored Secret value that cannot be read because its key id is not in the key ring (never the value
+///     itself) - an entry of the re-entry list.
+/// </summary>
+public class SecretUnreadableValueReport
+{
+    /// <summary>
+    ///     CK type of the entity.
+    /// </summary>
+    public string CkTypeId { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Runtime id of the entity.
+    /// </summary>
+    public string RtId { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Attribute name or record path (record elements by record key).
+    /// </summary>
+    public string AttributePath { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Key id of the envelope.
+    /// </summary>
+    public string? KeyId { get; set; }
+
+    internal static SecretUnreadableValueReport From(SecretSweepUnreadableValue unreadable)
+    {
+        return new SecretUnreadableValueReport
+        {
+            CkTypeId = unreadable.CkTypeId,
+            RtId = unreadable.RtId.ToString(),
+            AttributePath = unreadable.AttributePath,
+            KeyId = unreadable.KeyId
+        };
+    }
 }
 
 /// <summary>
@@ -440,6 +511,7 @@ internal static class SecretSweepReportMapper
                 Counts = SecretFormCountsReport.From(s.Counts)
             }).ToList(),
             Cleared = result.Cleared.Select(SecretValueReference.From).ToList(),
+            Unreadable = result.Unreadable.Select(SecretUnreadableValueReport.From).ToList(),
             Failures = result.Failures.Select(f => new SecretSweepFailureReport
             {
                 CkTypeId = f.CkTypeId,

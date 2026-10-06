@@ -26,7 +26,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), Arg.Any<string>()).Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "abc123", null, false, null);
+        await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
 
         await _systemContext.DidNotReceive().RestoreTenantAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
@@ -41,7 +41,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "abc123", null, false, null);
+        await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
 
         await _backupFileStorage.Received(1).DeleteFileAsync("/data/tus-uploads/abc123");
     }
@@ -53,7 +53,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns("/nonexistent/abc123");
         var job = CreateJob();
 
-        await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null))
+        await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null, null))
             .Throws<JobFailedException>();
     }
 
@@ -66,7 +66,7 @@ public class RestoreRepositoryJobTests
 
         try
         {
-            await job.Run("tenant-1", "db-1", "abc123", null, false, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
         }
         catch (JobFailedException)
         {
@@ -95,7 +95,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", null, false, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
 
             await _backupFileStorage.Received(1).DeleteFileAsync(tempFile);
         }
@@ -124,7 +124,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", "old-db", false, null);
+            await job.Run("tenant-1", "db-1", "abc123", "old-db", false, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync(
                 "tenant-1", "db-1", tempFile, "old-db",
@@ -155,7 +155,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null))
+            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null, null))
                 .Throws<JobFailedException>();
         }
         finally
@@ -171,7 +171,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), Arg.Any<string>()).Returns("/data/tus-uploads/myFileId");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "myFileId", null, false, null);
+        await job.Run("tenant-1", "db-1", "myFileId", null, false, null, null);
 
         _backupFileStorage.Received(1).GetTusUploadFilePath("tenant-1", "myFileId");
     }
@@ -201,11 +201,11 @@ public class RestoreRepositoryJobTests
                 Outcome = SecretSweepOutcome.Succeeded,
                 SecretsToReEnter = [new SecretValueReference { CkTypeId = "T/Type", RtId = "r1", AttributePath = "Password" }]
             };
-            coordinator.RunAfterRestoreAsync("tenant-1", Arg.Any<CancellationToken>()).Returns(sweepReport);
+            coordinator.RunAfterRestoreAsync("tenant-1", Arg.Any<SecretSweepRunInfo?>(), Arg.Any<CancellationToken>()).Returns(sweepReport);
 
             var job = new RestoreRepositoryJob(_logger, _systemContext, _backupFileStorage, coordinator);
 
-            var result = await job.Run("tenant-1", "db-1", "abc123", "other-env-db", false, null);
+            var result = await job.Run("tenant-1", "db-1", "abc123", "other-env-db", false, null, null);
 
             await Assert.That(result).IsNotNull();
             await Assert.That(result!.TenantId).IsEqualTo("tenant-1");
@@ -215,7 +215,7 @@ public class RestoreRepositoryJobTests
             {
                 _systemContext.RestoreTenantAsync("tenant-1", "db-1", tempFile, "other-env-db", true, true,
                     TimeSpan.FromHours(1), Arg.Any<CancellationToken>());
-                coordinator.RunAfterRestoreAsync("tenant-1", Arg.Any<CancellationToken>());
+                coordinator.RunAfterRestoreAsync("tenant-1", Arg.Any<SecretSweepRunInfo?>(), Arg.Any<CancellationToken>());
             });
         }
         finally
@@ -241,10 +241,10 @@ public class RestoreRepositoryJobTests
             var coordinator = Substitute.For<ISecretSweepCoordinator>();
             var job = new RestoreRepositoryJob(_logger, _systemContext, _backupFileStorage, coordinator);
 
-            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null))
+            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null, null))
                 .Throws<JobFailedException>();
 
-            await coordinator.DidNotReceiveWithAnyArgs().RunAfterRestoreAsync(default!, default);
+            await coordinator.DidNotReceiveWithAnyArgs().RunAfterRestoreAsync(default!, default, default);
         }
         finally
         {

@@ -239,24 +239,8 @@ try
         }).AddJwtBearer();
 
 
-    builder.Services.AddAuthorization(options =>
-    {
-        options.AddPolicy(BotServiceConstants.AuthenticatedUserPolicy,
-            policyBuilder => policyBuilder.RequireAuthenticatedUser());
-
-        options.AddPolicy(BotServiceConstants.JobApiReadOnlyPolicy, authorizationPolicyBuilder =>
-        {
-            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope,
-                CommonConstants.OctoApiFullAccess,
-                CommonConstants.OctoApiReadOnly);
-        });
-
-        options.AddPolicy(BotServiceConstants.JobApiReadWritePolicy, authorizationPolicyBuilder =>
-        {
-            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope,
-                CommonConstants.OctoApiFullAccess);
-        });
-    });
+    // AB#5544: the policies live in BotAuthorizationPolicies so the API tests use the very same ones.
+    builder.Services.AddAuthorization(options => options.AddBotPolicies());
 
     builder.Services.AddMvcCore().AddAuthorization();
     builder.Services.AddMvc();
@@ -278,7 +262,9 @@ try
         options.PolicyScopeMapping = new Dictionary<string, IEnumerable<string>>
         {
             { BotServiceConstants.JobApiReadOnlyPolicy, [CommonConstants.OctoApiReadOnly] },
-            { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.OctoApiFullAccess] }
+            { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.OctoApiFullAccess] },
+            { BotServiceConstants.SecretManagementPolicy, [CommonConstants.OctoApiFullAccess] },
+            { BotServiceConstants.SecretAdministrationReadPolicy, [CommonConstants.OctoApiReadOnly] }
         };
         
         options.XmlDocDataTransferObjectAssemblies = [typeof(JobDto).Assembly];
@@ -551,13 +537,13 @@ try
     else
     {
         RecurringJob.AddOrUpdate<ISecretSweepJob>(BotServiceConstants.SecretSweepVerifyRecurringJobId,
-            job => job.RunAllTenants(systemTenantId, SecretSweepMode.Verify, SecretSweepTrigger.Recurring,
-                BotCancellationToken.Null),
+            job => job.RunAllTenants(systemTenantId, SecretSweepMode.Verify, SecretSweepTrigger.Recurring, null,
+                null, BotCancellationToken.Null),
             secretSweepOptions.VerifyCron);
     }
 
     RecurringJob.AddOrUpdate<ISecretSweepJob>(BotServiceConstants.SecretSweepEncryptRecurringJobId,
-        job => job.RunAllTenants(systemTenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+        job => job.RunAllTenants(systemTenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, null, null,
             BotCancellationToken.Null),
         Cron.Never());
 
