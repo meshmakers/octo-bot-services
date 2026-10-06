@@ -44,10 +44,26 @@ public class SecretSweepCoordinatorTests : IDisposable
         }
     }
 
-    private SecretSweepCoordinator CreateCoordinator()
+    private SecretSweepCoordinator CreateCoordinator(ISecretSweepTenantLock? tenantLock = null)
     {
         return new SecretSweepCoordinator(Substitute.For<ILogger<SecretSweepCoordinator>>(), _systemContext,
-            _maintenance, _protector, _storage, _reportStore, Options.Create(_options), _time);
+            _maintenance, _protector, _storage, _reportStore, Options.Create(_options), _time, tenantLock);
+    }
+
+    /// <summary>
+    ///     Verify answers <paramref name="first" /> on its first call and <paramref name="then" /> afterwards.
+    /// </summary>
+    private void SetupVerifySequence(string tenantId, Action<SecretSweepResult> first, Action<SecretSweepResult> then)
+    {
+        var calls = 0;
+        _maintenance.SweepTenantAsync(tenantId, SecretSweepMode.Verify, Arg.Any<SecretSweepOptions>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                var result = new SecretSweepResult(tenantId, SecretSweepMode.Verify) { CompletedAt = DateTime.UtcNow };
+                (calls++ == 0 ? first : then)(result);
+                return Task.FromResult(result);
+            });
     }
 
     private void SetupSweep(string tenantId, SecretSweepMode mode, Action<SecretSweepResult>? configure = null)
@@ -375,23 +391,126 @@ public class SecretSweepCoordinatorTests : IDisposable
             r.ValuesRewritten = 1;
         });
         SetupSweep("t-restore", SecretSweepMode.Encrypt, r => AddPlaintext(r, 1));
-        SetupSweep("t-restore", SecretSweepMode.Verify, r => r.Totals.Add(SecretValueForm.EncV2, "k1"));
+        SetupVerifySequence("t-restore",
+            r => r.Totals.Add(SecretValueForm.UnknownKeyId, "k7"),
+            r => r.Totals.Add(SecretValueForm.EncV2, "k1"));
+        SetupBackupSucceeds();
 
         var report = await CreateCoordinator().RunAfterRestoreAsync("t-restore", CancellationToken.None);
 
         await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Succeeded);
         await Assert.That(report.Trigger).IsEqualTo(SecretSweepTrigger.Restore);
-        await Assert.That(report.Steps.Select(s => s.Mode).ToArray()).IsEquivalentTo(new[]
-            { SecretSweepMode.ClearUnknownKid, SecretSweepMode.Encrypt, SecretSweepMode.Verify });
+        await Assert.That(report.Steps.Select(s => s.Mode).ToList()).IsEquivalentTo(new List<SecretSweepMode>
+        {
+            SecretSweepMode.Verify, SecretSweepMode.ClearUnknownKid, SecretSweepMode.Encrypt,
+            SecretSweepMode.Verify
+        });
         await Assert.That(report.SecretsToReEnter.Count).IsEqualTo(1);
         var secret = report.SecretsToReEnter[0];
         await Assert.That(secret.CkTypeId).IsEqualTo("System.Communication/SftpConfiguration");
         await Assert.That(secret.RtId).IsEqualTo("6512a1b2c3d4e5f601020304");
         await Assert.That(secret.AttributePath).IsEqualTo("Password");
         await Assert.That(secret.KeyId).IsEqualTo("k7");
-        // The uploaded backup is the pre-sweep state; no extra dump.
-        await _systemContext.DidNotReceiveWithAnyArgs().BackupTenantAsync(default!, default!);
+        // Clearing is irreversible and the uploaded file is deleted after the restore: a pre-clear dump
+        // keeps the foreign ciphertext for the backup retention.
+        await _systemContext.Received(1).BackupTenantAsync("t-restore", Arg.Any<string>(), Arg.Any<bool>(),
+            Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>());
+        await Assert.That(report.BackupFileName).IsEqualTo("t-restore.presweep.tar.gz");
         await _reportStore.Received(1).SaveAsync(report);
+    }
+
+    [Test]
+    public async Task AfterRestore_NoUnknownKid_DoesNotClear_AndTakesNoBackup()
+    {
+        SetupSweep("t-restore-same", SecretSweepMode.Encrypt, r => AddPlaintext(r, 1));
+        SetupVerifySequence("t-restore-same",
+            r => r.Totals.Add(SecretValueForm.EncV2, "k1"),
+            r => r.Totals.Add(SecretValueForm.EncV2, "k1"));
+
+        var report = await CreateCoordinator().RunAfterRestoreAsync("t-restore-same", CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Succeeded);
+        await Assert.That(report.Steps.Select(s => s.Mode).ToList()).IsEquivalentTo(new List<SecretSweepMode>
+            { SecretSweepMode.Verify, SecretSweepMode.Encrypt, SecretSweepMode.Verify });
+        await _maintenance.DidNotReceive().SweepTenantAsync("t-restore-same", SecretSweepMode.ClearUnknownKid,
+            Arg.Any<SecretSweepOptions>(), Arg.Any<CancellationToken>());
+        await _systemContext.DidNotReceiveWithAnyArgs().BackupTenantAsync(default!, default!);
+    }
+
+    [Test]
+    public async Task AfterRestore_UnknownKid_PreClearBackupFails_WithholdsTheClear_AndSaysSo()
+    {
+        SetupSweep("t-restore-nobak", SecretSweepMode.Encrypt);
+        SetupVerifySequence("t-restore-nobak",
+            r => r.Totals.Add(SecretValueForm.UnknownKeyId, "k7"),
+            r => r.Totals.Add(SecretValueForm.UnknownKeyId, "k7"));
+        _systemContext.BackupTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(),
+                Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>())
+            .Returns(Task.FromResult(new CommandResult { Success = false, ExitCode = 1 }));
+
+        var report = await CreateCoordinator().RunAfterRestoreAsync("t-restore-nobak", CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.CompletedWithFailures);
+        await Assert.That(report.Reason).Contains("k7");
+        await Assert.That(report.Reason).Contains("ClearUnknownKid");
+        await Assert.That(report.SecretsToReEnter.Count).IsEqualTo(0);
+        await _maintenance.DidNotReceive().SweepTenantAsync("t-restore-nobak", SecretSweepMode.ClearUnknownKid,
+            Arg.Any<SecretSweepOptions>(), Arg.Any<CancellationToken>());
+        // Plaintext from an older dump is still encrypted.
+        await _maintenance.Received(1).SweepTenantAsync("t-restore-nobak", SecretSweepMode.Encrypt,
+            Arg.Any<SecretSweepOptions>(), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task Sweep_TenantBusy_IsSkipped_AndTouchesNothing()
+    {
+        var tenantLock = Substitute.For<ISecretSweepTenantLock>();
+        tenantLock.TryAcquire("t-busy", Arg.Any<TimeSpan>()).Returns((IDisposable?)null);
+
+        var report = await CreateCoordinator(tenantLock)
+            .SweepTenantAsync("t-busy", SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Skipped);
+        await Assert.That(report.Reason).Contains("Another secret sweep");
+        await _maintenance.DidNotReceiveWithAnyArgs()
+            .SweepTenantAsync(default!, default, default(SecretSweepOptions)!, default);
+        await _systemContext.DidNotReceiveWithAnyArgs().BackupTenantAsync(default!, default!);
+    }
+
+    [Test]
+    public async Task Sweep_HoldsTheTenantLockDuringTheSweep_AndReleasesIt()
+    {
+        var handle = Substitute.For<IDisposable>();
+        var tenantLock = Substitute.For<ISecretSweepTenantLock>();
+        tenantLock.TryAcquire("t-lock", Arg.Any<TimeSpan>()).Returns(handle);
+        _maintenance.SweepTenantAsync("t-lock", SecretSweepMode.Verify, Arg.Any<SecretSweepOptions>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                handle.DidNotReceive().Dispose();
+                return Task.FromResult(new SecretSweepResult("t-lock", SecretSweepMode.Verify));
+            });
+
+        await CreateCoordinator(tenantLock)
+            .SweepTenantAsync("t-lock", SecretSweepMode.Verify, SecretSweepTrigger.Manual, CancellationToken.None);
+
+        handle.Received(1).Dispose();
+        tenantLock.Received(1).TryAcquire("t-lock", SecretSweepCoordinator.SweepLockTimeout);
+    }
+
+    [Test]
+    public async Task AfterRestore_WaitsLongerForTheTenantLock_AndIsSkippedWhenItStaysBusy()
+    {
+        var tenantLock = Substitute.For<ISecretSweepTenantLock>();
+        tenantLock.TryAcquire("t-restore-busy", Arg.Any<TimeSpan>()).Returns((IDisposable?)null);
+
+        var report = await CreateCoordinator(tenantLock)
+            .RunAfterRestoreAsync("t-restore-busy", CancellationToken.None);
+
+        await Assert.That(report.Outcome).IsEqualTo(SecretSweepOutcome.Skipped);
+        tenantLock.Received(1).TryAcquire("t-restore-busy", SecretSweepCoordinator.RestoreLockTimeout);
+        await _maintenance.DidNotReceiveWithAnyArgs()
+            .SweepTenantAsync(default!, default, default(SecretSweepOptions)!, default);
     }
 
     [Test]
@@ -420,7 +539,7 @@ public class SecretSweepCoordinatorTests : IDisposable
     [Test]
     public async Task AfterRestore_SweepThrows_IsReportedNotThrown()
     {
-        _maintenance.SweepTenantAsync("t-restore-err", SecretSweepMode.ClearUnknownKid,
+        _maintenance.SweepTenantAsync("t-restore-err", SecretSweepMode.Verify,
                 Arg.Any<SecretSweepOptions>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("boom"));
 

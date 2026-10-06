@@ -15,9 +15,16 @@ public class SecretSweepCoordinator(
     IBackupFileStorageService backupFileStorage,
     ISecretSweepReportStore reportStore,
     IOptions<SecretSweepJobOptions> options,
-    TimeProvider? timeProvider = null) : ISecretSweepCoordinator
+    TimeProvider? timeProvider = null,
+    ISecretSweepTenantLock? tenantLock = null) : ISecretSweepCoordinator
 {
     private static readonly TimeSpan BackupTimeout = TimeSpan.FromHours(1);
+
+    // A sweep that finds its tenant busy is skipped (visible in the report and the job state); the
+    // post-restore sweep waits for a running sweep (e.g. the recurring Verify) instead.
+    internal static readonly TimeSpan SweepLockTimeout = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan RestoreLockTimeout = TimeSpan.FromMinutes(30);
+
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
     /// <inheritdoc />
@@ -59,6 +66,13 @@ public class SecretSweepCoordinator(
             return await FinishAsync(report, SecretSweepOutcome.Skipped,
                 "Secret encryption keys are not configured on the bot (SecretEncryption:Keys / ActiveKeyId); " +
                 "only Verify is possible.");
+        }
+
+        using var held = tenantLock?.TryAcquire(tenantId, SweepLockTimeout);
+        if (tenantLock != null && held == null)
+        {
+            return await FinishAsync(report, SecretSweepOutcome.Skipped,
+                "Another secret sweep of this tenant is running; this run was not started.");
         }
 
         try
@@ -123,14 +137,50 @@ public class SecretSweepCoordinator(
                 "Run the Encrypt sweep once keys are configured.");
         }
 
+        using var held = tenantLock?.TryAcquire(tenantId, RestoreLockTimeout);
+        if (tenantLock != null && held == null)
+        {
+            return await FinishAsync(report, SecretSweepOutcome.Skipped,
+                "Another secret sweep of this tenant kept running; run the Encrypt sweep (and ClearUnknownKid " +
+                "if needed) on the restored tenant once it is done.");
+        }
+
+        var clearWithheld = false;
         try
         {
             // Decision 5: values of another key ring (cross-environment / child-tenant restore) cannot be
-            // decrypted here - they become "not set" and are reported for re-entry. On a same-environment
-            // restore every key id is known and this step changes nothing. No pre-sweep dump: the uploaded
-            // backup is the state before this sweep.
-            var clear = await RunStepAsync(report, SecretSweepMode.ClearUnknownKid, cancellationToken);
-            report.SecretsToReEnter.AddRange(clear.Cleared);
+            // decrypted here - they become "not set" and are reported for re-entry. Clearing is
+            // irreversible and a bot whose key ring is misconfigured would see even this environment's
+            // own key ids as unknown, so: count first, and only when unknown key ids exist take a pre-clear
+            // dump (secret backup, kept 7 days) before clearing. The uploaded file is deleted after the
+            // restore, so without that dump the foreign ciphertext would be gone for good.
+            var found = await RunStepAsync(report, SecretSweepMode.Verify, cancellationToken);
+            if (found.Totals.UnknownKeyId > 0)
+            {
+                var backupError = await TakeBackupAsync(report, cancellationToken);
+                if (backupError != null && options.Value.RequirePreSweepBackup)
+                {
+                    clearWithheld = true;
+                    report.Reason =
+                        $"{found.Totals.UnknownKeyId} Secret value(s) with key id(s) unknown to this environment " +
+                        $"({string.Join(", ", found.Totals.UnknownKeyIdByKeyId.Keys)}) were left untouched because " +
+                        $"the pre-clear backup could not be taken ({backupError}). Check the bot's key ring, then " +
+                        "run the ClearUnknownKid sweep on this tenant.";
+                    logger.LogWarning(
+                        "Post-restore secret sweep of tenant '{TenantId}': ClearUnknownKid withheld, pre-clear " +
+                        "backup failed: {Reason}", tenantId, backupError);
+                }
+                else
+                {
+                    if (backupError != null)
+                    {
+                        report.Reason = $"Pre-clear backup not taken ({backupError}); not required by configuration.";
+                    }
+
+                    var clear = await RunStepAsync(report, SecretSweepMode.ClearUnknownKid, cancellationToken);
+                    report.SecretsToReEnter.AddRange(clear.Cleared);
+                }
+            }
 
             // Older (pre phase 4) dumps carry plaintext / enc:v1.
             await RunStepAsync(report, SecretSweepMode.Encrypt, cancellationToken);
@@ -147,7 +197,8 @@ public class SecretSweepCoordinator(
             return await FinishAsync(report, SecretSweepOutcome.Failed, Describe(e));
         }
 
-        return await FinishAsync(report, OutcomeOfSteps(report), null);
+        return await FinishAsync(report,
+            clearWithheld ? SecretSweepOutcome.CompletedWithFailures : OutcomeOfSteps(report), report.Reason);
     }
 
     private SecretSweepReport NewReport(string tenantId, SecretSweepMode mode, SecretSweepTrigger trigger)

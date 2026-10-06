@@ -74,6 +74,7 @@ public static class ServiceCollectionExtensions
         // AddRuntimeEngine().
         services.AddOptions<SecretSweepJobOptions>();
         services.AddSingleton<ISecretSweepReportStore>(_ => new HangfireSecretSweepReportStore());
+        services.AddSingleton<ISecretSweepTenantLock>(_ => new HangfireSecretSweepTenantLock());
         services.AddTransient<ISecretSweepCoordinator, SecretSweepCoordinator>();
         services.AddTransient<ISecretSweepJob, SecretSweepJob>();
 

@@ -238,8 +238,13 @@ public class BackupFileStorageService : IBackupFileStorageService
             return;
         }
 
-        Directory.CreateDirectory(path,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        Directory.CreateDirectory(path, ownerOnly);
+        // CreateDirectory leaves the mode of an EXISTING directory alone (pre-created volume, older bot).
+        if (File.GetUnixFileMode(path) != ownerOnly)
+        {
+            File.SetUnixFileMode(path, ownerOnly);
+        }
     }
 
     private static bool IsSameOrBelow(string candidate, string root)

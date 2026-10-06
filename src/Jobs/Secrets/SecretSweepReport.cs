@@ -64,8 +64,8 @@ public class SecretSweepReport
 
     /// <summary>
     ///     The requested mode. Writing modes are followed by a <see cref="SecretSweepMode.Verify" /> step that
-    ///     describes the state after the sweep; a restore runs <c>ClearUnknownKid</c>, <c>Encrypt</c>,
-    ///     <c>Verify</c>.
+    ///     describes the state after the sweep; a restore runs <c>Verify</c>, <c>ClearUnknownKid</c> (only when
+    ///     unknown key ids were found and the pre-clear dump succeeded), <c>Encrypt</c>, <c>Verify</c>.
     /// </summary>
     public SecretSweepMode Mode { get; set; }
 

@@ -332,6 +332,38 @@ public class BackupFileStorageServiceTests
     }
 
     [Test]
+    public async Task CreateSecretBackupFilePath_TightensAPreExistingWideDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        try
+        {
+            var secretRoot = Path.Combine(root, "secret-backups");
+            const UnixFileMode wide = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                                      UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                                      UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+            Directory.CreateDirectory(Path.Combine(secretRoot, "tenant-a"), wide);
+            File.SetUnixFileMode(secretRoot, wide);
+            var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+                _logger, secretRoot);
+
+            service.CreateSecretBackupFilePath("tenant-a");
+
+            const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+            await Assert.That(File.GetUnixFileMode(secretRoot)).IsEqualTo(ownerOnly);
+            await Assert.That(File.GetUnixFileMode(Path.Combine(secretRoot, "tenant-a"))).IsEqualTo(ownerOnly);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
     public async Task CreateSecretBackupFilePath_RejectsATenantIdThatEscapesTheRoot()
     {
         var service = CreateService();

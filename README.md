@@ -122,8 +122,14 @@ a fresh mongodump of the tenant into `Bot:SecretSweep:BackupStoragePath/<tenant>
 (owner-only, never a job download, deleted after `BackupRetentionDays` = 7 by the hourly cleanup); if
 that dump fails the tenant is **skipped** unless `RequirePreSweepBackup=false`. A writing run is
 followed by a `Verify`, so the report and the engine gauge `octo.secrets.values` describe the state
-after the sweep. After every repository restore the job runs `ClearUnknownKid` → `Encrypt` → `Verify`
-on the restored tenant and returns the secrets to re-enter in the restore job result (decision 5).
+after the sweep. After every repository restore the job runs `Verify` → (`ClearUnknownKid`) → `Encrypt`
+→ `Verify` on the restored tenant and returns the secrets to re-enter in the restore job result
+(decision 5). `ClearUnknownKid` runs only when the first `Verify` found unknown key ids, and only after a
+pre-clear dump into the secret backup directory succeeded (the uploaded file is deleted after the
+restore, and a misconfigured bot key ring would see this environment's own key ids as unknown); without
+that dump the unknown values are left untouched and the report says so. Sweeps of the same tenant
+exclude each other (Hangfire distributed lock): a sweep that finds its tenant busy is skipped, the
+post-restore sweep waits up to 30 minutes.
 
 | Endpoint | Scope | Purpose |
 | --- | --- | --- |

@@ -29,9 +29,10 @@ public interface ISecretSweepCoordinator
         CancellationToken cancellationToken);
 
     /// <summary>
-    ///     Post-restore handling (concept §6, decision 5): <c>ClearUnknownKid</c> (values from another
-    ///     environment become "not set" and are listed in <see cref="SecretSweepReport.SecretsToReEnter" />),
-    ///     then <c>Encrypt</c> (older plaintext dumps), then <c>Verify</c>. Skipped when no key is configured or
+    ///     Post-restore handling (concept §6, decision 5): <c>Verify</c>; when it found unknown key ids, a
+    ///     pre-clear dump and <c>ClearUnknownKid</c> (values from another environment become "not set" and are
+    ///     listed in <see cref="SecretSweepReport.SecretsToReEnter" />; withheld when the dump fails and
+    ///     <c>RequirePreSweepBackup</c> is on), then <c>Encrypt</c> (older plaintext dumps), then <c>Verify</c>. Skipped when no key is configured or
     ///     <c>Bot:SecretSweep:RunAfterRestore</c> is off. Never throws for tenant-level problems.
     /// </summary>
     /// <param name="tenantId">Restored tenant</param>

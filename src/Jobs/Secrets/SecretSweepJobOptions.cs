@@ -51,8 +51,8 @@ public class SecretSweepJobOptions
     public int BatchSize { get; set; } = 500;
 
     /// <summary>
-    ///     When <c>true</c> (default), a repository restore runs <c>ClearUnknownKid</c>, <c>Encrypt</c> and
-    ///     <c>Verify</c> on the restored tenant (concept §6, decision 5) and reports the secrets that have to
+    ///     When <c>true</c> (default), a repository restore runs <c>Verify</c>, <c>ClearUnknownKid</c> (only
+    ///     for unknown key ids, after a pre-clear dump), <c>Encrypt</c> and <c>Verify</c> on the restored tenant (concept §6, decision 5) and reports the secrets that have to
     ///     be re-entered.
     /// </summary>
     public bool RunAfterRestore { get; set; } = true;
