@@ -31,7 +31,8 @@ internal class SecretsAdminApiTests
             StrictMode = false,
             StrictModeSince = null,
             RecurringVerifyCron = "0 3 * * *",
-            LastVerifyAt = new DateTime(2026, 10, 6, 3, 0, 12, DateTimeKind.Utc)
+            LastVerifyAt = new DateTime(2026, 10, 6, 3, 0, 12, DateTimeKind.Utc),
+            Warnings = [SecretEnvironmentWarningCodes.NoLegacyV1Key]
         });
 
         var response = await host.GetAsync($"/{Child}/v1/secrets/status", JobsApiTestHost.UserTokenWithRoles(Child));
@@ -48,6 +49,9 @@ internal class SecretsAdminApiTests
         await Assert.That(root.GetProperty("recurringVerifyCron").GetString()).IsEqualTo("0 3 * * *");
         await Assert.That(root.GetProperty("lastVerifyAt").GetDateTime())
             .IsEqualTo(new DateTime(2026, 10, 6, 3, 0, 12, DateTimeKind.Utc));
+        // AB#5534: warning codes as a camelCase string array.
+        await Assert.That(root.GetProperty("warnings").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(root.GetProperty("warnings")[0].GetString()).IsEqualTo("NoLegacyV1Key");
     }
 
     [Test]

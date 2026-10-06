@@ -30,6 +30,19 @@ public class SecretEnvironmentStatusService(
                         r.Outcome is SecretSweepOutcomeDto.Succeeded or SecretSweepOutcomeDto.CompletedWithFailures)
             .Max(r => r.CompletedAt);
 
+        var legacyV1KeyConfigured = !string.IsNullOrWhiteSpace(encryption.LegacyV1Key);
+        var warnings = new List<string>();
+        if (!configured)
+        {
+            // AB#5534: prominent in the UI - writes fail, a restore only classifies (key-free Verify).
+            warnings.Add(SecretEnvironmentWarningCodes.NoKeyRing);
+        }
+
+        if (!legacyV1KeyConfigured && LastRunFoundEncV1(runs))
+        {
+            warnings.Add(SecretEnvironmentWarningCodes.NoLegacyV1Key);
+        }
+
         return new SecretEnvironmentStatusDto
         {
             KeyRingConfigured = configured,
@@ -42,13 +55,37 @@ public class SecretEnvironmentStatusService(
                     .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
                     .ToList()
                 : [],
-            LegacyV1KeyConfigured = !string.IsNullOrWhiteSpace(encryption.LegacyV1Key),
+            LegacyV1KeyConfigured = legacyV1KeyConfigured,
             // The engine's strict mode (legacy clear text no longer readable) or the bot's strict-mode date
             // (legacy values are a violation from then on).
             StrictMode = protector.IsStrictMode || (strictSince != null && _time.GetUtcNow() >= strictSince.Value),
             StrictModeSince = strictSince?.UtcDateTime,
             RecurringVerifyCron = string.IsNullOrWhiteSpace(sweep.VerifyCron) ? null : sweep.VerifyCron,
-            LastVerifyAt = lastVerify
+            LastVerifyAt = lastVerify,
+            Warnings = warnings
         };
+    }
+
+    /// <summary>
+    ///     Cheap check from the run history (no scan): the tenant's latest completed sweep found <c>enc:v1</c>
+    ///     values - counted as <c>EncV1</c> (legacy key present at the time) or as key missing with key id
+    ///     <see cref="SecretValueStates.LegacyV1KeyId" /> (no legacy key). No run = no warning.
+    /// </summary>
+    private static bool LastRunFoundEncV1(IEnumerable<SecretSweepRunDto> runs)
+    {
+        var last = runs
+            .Where(r => r.CompletedAt != null &&
+                        r.Outcome is SecretSweepOutcomeDto.Succeeded or SecretSweepOutcomeDto.CompletedWithFailures)
+            .MaxBy(r => r.CompletedAt);
+        if (last?.Totals == null)
+        {
+            return false;
+        }
+
+        return last.Totals.EncV1 > 0 ||
+               (last.Totals.UnknownKeyIdByKeyId != null &&
+                last.Totals.UnknownKeyIdByKeyId.Any(p =>
+                    string.Equals(p.Key, SecretValueStates.LegacyV1KeyId, StringComparison.OrdinalIgnoreCase) &&
+                    p.Value > 0));
     }
 }

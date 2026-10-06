@@ -58,6 +58,70 @@ public class SecretEnvironmentStatusServiceTests
         await Assert.That(status.ActiveKeyId).IsNull();
         await Assert.That(status.KnownKeyIds).IsEmpty();
         await Assert.That(status.LegacyV1KeyConfigured).IsFalse();
+        // AB#5534: the missing key ring is a warning the UI shows prominently.
+        await Assert.That(status.Warnings).IsEquivalentTo(new List<string> { SecretEnvironmentWarningCodes.NoKeyRing });
+    }
+
+    [Test]
+    public async Task Configured_WithoutEncV1Findings_HasNoWarnings()
+    {
+        _protector.IsConfigured.Returns(true);
+        _protector.ActiveKeyId.Returns("k1");
+
+        var status = await CreateService().GetStatusAsync("t");
+
+        await Assert.That(status.Warnings).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NoLegacyV1Key_WhenTheLastCompletedRunFoundEncV1(bool countedAsKeyMissing)
+    {
+        _protector.IsConfigured.Returns(false);
+        var totals = new SecretFormCountsReportDto();
+        if (countedAsKeyMissing)
+        {
+            totals.UnknownKeyId = 1;
+            totals.UnknownKeyIdByKeyId[SecretValueStates.LegacyV1KeyId] = 1;
+        }
+        else
+        {
+            totals.EncV1 = 1;
+        }
+
+        await _runs.UpsertAsync("t", new SecretSweepRunDto
+        {
+            RunId = "1", Mode = SecretSweepModeDto.Verify, Outcome = SecretSweepOutcomeDto.Succeeded,
+            CompletedAt = _now.UtcDateTime.AddHours(-1), Totals = totals
+        });
+
+        var status = await CreateService().GetStatusAsync("t");
+        await Assert.That(status.Warnings).IsEquivalentTo(new List<string>
+            { SecretEnvironmentWarningCodes.NoKeyRing, SecretEnvironmentWarningCodes.NoLegacyV1Key });
+
+        // With the legacy key configured there is nothing to warn about for enc:v1.
+        _encryption.LegacyV1Key = "FAKE-LEGACY";
+        await Assert.That((await CreateService().GetStatusAsync("t")).Warnings)
+            .IsEquivalentTo(new List<string> { SecretEnvironmentWarningCodes.NoKeyRing });
+    }
+
+    [Test]
+    public async Task NoLegacyV1Key_FollowsTheLatestCompletedRunOnly()
+    {
+        _protector.IsConfigured.Returns(true);
+        await _runs.UpsertAsync("t", new SecretSweepRunDto
+        {
+            RunId = "old", Mode = SecretSweepModeDto.Verify, Outcome = SecretSweepOutcomeDto.Succeeded,
+            CompletedAt = _now.UtcDateTime.AddDays(-2), Totals = new SecretFormCountsReportDto { EncV1 = 3 }
+        });
+        await _runs.UpsertAsync("t", new SecretSweepRunDto
+        {
+            RunId = "new", Mode = SecretSweepModeDto.Verify, Outcome = SecretSweepOutcomeDto.Succeeded,
+            CompletedAt = _now.UtcDateTime.AddDays(-1), Totals = new SecretFormCountsReportDto { EncV2 = 3 }
+        });
+
+        await Assert.That((await CreateService().GetStatusAsync("t")).Warnings).IsEmpty();
     }
 
     [Test]
