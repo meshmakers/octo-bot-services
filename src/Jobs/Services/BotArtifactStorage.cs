@@ -23,8 +23,14 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     private const int TagLength = 16;
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes(SecretFileFormat.Magic);
 
-    private static readonly string[] EncryptedCategories =
-        [ArtifactCategories.Presweep, ArtifactCategories.TenantDumps, ArtifactCategories.RestoreStaging];
+    /// <summary>
+    ///     Categories whose encrypted artifacts the bot wrote itself and which therefore pin a key id in the ring
+    ///     (key-id retention, <c>DumpKeyMissing</c>). <see cref="ArtifactCategories.RestoreStaging" /> is excluded on
+    ///     purpose: tenant users upload those files, an uploaded <c>.octoenc</c> may carry any key id, and such a
+    ///     file must neither raise an instance-wide warning nor appear in <c>requiredKeyIds</c>.
+    /// </summary>
+    private static readonly string[] KeyRetentionCategories =
+        [ArtifactCategories.Presweep, ArtifactCategories.TenantDumps];
 
     private readonly ConcurrentDictionary<string, (DateTimeOffset CreatedAt, long Size, SecretFileHeader Header)>
         _headerCache = new(StringComparer.Ordinal);
@@ -300,6 +306,34 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     }
 
     /// <inheritdoc />
+    public async Task<bool> TryUnprotectLocalFileAsync(string tenantId, string sourcePath, string targetPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await StartsWithMagicAsync(sourcePath, cancellationToken))
+        {
+            return false;
+        }
+
+        var context = new SecretFileContext(ArtifactKeyBuilder.NormalizeTenantId(tenantId),
+            ArtifactCategories.RestoreStaging, ServiceName);
+        try
+        {
+            await using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var output = OwnerOnlyFiles.CreateNew(targetPath);
+            await _protector.UnprotectAsync(input, output, context, cancellationToken);
+        }
+        catch
+        {
+            // A failed decryption leaves a verified plaintext prefix behind, which must never be restored.
+            DeleteScratchFile(targetPath);
+            throw;
+        }
+
+        return true;
+    }
+
+    /// <inheritdoc />
     public async Task<ArtifactDownload?> OpenDownloadAsync(string category, string tenantId, string fileName,
         CancellationToken cancellationToken = default)
     {
@@ -366,7 +400,7 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
 
         var result = new List<EncryptedArtifactHeader>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var category in EncryptedCategories)
+        foreach (var category in KeyRetentionCategories)
         {
             var store = GetStore(category);
             await foreach (var info in store.ListAsync(_keys.CategoryPrefix(category), cancellationToken))

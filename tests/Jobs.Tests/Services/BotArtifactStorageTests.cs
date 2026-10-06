@@ -280,4 +280,24 @@ public class BotArtifactStorageTests : IDisposable
         await _env.Storage.DeleteAsync(ArtifactCategories.Presweep, "t1", "c.presweep.octoenc");
         await Assert.That((await _env.Storage.GetEncryptedArtifactHeadersAsync()).Count).IsEqualTo(2);
     }
+
+    [Test]
+    public async Task TryUnprotectLocalFile_PlainFile_WritesNothing_EncryptedFile_IsDecrypted()
+    {
+        var content = RandomNumberGenerator.GetBytes(5000);
+        var plain = _env.WriteFile("plain-upload", content);
+        var target = _env.Storage.CreateScratchFilePath(".restore");
+        await Assert.That(await _env.Storage.TryUnprotectLocalFileAsync("T", plain, target)).IsFalse();
+        await Assert.That(File.Exists(target)).IsFalse();
+
+        var encrypted = Path.Combine(_env.Directory, "enc-upload");
+        await using (var input = new MemoryStream(content))
+        await using (var output = File.Create(encrypted))
+        {
+            await _env.Protector.ProtectAsync(input, output, null, CancellationToken.None);
+        }
+
+        await Assert.That(await _env.Storage.TryUnprotectLocalFileAsync("T", encrypted, target)).IsTrue();
+        await Assert.That((await File.ReadAllBytesAsync(target)).SequenceEqual(content)).IsTrue();
+    }
 }

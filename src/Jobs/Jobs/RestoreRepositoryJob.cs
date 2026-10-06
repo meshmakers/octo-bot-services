@@ -84,6 +84,20 @@ public class RestoreRepositoryJob(
                 throw new JobFailedException(
                     $"Backup file not found at '{filePath}' for tus file ID '{cacheKey}'.");
             }
+            else if (artifactStorage != null)
+            {
+                // Local fallback (pre-AB#5561 upload, or staging into the store failed): an uploaded .octoenc
+                // file is decrypted into the scratch directory exactly like a staged one, never fed to mongorestore
+                // as ciphertext.
+                var decryptedPath = artifactStorage.CreateScratchFilePath(".restore");
+                if (await artifactStorage.TryUnprotectLocalFileAsync(tenantId, filePath, decryptedPath, ct))
+                {
+                    logger.LogInformation("Decrypted the encrypted local upload of tenant '{TenantId}' for the restore",
+                        tenantId);
+                    scratchPath = decryptedPath;
+                    filePath = decryptedPath;
+                }
+            }
 
             var fileInfo = new FileInfo(filePath);
             if (fileInfo.Length == 0)

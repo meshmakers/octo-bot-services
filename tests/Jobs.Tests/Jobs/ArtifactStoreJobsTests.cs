@@ -111,6 +111,55 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task Restore_FromAnEncryptedLocalUpload_DecryptsBeforeMongorestore_AndLeavesNoScratchCopy()
+    {
+        // Staging into the store failed: the local tus file is an uploaded .octoenc of this environment.
+        var local = Path.Combine(_env.Directory, "tus03");
+        await using (var plain = new MemoryStream(_dump))
+        await using (var output = File.Create(local))
+        {
+            await _env.Protector.ProtectAsync(plain, output, null, CancellationToken.None);
+        }
+
+        _files.GetTusUploadFilePath(Tenant, "tus03").Returns(local);
+        var restores = CaptureRestores();
+        var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,
+            null, _env.Storage);
+
+        await job.Run(Tenant, "db-1", "tus03", null, false, null, null);
+
+        await Assert.That(restores.Single().Content.SequenceEqual(_dump)).IsTrue();
+        await Assert.That(File.Exists(local)).IsFalse();
+        await Assert.That(Directory.EnumerateFiles(_env.ScratchDirectory).Any()).IsFalse();
+    }
+
+    [Test]
+    public async Task Restore_FromATamperedEncryptedLocalUpload_Fails_WithoutRestoringOrKeepingPlaintext()
+    {
+        var local = Path.Combine(_env.Directory, "tus04");
+        await using (var plain = new MemoryStream(_dump))
+        await using (var output = File.Create(local))
+        {
+            await _env.Protector.ProtectAsync(plain, output, null, CancellationToken.None);
+        }
+
+        var bytes = await File.ReadAllBytesAsync(local);
+        bytes[^10] ^= 0x5A;
+        await File.WriteAllBytesAsync(local, bytes);
+        _files.GetTusUploadFilePath(Tenant, "tus04").Returns(local);
+        var restores = CaptureRestores();
+        var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,
+            null, _env.Storage);
+
+        await Assert.That(async () => await job.Run(Tenant, "db-1", "tus04", null, false, null, null))
+            .Throws<InvalidSecretFileException>();
+
+        await Assert.That(restores).IsEmpty();
+        await Assert.That(Directory.Exists(_env.ScratchDirectory) &&
+                          Directory.EnumerateFiles(_env.ScratchDirectory).Any()).IsFalse();
+    }
+
+    [Test]
     public async Task Cleanup_ExpiresStoreArtifactsPerCategory_AndRecordsExpiredPreSweepDumps()
     {
         await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,

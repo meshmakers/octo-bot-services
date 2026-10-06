@@ -170,6 +170,9 @@ public static class ServiceCollectionExtensions
                 scratchPath, loggerFactory.CreateLogger<BotArtifactStorage>(), presweepStore);
         });
 
+        // AB#5559: plaintext scratch dumps of a crashed process are removed at startup, not only hours later.
+        services.AddHostedService<StaleScratchCleanupHostedService>();
+
         return services;
     }
 

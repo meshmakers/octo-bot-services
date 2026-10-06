@@ -100,6 +100,26 @@ public class DumpKeyRetentionTests : IDisposable
     }
 
     [Test]
+    public async Task Status_IgnoresRestoreStagingUploads_WithForeignKeyIds()
+    {
+        // A tenant user uploads an .octoenc of another environment (key id 'foreign'): restore staging is not
+        // written by this instance and must neither appear in requiredKeyIds nor raise DumpKeyMissing.
+        var foreign = _env.CreateStorage(ArtifactTestEnvironment.CreateProtector(
+            new Dictionary<string, byte[]> { ["foreign"] = RandomNumberGenerator.GetBytes(32) }, "foreign"));
+        await foreign.StoreFileAsync(ArtifactCategories.RestoreStaging, Tenant, "tus-foreign",
+            _env.WriteFile("upload", RandomNumberGenerator.GetBytes(300)), ArtifactEncryption.Required);
+        await SeedStoredDumpAsync();
+        var attributeProtector = Substitute.For<ISecretAttributeProtector>();
+        attributeProtector.IsConfigured.Returns(true);
+        attributeProtector.ActiveKeyId.Returns("k1");
+
+        var status = await CreateStatusService(attributeProtector, _env.Storage).GetStatusAsync(Tenant);
+
+        await Assert.That(status.RequiredKeyIds.ToArray()).IsEquivalentTo(new[] { "k1" });
+        await Assert.That(status.Warnings).DoesNotContain(BotSecretEnvironmentWarningCodes.DumpKeyMissing);
+    }
+
+    [Test]
     public async Task Status_StoreUnreachable_StillAnswers()
     {
         var storage = Substitute.For<IBotArtifactStorage>();

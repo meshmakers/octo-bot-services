@@ -108,6 +108,24 @@ public interface IBotArtifactStorage
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    ///     Decrypts a local file (an upload restored from the local tus directory because staging it into the store
+    ///     failed) into <paramref name="targetPath" /> when it is an <c>OCTOENC1</c> file. On any failure the target
+    ///     file is deleted and the exception propagates.
+    /// </summary>
+    /// <param name="tenantId">The tenant the file belongs to (metrics context).</param>
+    /// <param name="sourcePath">The local file; never modified.</param>
+    /// <param name="targetPath">The scratch file that receives the plaintext.</param>
+    /// <param name="cancellationToken">Cancellation.</param>
+    /// <returns>
+    ///     <c>true</c> when the file was encrypted and its plaintext is in <paramref name="targetPath" />;
+    ///     <c>false</c> when it is not an <c>OCTOENC1</c> file (nothing is written, use the source as is).
+    /// </returns>
+    /// <exception cref="InvalidSecretFileException">The file is tampered with or truncated.</exception>
+    /// <exception cref="UnknownSecretKeyIdException">The file's key id is not in the key ring.</exception>
+    Task<bool> TryUnprotectLocalFileAsync(string tenantId, string sourcePath, string targetPath,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     ///     Opens an artifact for a download in plaintext form. The caller disposes the result.
     /// </summary>
     /// <returns><c>null</c> when the artifact does not exist.</returns>
@@ -122,7 +140,8 @@ public interface IBotArtifactStorage
     Task CopyPlainAsync(ArtifactDownload download, Stream destination, CancellationToken cancellationToken = default);
 
     /// <summary>
-    ///     The header (key id, creation time) of every encrypted artifact of this instance, read from the first
+    ///     The header (key id, creation time) of every encrypted pre-sweep dump and tenant dump of this instance
+    ///     (restore staging uploads are excluded: tenant users upload them with arbitrary key ids), read from the first
     ///     bytes of each artifact only (cached per key; the whole result is reused for up to a minute unless this
     ///     instance stored or deleted an artifact). Used for the key-id retention check (<c>DumpKeyMissing</c>).
     /// </summary>
