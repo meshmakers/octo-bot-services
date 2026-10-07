@@ -24,13 +24,35 @@ public class BackupFileStorageService : IBackupFileStorageService
     /// <param name="tusStoragePath">The storage path for tus uploads.</param>
     /// <param name="dumpStoragePath">The storage path for database dumps.</param>
     /// <param name="logger">The logger instance.</param>
+    /// <param name="secretBackupStoragePath">
+    /// The storage path for pre-sweep secret backups (AB#5539); <c>null</c> = <c>secret-backups</c> next to
+    /// <paramref name="dumpStoragePath" />. Must not lie inside the tus or dump directory.
+    /// </param>
     public BackupFileStorageService(string tusStoragePath, string dumpStoragePath,
-        ILogger<BackupFileStorageService> logger)
+        ILogger<BackupFileStorageService> logger, string? secretBackupStoragePath = null)
     {
         TusStoragePath = tusStoragePath;
         DumpStoragePath = dumpStoragePath;
+        SecretBackupStoragePath = string.IsNullOrWhiteSpace(secretBackupStoragePath)
+            ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dumpStoragePath).TrimEnd(Path.DirectorySeparatorChar))
+                           ?? Path.GetTempPath(), "secret-backups")
+            : secretBackupStoragePath;
+
+        // The hourly stale-file cleanup deletes everything under the tus and dump roots after a few hours;
+        // secret backups must survive their own 7-day retention, so they may not live there (decision 10).
+        if (IsSameOrBelow(SecretBackupStoragePath, TusStoragePath) ||
+            IsSameOrBelow(SecretBackupStoragePath, DumpStoragePath))
+        {
+            throw new ArgumentException(
+                $"The secret backup directory '{SecretBackupStoragePath}' must not lie inside the tus upload or dump directory.",
+                nameof(secretBackupStoragePath));
+        }
+
         _logger = logger;
     }
+
+    /// <inheritdoc />
+    public string SecretBackupStoragePath { get; }
 
     /// <inheritdoc />
     public string TusStoragePath { get; }
@@ -151,8 +173,155 @@ public class BackupFileStorageService : IBackupFileStorageService
     {
         Directory.CreateDirectory(TusStoragePath);
         Directory.CreateDirectory(DumpStoragePath);
-        _logger.LogInformation("Ensured backup storage directories exist: '{TusPath}', '{DumpPath}'",
-            TusStoragePath, DumpStoragePath);
+        CreateOwnerOnlyDirectory(SecretBackupStoragePath);
+        _logger.LogInformation(
+            "Ensured backup storage directories exist: '{TusPath}', '{DumpPath}', '{SecretBackupPath}'",
+            TusStoragePath, DumpStoragePath, SecretBackupStoragePath);
+    }
+
+    /// <inheritdoc />
+    public string CreateSecretBackupFilePath(string tenantId)
+    {
+        // Validate the tenant id before anything touches the file system.
+        var directory = ResolveSecretBackupTenantDirectory(tenantId);
+        CreateOwnerOnlyDirectory(SecretBackupStoragePath);
+        CreateOwnerOnlyDirectory(directory);
+
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var guid = Guid.NewGuid().ToString("N")[..8];
+        return Path.Combine(directory, $"{tenantId}-{timestamp}-{guid}{SecretBackupFileSuffix}");
+    }
+
+    /// <summary>
+    /// File name suffix that marks a pre-sweep secret backup.
+    /// </summary>
+    public const string SecretBackupFileSuffix = ".presweep.tar.gz";
+
+    /// <inheritdoc />
+    public void RestrictToOwner(string filePath)
+    {
+        if (OperatingSystem.IsWindows() || !File.Exists(filePath))
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(filePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not restrict the permissions of secret backup '{FilePath}'", filePath);
+        }
+    }
+
+    /// <inheritdoc />
+    public string GetSecretBackupFilePath(string tenantId, string fileName)
+    {
+        // A plain file name of a pre-sweep dump only - never a path that could leave the tenant directory.
+        if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName ||
+            fileName.Contains("..", StringComparison.Ordinal) ||
+            !fileName.EndsWith(SecretBackupFileSuffix, StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"'{fileName}' is not a pre-sweep secret backup file name.", nameof(fileName));
+        }
+
+        return Path.Combine(ResolveSecretBackupTenantDirectory(tenantId), fileName);
+    }
+
+    /// <summary>
+    /// The tenant directory of the pre-sweep secret backups. Lower-cased like the sweep run history, so a dump
+    /// created by an all-tenants run (tenant id as stored) and looked up through the tenant route (tenant id as
+    /// typed) resolve to the same file on a case-sensitive file system.
+    /// </summary>
+    private string ResolveSecretBackupTenantDirectory(string tenantId)
+    {
+        return ResolveTenantDirectory(SecretBackupStoragePath,
+            string.IsNullOrWhiteSpace(tenantId) ? tenantId : tenantId.ToLowerInvariant());
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<string>> CleanupStaleSecretBackupsAsync(TimeSpan retention)
+    {
+        var cutoff = DateTime.UtcNow - retention;
+        var deleted = new List<string>();
+        // Legacy layout only: <root>/<tenant>/<file>.presweep.tar.gz. The root may be shared with the artifact
+        // store of the pre-sweep dumps (AB#5561, BackupStoragePath alias), whose files the store cleanup owns.
+        CleanupLegacySecretBackups(cutoff, deleted);
+
+        if (deleted.Count > 0)
+        {
+            _logger.LogInformation("Cleaned up {Count} pre-sweep secret backups older than {Retention}",
+                deleted.Count, retention);
+        }
+
+        return Task.FromResult<IReadOnlyList<string>>(deleted);
+    }
+
+    private void CleanupLegacySecretBackups(DateTime cutoff, List<string> deleted)
+    {
+        if (!Directory.Exists(SecretBackupStoragePath))
+        {
+            return;
+        }
+
+        foreach (var tenantDirectory in Directory.EnumerateDirectories(SecretBackupStoragePath))
+        {
+            foreach (var file in Directory.EnumerateFiles(tenantDirectory, "*" + SecretBackupFileSuffix,
+                         SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) < cutoff)
+                    {
+                        File.Delete(file);
+                        deleted.Add(file);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete stale secret backup '{FilePath}'", file);
+                }
+            }
+
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(tenantDirectory).Any())
+                {
+                    Directory.Delete(tenantDirectory);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete empty secret backup directory '{DirectoryPath}'",
+                    tenantDirectory);
+            }
+        }
+    }
+
+    private void CreateOwnerOnlyDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(path);
+            return;
+        }
+
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        Directory.CreateDirectory(path, ownerOnly);
+        // CreateDirectory leaves the mode of an EXISTING directory alone (pre-created volume, older bot).
+        if (File.GetUnixFileMode(path) != ownerOnly)
+        {
+            File.SetUnixFileMode(path, ownerOnly);
+        }
+    }
+
+    private static bool IsSameOrBelow(string candidate, string root)
+    {
+        var candidateFull = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar) +
+                            Path.DirectorySeparatorChar;
+        var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return candidateFull.StartsWith(rootFull, StringComparison.Ordinal);
     }
 
     private int CleanupDirectory(string directoryPath, DateTime cutoff)

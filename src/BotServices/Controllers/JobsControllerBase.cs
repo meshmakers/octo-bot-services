@@ -5,10 +5,13 @@ using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
+using Meshmakers.Octo.Runtime.Contracts.Secrets;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Meshmakers.Octo.Backend.BotServices.Controllers;
@@ -61,6 +64,7 @@ namespace Meshmakers.Octo.Backend.BotServices.Controllers;
 /// </remarks>
 public abstract class JobsControllerBase : ControllerBase
 {
+    private readonly IBotArtifactStorage _artifactStorage;
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IBackupFileStorageService _backupFileStorage;
     private readonly IDistributedCacheService _distributedCache;
@@ -76,14 +80,17 @@ public abstract class JobsControllerBase : ControllerBase
     /// <param name="jobStorage">Reads job details and writes job parameters (AB#5070).</param>
     /// <param name="tenantAccessGuard">Authorizes a job instance against its tenant (AB#5070).</param>
     /// <param name="distributedCache">Backing store of the legacy GridFS artifact fallback.</param>
+    /// <param name="artifactStorage">Artifact store of tenant dumps and staged restore uploads (AB#5561).</param>
     /// <param name="logger">Logger.</param>
     protected JobsControllerBase(IBackgroundJobClient backgroundJobClient,
         IBackupFileStorageService backupFileStorage,
         IJobStorageAccessor jobStorage,
         IJobTenantAccessGuard tenantAccessGuard,
         IDistributedCacheService distributedCache,
+        IBotArtifactStorage artifactStorage,
         ILogger<JobsControllerBase> logger)
     {
+        _artifactStorage = artifactStorage;
         _backgroundJobClient = backgroundJobClient;
         _backupFileStorage = backupFileStorage;
         _jobStorage = jobStorage;
@@ -118,20 +125,20 @@ public abstract class JobsControllerBase : ControllerBase
     /// <summary>
     ///     Enqueues the repository restore of <paramref name="tenantId" /> from a completed tus upload.
     /// </summary>
-    protected IActionResult EnqueueRestoreFromUpload(string tusFileId, string tenantId, string databaseName,
-        string? oldDatabaseName, bool restoreArchiveData)
+    protected async Task<IActionResult> EnqueueRestoreFromUploadAsync(string tusFileId, string tenantId,
+        string databaseName, string? oldDatabaseName, bool restoreArchiveData)
     {
         try
         {
-            // Verify the tus upload file exists on disk and has content
-            var uploadCheck = ValidateTusUpload(tenantId, tusFileId, out _);
+            // Verify the upload is staged (artifact store, AB#5561; or on disk for a legacy upload) and has content
+            var uploadCheck = await ValidateRestoreUploadAsync(tenantId, tusFileId);
             if (uploadCheck != null)
             {
                 return uploadCheck;
             }
 
             var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, null,
                     BotCancellationToken.Null));
 
             RecordStarter(id, tenantId);
@@ -208,6 +215,88 @@ public abstract class JobsControllerBase : ControllerBase
         {
             return BadRequest(new InternalServerErrorDto(e.Message));
         }
+    }
+
+    /// <summary>
+    ///     Enqueues the secret sweep of <paramref name="tenantId" /> (AB#5539, AB#5544).
+    ///     <see cref="SecretSweepMode.Decrypt" /> is refused: no API decrypts or exports plaintext.
+    ///     <see cref="SecretSweepMode.Encrypt" /> and <see cref="SecretSweepMode.CleanupUnreadable" /> change
+    ///     data and need <paramref name="confirm" /> (<c>400 ConfirmationRequired</c> otherwise);
+    ///     <see cref="SecretSweepMode.Reprotect" /> is accepted for CLI / ops (not offered in Studio).
+    /// </summary>
+    protected IActionResult EnqueueSecretSweep(string tenantId, SecretSweepMode mode, bool confirm)
+    {
+        if (!IsSweepModeOffered(mode))
+        {
+            return BadRequest(new InternalServerErrorDto(
+                $"Secret sweep mode '{mode}' is not available; use Verify, Encrypt, Reprotect or CleanupUnreadable."));
+        }
+
+        if (RequiresConfirmation(mode) && !confirm)
+        {
+            return BadRequest(new CodedBadRequestErrorDto(CodedBadRequestErrorDto.ConfirmationRequired,
+                $"The secret sweep mode '{mode}' changes stored secrets and takes a pre-sweep dump first; " +
+                "repeat the request with confirm=true."));
+        }
+
+        try
+        {
+            var triggeredBy = GetUserName(User);
+            var id = _backgroundJobClient.Enqueue<ISecretSweepJob>(job =>
+                job.Run(tenantId, mode, triggeredBy, null, BotCancellationToken.Null));
+
+            RecordStarter(id, tenantId);
+            return Ok(new JobResponseDto(id));
+        }
+        catch (InvalidOperationException e)
+        {
+            return BadRequest(new InternalServerErrorDto(e.Message));
+        }
+    }
+
+    /// <summary>
+    ///     Returns the last secret sweep report of <paramref name="tenantId" /> (AB#5539), or <c>404</c>.
+    /// </summary>
+    protected static async Task<IActionResult> GetSecretSweepReportAsync(string tenantId,
+        ISecretSweepReportStore reportStore)
+    {
+        var report = await reportStore.GetLastAsync(tenantId);
+        return report == null
+            ? new NotFoundObjectResult(new NotFoundErrorDto($"No secret sweep report for tenant '{tenantId}'."))
+            : new JsonResult(report, SecretSweepReportJson.Options);
+    }
+
+    /// <summary>
+    ///     Whether <paramref name="mode" /> may be started through the API.
+    /// </summary>
+    internal static bool IsSweepModeOffered(SecretSweepMode mode)
+    {
+        return mode is SecretSweepMode.Verify or SecretSweepMode.Encrypt or SecretSweepMode.Reprotect
+            or SecretSweepMode.CleanupUnreadable;
+    }
+
+    /// <summary>
+    ///     Whether <paramref name="mode" /> needs <c>confirm=true</c> on the tenant route (contract §9).
+    /// </summary>
+    internal static bool RequiresConfirmation(SecretSweepMode mode)
+    {
+        return mode is SecretSweepMode.Encrypt or SecretSweepMode.CleanupUnreadable;
+    }
+
+    /// <summary>
+    ///     The user name of the caller for the run history (<c>triggeredBy</c>, <c>deletedBy</c>): the
+    ///     <c>name</c> claim, else <c>preferred_username</c>; <c>null</c> for a token without a user name
+    ///     (client credentials).
+    /// </summary>
+    internal static string? GetUserName(ClaimsPrincipal user)
+    {
+        var name = user.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = user.FindFirstValue("name") ?? user.FindFirstValue("preferred_username");
+        }
+
+        return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
     /// <summary>
@@ -312,7 +401,13 @@ public abstract class JobsControllerBase : ControllerBase
 
                 var key = result.Replace("\"", "");
 
-                // New path: result is a file path on disk
+                // AB#5561: result is an artifact in the artifact store (decrypted on the fly when encrypted).
+                if (StoredArtifact.TryParseResultReference(key, out var artifact))
+                {
+                    return await DownloadArtifactAsync(id, artifact!, jobTenantId);
+                }
+
+                // Legacy path: result is a file path on disk
                 if (System.IO.File.Exists(key))
                 {
                     var fileStream = new FileStream(key, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -416,29 +511,38 @@ public abstract class JobsControllerBase : ControllerBase
     /// </remarks>
     private void RecordStarter(string jobId, string tenantId)
     {
-        try
-        {
-            var subject = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!string.IsNullOrEmpty(subject))
-            {
-                _jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedBySubjectParameter, subject);
-            }
+        JobStarterRecorder.Record(_jobStorage, User, jobId, tenantId, _logger);
+    }
 
-            var clientId = User.FindFirstValue("client_id");
-            if (!string.IsNullOrEmpty(clientId))
-            {
-                _jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedByClientIdParameter, clientId);
-            }
-
-            _jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedForTenantParameter, tenantId);
-        }
-        catch (Exception e)
+    /// <summary>
+    ///     Streams a tenant dump from the artifact store (AB#5561). The client receives the same plain
+    ///     <c>.tar.gz</c> / <c>.octobak.zip</c> as before; an encrypted artifact is decrypted on the fly.
+    /// </summary>
+    /// <remarks>
+    ///     🔴 The artifact must belong to the tenant the job ran for (the reference is written by the job, but the
+    ///     check costs nothing and keeps a forged or corrupted job result from reaching another tenant's dump).
+    ///     Only the tenant-dump category is downloadable - pre-sweep dumps never are.
+    /// </remarks>
+    private async Task<IActionResult> DownloadArtifactAsync(string jobId, ArtifactKeyParts artifact,
+        string? jobTenantId)
+    {
+        if (artifact.Category != ArtifactCategories.TenantDumps || jobTenantId == null ||
+            !string.Equals(artifact.TenantId, jobTenantId, StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning(e,
-                "Could not record the starting subject of job '{JobId}' for tenant '{TenantId}'; the job " +
-                "itself was enqueued (AB#5070)",
-                jobId, tenantId);
+            _logger.LogWarning("Job '{JobId}' of tenant '{TenantId}' names an artifact it may not serve", jobId,
+                jobTenantId);
+            return StatusCode(StatusCodes.Status403Forbidden);
         }
+
+        var download = await _artifactStorage.OpenDownloadAsync(artifact.Category, artifact.TenantId,
+            artifact.FileName, HttpContext.RequestAborted);
+        if (download == null)
+        {
+            return NotFound(new NotFoundErrorDto(
+                "The result of the job with id: " + jobId + " is no longer available (expired after its retention)."));
+        }
+
+        return new ArtifactDownloadResult(download, _artifactStorage, "application/gzip", _logger);
     }
 
     private static JobDto CreateJobDto(string id, JobDetailsDto jobDetails)
@@ -476,6 +580,36 @@ public abstract class JobsControllerBase : ControllerBase
         }
 
         return new Tuple<string, Stream>(cacheStream.ContentType, cacheStream.Stream);
+    }
+
+    /// <summary>
+    ///     Verifies that the restore upload is staged for this tenant and not empty: in the artifact store
+    ///     (<c>restore-staging/&lt;tenant&gt;/&lt;id&gt;</c>, AB#5561), else on the local disk (see
+    ///     <see cref="ValidateTusUpload" />). The store key carries the tenant like the local directory does, so a
+    ///     foreign id answers 404 either way.
+    /// </summary>
+    private async Task<IActionResult?> ValidateRestoreUploadAsync(string tenantId, string tusFileId)
+    {
+        (string FileName, long Size)? staged;
+        try
+        {
+            staged = await _artifactStorage.FindRestoreStagingAsync(tenantId, tusFileId, HttpContext.RequestAborted);
+        }
+        catch (ArgumentException)
+        {
+            staged = null;
+        }
+
+        if (staged == null)
+        {
+            // An upload staged on the local disk (before AB#5561, or when staging into the store failed).
+            return ValidateTusUpload(tenantId, tusFileId, out _);
+        }
+
+        return staged.Value.Size == 0
+            ? BadRequest(new InternalServerErrorDto(
+                $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."))
+            : null;
     }
 
     /// <summary>

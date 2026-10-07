@@ -5,8 +5,11 @@ using Hangfire.Common;
 using Hangfire.States;
 using Hangfire.Storage.Monitoring;
 using Meshmakers.Octo.Backend.BotServices;
+using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
+using Meshmakers.Octo.Backend.Jobs.Tests.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Services.Infrastructure;
@@ -25,7 +28,9 @@ using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.Core;
 using SystemJobsController = Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers.JobsController;
+using SystemSecretsController = Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers.SecretsController;
 using TenantJobsController = Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers.JobsController;
+using TenantSecretsController = Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers.SecretsController;
 
 namespace Meshmakers.Octo.Backend.Jobs.Tests.Api;
 
@@ -61,13 +66,23 @@ internal sealed class JobsApiTestHost : IDisposable
     private IBackgroundJobClient _backgroundJobClient = null!;
     private HttpClient _client = null!;
     private IJobStorageAccessor _jobStorage = null!;
+    private ISecretSweepReportStore _secretSweepReportStore = null!;
+    private ISecretSweepRunService _secretSweepRunService = null!;
+    private ISecretEnvironmentStatusService _secretEnvironmentStatusService = null!;
     private string _tusFilePath = null!;
+
+    /// <summary>
+    ///     A real file system artifact store with a generated key ring (AB#5561): tenant dumps and staged restore
+    ///     uploads a test puts there are served by the real download / restore-validation code.
+    /// </summary>
+    public ArtifactTestEnvironment Artifacts { get; } = new("k1");
 
     public void Dispose()
     {
         _client.Dispose();
         _app.StopAsync().GetAwaiter().GetResult();
         ((IDisposable)_app).Dispose();
+        Artifacts.Dispose();
         if (File.Exists(_tusFilePath))
         {
             File.Delete(_tusFilePath);
@@ -81,10 +96,24 @@ internal sealed class JobsApiTestHost : IDisposable
         return fixture;
     }
 
-    /// <summary>A user token: carries <c>sub</c>, so the middleware takes the user path.</summary>
+    /// <summary>The user name carried by the user tokens (<c>name</c> claim).</summary>
+    public const string UserName = "test-user";
+
+    /// <summary>
+    ///     A user token: carries <c>sub</c>, so the middleware takes the user path. Without
+    ///     <paramref name="roles" /> it carries both secrets admin roles (AB#5544) - a tenant administrator -
+    ///     so the gate tests are not about roles; pass roles explicitly (or none via
+    ///     <see cref="UserTokenWithRoles" />) to test them.
+    /// </summary>
     public static string UserToken(string tenantId)
     {
         return $"user:{tenantId}";
+    }
+
+    /// <summary>A user token with exactly <paramref name="roles" /> (possibly none).</summary>
+    public static string UserTokenWithRoles(string tenantId, params string[] roles)
+    {
+        return $"user:{tenantId}|{string.Join(',', roles)}";
     }
 
     /// <summary>
@@ -143,6 +172,17 @@ internal sealed class JobsApiTestHost : IDisposable
     public IBackgroundJobClient BackgroundJobClient => _backgroundJobClient;
 
     public IJobStorageAccessor JobStorage => _jobStorage;
+
+    /// <summary>
+    ///     The secret sweep report store (AB#5539), a substitute a test can seed.
+    /// </summary>
+    public ISecretSweepReportStore SecretSweepReportStore => _secretSweepReportStore;
+
+    /// <summary>The secret sweep run service (AB#5544), a substitute a test can seed.</summary>
+    public ISecretSweepRunService SecretSweepRunService => _secretSweepRunService;
+
+    /// <summary>The secret environment status service (AB#5544), a substitute a test can seed.</summary>
+    public ISecretEnvironmentStatusService SecretEnvironmentStatusService => _secretEnvironmentStatusService;
 
     /// <summary>
     ///     Makes <paramref name="jobId" /> resolvable, as a job that succeeded and left
@@ -215,6 +255,9 @@ internal sealed class JobsApiTestHost : IDisposable
         // AB#5070: the job store is a substitute so a test can seed a job of a chosen tenant; the
         // access guard below is the REAL one, because it is the thing under test.
         _jobStorage = Substitute.For<IJobStorageAccessor>();
+        _secretSweepReportStore = Substitute.For<ISecretSweepReportStore>();
+        _secretSweepRunService = Substitute.For<ISecretSweepRunService>();
+        _secretEnvironmentStatusService = Substitute.For<ISecretEnvironmentStatusService>();
 
         // parenttenant -> childtenant is the only relation in this hierarchy; every other pair,
         // including the reverse and any self-pair, answers false (NSubstitute's default).
@@ -227,9 +270,15 @@ internal sealed class JobsApiTestHost : IDisposable
 
         builder.Services.AddSingleton(_backgroundJobClient);
         builder.Services.AddSingleton(backupFileStorage);
+        builder.Services.AddSingleton<IBotArtifactStorage>(Artifacts.Storage);
         builder.Services.AddSingleton(Substitute.For<IDistributedCacheService>());
         builder.Services.AddSingleton(hierarchy);
         builder.Services.AddSingleton(_jobStorage);
+        builder.Services.AddSingleton(_secretSweepReportStore);
+        builder.Services.AddSingleton(_secretSweepRunService);
+        builder.Services.AddSingleton(_secretEnvironmentStatusService);
+        // System tenant of the instance-wide secret sweep routes (AB#5539); default "OctoSystem".
+        builder.Services.AddOptions<Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration.OctoSystemConfiguration>();
         builder.Services.AddScoped<IJobTenantAccessGuard, JobTenantAccessGuard>();
 
         if (configure != null)
@@ -245,15 +294,8 @@ internal sealed class JobsApiTestHost : IDisposable
         builder.Services.AddAuthentication(SchemeName)
             .AddScheme<AuthenticationSchemeOptions, TokenShapedAuthenticationHandler>(SchemeName, _ => { });
 
-        // The two policies of Program.cs, verbatim.
-        builder.Services.AddAuthorization(options =>
-        {
-            options.AddPolicy(BotServiceConstants.JobApiReadOnlyPolicy, policy =>
-                policy.RequireClaim(InfrastructureCommon.ClaimScope,
-                    CommonConstants.OctoApiFullAccess, CommonConstants.OctoApiReadOnly));
-            options.AddPolicy(BotServiceConstants.JobApiReadWritePolicy, policy =>
-                policy.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess));
-        });
+        // The policies of Program.cs - the very same registration (AB#5544).
+        builder.Services.AddAuthorization(options => options.AddBotPolicies());
 
         builder.Services.AddApiVersioning().AddMvc();
         builder.Services.AddControllers()
@@ -281,7 +323,7 @@ internal sealed class JobsApiTestHost : IDisposable
     }
 
     /// <summary>
-    ///     Keeps the host to the two controllers under test; the account and diagnostics
+    ///     Keeps the host to the controllers under test; the account and diagnostics
     ///     controllers of this assembly need services this fixture deliberately does not build.
     /// </summary>
     private sealed class JobsOnlyControllerFeatureProvider : ControllerFeatureProvider
@@ -290,7 +332,9 @@ internal sealed class JobsApiTestHost : IDisposable
         {
             return base.IsController(typeInfo) &&
                    (typeInfo.AsType() == typeof(TenantJobsController) ||
-                    typeInfo.AsType() == typeof(SystemJobsController));
+                    typeInfo.AsType() == typeof(TenantSecretsController) ||
+                    typeInfo.AsType() == typeof(SystemJobsController) ||
+                    typeInfo.AsType() == typeof(SystemSecretsController));
         }
     }
 
@@ -320,20 +364,32 @@ internal sealed class JobsApiTestHost : IDisposable
                 return Task.FromResult(AuthenticateResult.Fail("Malformed test token"));
             }
 
+            // "<kind>:<tenant>" = both secrets admin roles; "<kind>:<tenant>|<role>,<role>" = exactly these.
+            var tenantAndRoles = parts[1].Split('|', 2);
+            var roles = tenantAndRoles.Length == 2
+                ? tenantAndRoles[1].Split(',', StringSplitOptions.RemoveEmptyEntries)
+                : [CommonConstants.AdminPanelManagementRole, CommonConstants.SecretManagementRole];
+
             var isUser = parts[0] == "user";
             var claims = new List<Claim>
             {
-                new("tenant_id", parts[1]),
+                new("tenant_id", tenantAndRoles[0]),
                 new("client_id", isUser ? "octo-cli" : "octo-worker"),
                 new(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)
             };
+            // AB#5539: role claims arrive the way the real bearer handler hands them over — renamed to
+            // ClaimTypes.Role by its default inbound claim mapping, while the identity's RoleClaimType stays
+            // "role". Modelling them as plain "role" claims hid that RequireRole never matched a real token.
+            claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
 
             if (isUser)
             {
                 claims.Add(new Claim("sub", "test-subject"));
+                claims.Add(new Claim("name", UserName));
             }
 
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
+            // Name and role claim types as ConfigureJwtBearerOptions sets them.
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName, "name", "role"));
             return Task.FromResult(AuthenticateResult.Success(
                 new AuthenticationTicket(principal, SchemeName)));
         }

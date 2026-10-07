@@ -258,20 +258,201 @@ public class BackupFileStorageServiceTests
     {
         var tempTus = Path.Combine(Path.GetTempPath(), $"tus-test-{Guid.NewGuid():N}");
         var tempDump = Path.Combine(Path.GetTempPath(), $"dump-test-{Guid.NewGuid():N}");
+        var tempSecret = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
 
         try
         {
-            var service = new BackupFileStorageService(tempTus, tempDump, _logger);
+            var service = new BackupFileStorageService(tempTus, tempDump, _logger, tempSecret);
 
             service.EnsureDirectoriesExist();
 
             await Assert.That(Directory.Exists(tempTus)).IsTrue();
             await Assert.That(Directory.Exists(tempDump)).IsTrue();
+            await Assert.That(Directory.Exists(tempSecret)).IsTrue();
         }
         finally
         {
             if (Directory.Exists(tempTus)) Directory.Delete(tempTus, true);
             if (Directory.Exists(tempDump)) Directory.Delete(tempDump, true);
+            if (Directory.Exists(tempSecret)) Directory.Delete(tempSecret, true);
         }
+    }
+
+    [Test]
+    public async Task SecretBackupStoragePath_DefaultsToASiblingOfTheDumpDirectory()
+    {
+        var service = CreateService();
+
+        await Assert.That(service.SecretBackupStoragePath)
+            .IsEqualTo(Path.Combine(Path.GetFullPath("/data"), "secret-backups"));
+    }
+
+    [Test]
+    [Arguments("/data/dumps/secrets")]
+    [Arguments("/data/dumps")]
+    [Arguments("/data/tus-uploads/x")]
+    public async Task SecretBackupStoragePath_InsideTheTusOrDumpDirectory_IsRefused(string path)
+    {
+        // The hourly stale-file cleanup would delete secret backups there long before their 7 days.
+        await Assert.That(() => new BackupFileStorageService(TusStoragePath, DumpStoragePath, _logger, path))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task CreateSecretBackupFilePath_IsPerTenant_Marked_AndOwnerOnly()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        try
+        {
+            var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+                _logger, Path.Combine(root, "secret-backups"));
+
+            var path = service.CreateSecretBackupFilePath("tenant-a");
+
+            await Assert.That(Path.GetDirectoryName(path)).IsEqualTo(Path.Combine(root, "secret-backups", "tenant-a"));
+            await Assert.That(Path.GetFileName(path)).StartsWith("tenant-a-");
+            await Assert.That(path).EndsWith(BackupFileStorageService.SecretBackupFileSuffix);
+            await Assert.That(File.Exists(path)).IsFalse();
+
+            if (!OperatingSystem.IsWindows())
+            {
+                var mode = File.GetUnixFileMode(Path.GetDirectoryName(path)!);
+                await Assert.That(mode & (UnixFileMode.GroupRead | UnixFileMode.OtherRead)).IsEqualTo(UnixFileMode.None);
+
+                await File.WriteAllTextAsync(path, "dump");
+                service.RestrictToOwner(path);
+                await Assert.That(File.GetUnixFileMode(path))
+                    .IsEqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
+    public async Task SecretBackupPaths_TenantDirectoryIsCaseInsensitive()
+    {
+        // An all-tenants run creates the dump with the stored tenant id; the tenant route may use other casing.
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        try
+        {
+            var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+                _logger, Path.Combine(root, "secret-backups"));
+
+            var created = service.CreateSecretBackupFilePath("Tenant-A");
+            var fileName = Path.GetFileName(created);
+
+            await Assert.That(Path.GetDirectoryName(created)).IsEqualTo(Path.Combine(root, "secret-backups", "tenant-a"));
+            await Assert.That(service.GetSecretBackupFilePath("tenant-a", fileName)).IsEqualTo(created);
+            await Assert.That(service.GetSecretBackupFilePath("TENANT-A", fileName)).IsEqualTo(created);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
+    public async Task CreateSecretBackupFilePath_TightensAPreExistingWideDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        try
+        {
+            var secretRoot = Path.Combine(root, "secret-backups");
+            const UnixFileMode wide = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                                      UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                                      UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+            Directory.CreateDirectory(Path.Combine(secretRoot, "tenant-a"), wide);
+            File.SetUnixFileMode(secretRoot, wide);
+            var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+                _logger, secretRoot);
+
+            service.CreateSecretBackupFilePath("tenant-a");
+
+            const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+            await Assert.That(File.GetUnixFileMode(secretRoot)).IsEqualTo(ownerOnly);
+            await Assert.That(File.GetUnixFileMode(Path.Combine(secretRoot, "tenant-a"))).IsEqualTo(ownerOnly);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
+    public async Task CreateSecretBackupFilePath_RejectsATenantIdThatEscapesTheRoot()
+    {
+        var service = CreateService();
+
+        await Assert.That(() => service.CreateSecretBackupFilePath("../etc")).Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task SecretBackups_AreNotTouchedByTheStaleFileCleanup_ButByTheirOwn()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        try
+        {
+            var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+                _logger, Path.Combine(root, "secret-backups"));
+            service.EnsureDirectoriesExist();
+
+            var backup = service.CreateSecretBackupFilePath("tenant-a");
+            await File.WriteAllTextAsync(backup, "dump");
+            File.SetLastWriteTimeUtc(backup, DateTime.UtcNow.AddDays(-1));
+
+            var freshBackup = service.CreateSecretBackupFilePath("tenant-b");
+            await File.WriteAllTextAsync(freshBackup, "dump");
+
+            await service.CleanupStaleFilesAsync(TimeSpan.FromHours(4));
+            await Assert.That(File.Exists(backup)).IsTrue();
+
+            var deleted = await service.CleanupStaleSecretBackupsAsync(TimeSpan.FromHours(12));
+            await Assert.That(deleted.Count).IsEqualTo(1);
+            // AB#5544: the deleted path (tenant directory + file name) is reported for the run history.
+            await Assert.That(Path.GetFileName(Path.GetDirectoryName(deleted[0]))).IsEqualTo("tenant-a");
+            await Assert.That(Path.GetFileName(deleted[0])).IsEqualTo(Path.GetFileName(backup));
+            await Assert.That(File.Exists(backup)).IsFalse();
+            await Assert.That(File.Exists(freshBackup)).IsTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Test]
+    public async Task GetSecretBackupFilePath_ResolvesInsideTheTenantDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+            _logger, Path.Combine(root, "secret-backups"));
+
+        var path = service.GetSecretBackupFilePath("tenant-a", "tenant-a-20261006-120000-abcd1234.presweep.tar.gz");
+
+        await Assert.That(path).IsEqualTo(Path.Combine(Path.GetFullPath(Path.Combine(root, "secret-backups")),
+            "tenant-a", "tenant-a-20261006-120000-abcd1234.presweep.tar.gz"));
+    }
+
+    [Test]
+    [Arguments("../other/x.presweep.tar.gz")]
+    [Arguments("sub/x.presweep.tar.gz")]
+    [Arguments("..presweep.tar.gz")]
+    [Arguments("dump.tar.gz")]
+    [Arguments("")]
+    public async Task GetSecretBackupFilePath_RejectsAnythingButAPlainDumpName(string fileName)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"secret-test-{Guid.NewGuid():N}");
+        var service = new BackupFileStorageService(Path.Combine(root, "tus"), Path.Combine(root, "dumps"),
+            _logger, Path.Combine(root, "secret-backups"));
+
+        await Assert.That(() => service.GetSecretBackupFilePath("tenant-a", fileName)).Throws<ArgumentException>();
     }
 }

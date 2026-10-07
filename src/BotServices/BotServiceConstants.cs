@@ -38,9 +38,33 @@ internal static class BotServiceConstants
     public const string JobApiReadWritePolicy = "JobApiReadWritePolicy";
 
     /// <summary>
+    ///     Policy of the secrets admin operations that change data (AB#5544, contract §6): trigger a secret
+    ///     sweep, delete a pre-sweep dump early. Full-access scope plus the tenant role
+    ///     <c>SecretManagement</c>.
+    /// </summary>
+    public const string SecretManagementPolicy = "SecretManagementPolicy";
+
+    /// <summary>
+    ///     Policy of the secrets admin read operations (AB#5544, contract §6): last sweep report, sweep run
+    ///     list. Read scope plus the tenant role <c>AdminPanelManagement</c>.
+    /// </summary>
+    public const string SecretAdministrationReadPolicy = "SecretAdministrationReadPolicy";
+
+    /// <summary>
     ///     Timespan a cookie is expiring
     /// </summary>
     public static readonly TimeSpan CookieExpireTimeSpan = TimeSpan.FromMinutes(60);
+
+    /// <summary>
+    /// Recurring job id of the daily secret Verify sweep over all tenants (AB#5539).
+    /// </summary>
+    public const string SecretSweepVerifyRecurringJobId = "secret-sweep-verify";
+
+    /// <summary>
+    /// Recurring job id of the never-scheduled secret Encrypt sweep over all tenants, triggered on demand
+    /// from the dashboard (AB#5539).
+    /// </summary>
+    public const string SecretSweepEncryptRecurringJobId = "secret-sweep-encrypt";
 
     /// <summary>
     /// Default prefix for instance name

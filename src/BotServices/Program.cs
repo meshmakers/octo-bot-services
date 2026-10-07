@@ -13,23 +13,27 @@ using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Extensions;
+using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Authorization;
 using Meshmakers.Octo.Services.Infrastructure.Configuration;
 using Meshmakers.Octo.Services.Infrastructure.Services;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Meshmakers.Octo.Services.Observability;
 using Meshmakers.Octo.Services.Swagger.Configuration;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -37,6 +41,7 @@ using MongoDB.Driver;
 using NLog;
 using NLog.Web;
 using tusdotnet;
+using tusdotnet.Interfaces;
 using tusdotnet.Models;
 using tusdotnet.Models.Configuration;
 using tusdotnet.Stores;
@@ -53,7 +58,10 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
     builder.AddObservability()
-        .AddSystemContextHealthCheck();
+        .AddSystemContextHealthCheck()
+        // AB#5561: reachability of the artifact store (pre-sweep dumps, tenant dumps, restore staging). Degraded,
+        // not "ready": an unreachable store breaks dumps, restores and writing sweeps, not the other jobs.
+        .AddArtifactStorageHealthCheck(failureStatus: HealthStatus.Degraded, tags: ["artifact-storage"]);
 
     JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
@@ -61,6 +69,10 @@ try
         builder.Configuration.GetSection("Bot").Bind(options));
     builder.Services.Configure<OctoSystemConfiguration>(options =>
         builder.Configuration.GetSection("System").Bind(options));
+    // AB#5539: secret sweep (Bot:SecretSweep, env OCTO_BOT__SECRETSWEEP__*). The key ring is the engine's
+    // SecretEncryption section, bound by AddRuntimeEngine().
+    builder.Services.Configure<SecretSweepJobOptions>(options =>
+        builder.Configuration.GetSection(SecretSweepJobOptions.SectionName).Bind(options));
 
     // additional providers here needed.
     // allow environment variables to override values from other providers.
@@ -156,10 +168,20 @@ try
     var botOptions = new OctoBotServicesOptions();
     builder.Configuration.GetSection("Bot").Bind(botOptions);
 
+    var secretSweepOptions = new SecretSweepJobOptions();
+    builder.Configuration.GetSection(SecretSweepJobOptions.SectionName).Bind(secretSweepOptions);
+
     builder.Services.AddOctoJobs(
         tusStoragePath: botOptions.TusStoragePath,
         dumpStoragePath: botOptions.DumpStoragePath,
-        fileRetentionHours: botOptions.FileRetentionHours);
+        fileRetentionHours: botOptions.FileRetentionHours,
+        secretBackupStoragePath: secretSweepOptions.BackupStoragePath,
+        secretBackupRetentionDays: secretSweepOptions.BackupRetentionDays,
+        artifactRetentionHours: botOptions.ArtifactRetentionHours);
+    // AB#5561: platform artifact store (ArtifactStorage section, OCTO_ARTIFACTSTORAGE__*). Without configuration it
+    // is the file system below <temp>/octo-bot/artifacts, so a local start needs no new settings. Precedence of the
+    // file system root and the Bot:SecretSweep:BackupStoragePath alias: see AddOctoBotArtifactStorage / README.
+    builder.Services.AddOctoBotArtifactStorage(builder.Configuration, botOptions.ScratchPath);
     builder.Services.AddOctoNotification();
     builder.Services.AddCkModelSystemBotV3();
 
@@ -228,24 +250,8 @@ try
         }).AddJwtBearer();
 
 
-    builder.Services.AddAuthorization(options =>
-    {
-        options.AddPolicy(BotServiceConstants.AuthenticatedUserPolicy,
-            policyBuilder => policyBuilder.RequireAuthenticatedUser());
-
-        options.AddPolicy(BotServiceConstants.JobApiReadOnlyPolicy, authorizationPolicyBuilder =>
-        {
-            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope,
-                CommonConstants.OctoApiFullAccess,
-                CommonConstants.OctoApiReadOnly);
-        });
-
-        options.AddPolicy(BotServiceConstants.JobApiReadWritePolicy, authorizationPolicyBuilder =>
-        {
-            authorizationPolicyBuilder.RequireClaim(InfrastructureCommon.ClaimScope,
-                CommonConstants.OctoApiFullAccess);
-        });
-    });
+    // AB#5544: the policies live in BotAuthorizationPolicies so the API tests use the very same ones.
+    builder.Services.AddAuthorization(options => options.AddBotPolicies());
 
     builder.Services.AddMvcCore().AddAuthorization();
     builder.Services.AddMvc();
@@ -267,7 +273,9 @@ try
         options.PolicyScopeMapping = new Dictionary<string, IEnumerable<string>>
         {
             { BotServiceConstants.JobApiReadOnlyPolicy, [CommonConstants.OctoApiReadOnly] },
-            { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.OctoApiFullAccess] }
+            { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.OctoApiFullAccess] },
+            { BotServiceConstants.SecretManagementPolicy, [CommonConstants.OctoApiFullAccess] },
+            { BotServiceConstants.SecretAdministrationReadPolicy, [CommonConstants.OctoApiReadOnly] }
         };
         
         options.XmlDocDataTransferObjectAssemblies = [typeof(JobDto).Assembly];
@@ -337,6 +345,9 @@ try
         options.SchedulePollingInterval = TimeSpan.FromSeconds(schedulePollingSeconds);
     });
 
+    // AB#5539: sweep runs a crashed/killed process left in Running are marked Failed after startup.
+    builder.Services.AddOctoSecretSweepInterruptedRunRecovery();
+
 
     // NLog: Setup NLog for Dependency injection
     builder.Logging.ClearProviders();
@@ -351,6 +362,7 @@ try
     // Ensure backup storage directories exist
     var fileStorage = app.Services.GetRequiredService<IBackupFileStorageService>();
     fileStorage.EnsureDirectoriesExist();
+    var artifactStorage = app.Services.GetRequiredService<IBotArtifactStorage>();
 
     app.MapObservability();
 
@@ -477,6 +489,40 @@ try
                             $"Upload metadata names tenant '{declared}' but the request addresses '{routeTenant}'.");
                     }
                 }
+            },
+            // AB#5561: a completed restore upload moves into the artifact store (restore-staging/<tenant>/<id>,
+            // encrypted when a key ring is configured), so the restore survives a pod restart and runs on any
+            // replica. Archive data import uploads stay on the local disk (consumed by path).
+            OnFileCompleteAsync = async ctx =>
+            {
+                var file = await ctx.GetFileAsync();
+                var metadata = await file.GetMetadataAsync(ctx.CancellationToken);
+                if (!metadata.ContainsKey("databaseName"))
+                {
+                    return;
+                }
+
+                var tenantId = ctx.HttpContext.GetTenantId()
+                               ?? throw new InvalidOperationException(
+                                   "The tus upload endpoint was reached without a tenant route value.");
+                var localPath = fileStorage.GetTusUploadFilePath(tenantId, ctx.FileId);
+                try
+                {
+                    await artifactStorage.StoreFileAsync(ArtifactCategories.RestoreStaging, tenantId, ctx.FileId,
+                        localPath, ArtifactEncryption.IfConfigured, ctx.CancellationToken);
+                }
+                catch (Exception e)
+                {
+                    // The upload stays on this pod's disk; the restore falls back to it (legacy path).
+                    logger.Error(e, "Could not stage the restore upload '{0}' of tenant '{1}' in the artifact " +
+                                    "store; it stays on the local disk", ctx.FileId, tenantId);
+                    return;
+                }
+
+                if (ctx.Store is ITusTerminationStore terminationStore)
+                {
+                    await terminationStore.DeleteFileAsync(ctx.FileId, ctx.CancellationToken);
+                }
             }
         }
     })
@@ -528,6 +574,27 @@ try
     // Register recurring cleanup job for stale backup files
     RecurringJob.AddOrUpdate<ICleanupStaleFilesJob>("cleanup-stale-files",
         job => job.Run(BotCancellationToken.Null), Cron.Hourly);
+
+    // AB#5539 (concept AB#5528 §5.2 phase 4): recurring Verify over all tenants, and the one-time Encrypt
+    // as a never-scheduled recurring job so an operator can trigger it from the dashboard ("Trigger now")
+    // besides POST system/v1/secrets/sweep. Both are owned by the system tenant (job tenant binding).
+    var systemTenantId = app.Services.GetRequiredService<IOptions<OctoSystemConfiguration>>().Value.SystemTenantId;
+    if (string.IsNullOrWhiteSpace(secretSweepOptions.VerifyCron))
+    {
+        RecurringJob.RemoveIfExists(BotServiceConstants.SecretSweepVerifyRecurringJobId);
+    }
+    else
+    {
+        RecurringJob.AddOrUpdate<ISecretSweepJob>(BotServiceConstants.SecretSweepVerifyRecurringJobId,
+            job => job.RunAllTenants(systemTenantId, SecretSweepMode.Verify, SecretSweepTrigger.Recurring, null,
+                null, BotCancellationToken.Null),
+            secretSweepOptions.VerifyCron);
+    }
+
+    RecurringJob.AddOrUpdate<ISecretSweepJob>(BotServiceConstants.SecretSweepEncryptRecurringJobId,
+        job => job.RunAllTenants(systemTenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, null, null,
+            BotCancellationToken.Null),
+        Cron.Never());
 
     await app.RunAsync();
 }

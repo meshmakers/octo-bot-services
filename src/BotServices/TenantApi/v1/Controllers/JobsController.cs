@@ -5,10 +5,12 @@ using Duende.IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
+using Meshmakers.Octo.Runtime.Contracts.Secrets;
 using Meshmakers.Octo.Services.Infrastructure.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -85,11 +87,14 @@ public class JobsController : JobsControllerBase
     /// <param name="jobStorage">Reads job details and writes job parameters (AB#5070).</param>
     /// <param name="tenantAccessGuard">Authorizes a job instance against its tenant (AB#5070).</param>
     /// <param name="distributedCache">Backing store of the legacy GridFS artifact fallback.</param>
+    /// <param name="artifactStorage">Artifact store of tenant dumps and staged restore uploads (AB#5561).</param>
     /// <param name="logger">Logger.</param>
     public JobsController(IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage,
         IJobStorageAccessor jobStorage, IJobTenantAccessGuard tenantAccessGuard,
-        IDistributedCacheService distributedCache, ILogger<JobsControllerBase> logger)
-        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache, logger)
+        IDistributedCacheService distributedCache, IBotArtifactStorage artifactStorage,
+        ILogger<JobsControllerBase> logger)
+        : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache,
+            artifactStorage, logger)
     {
     }
 
@@ -124,14 +129,14 @@ public class JobsController : JobsControllerBase
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult RestoreFromUpload(
+    public Task<IActionResult> RestoreFromUpload(
         [FromRoute] [Required] string tenantId,
         [Required] string tusFileId,
         [Required] string databaseName,
         string? oldDatabaseName = null,
         [FromQuery] bool restoreArchiveData = false)
     {
-        return EnqueueRestoreFromUpload(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData);
+        return EnqueueRestoreFromUploadAsync(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData);
     }
 
     /// <summary>
@@ -205,6 +210,61 @@ public class JobsController : JobsControllerBase
         [FromQuery] ArchiveImportMode mode = ArchiveImportMode.InsertOnly)
     {
         return EnqueueImportArchiveDataFromUpload(tusFileId, tenantId, archiveRtId, mode);
+    }
+
+    /// <summary>
+    ///     Starts the secret sweep of the tenant taken from the route (AB#5539, AB#5544, contract §9).
+    ///     <c>Verify</c> only counts; <c>Encrypt</c> turns clear text and <c>enc:v1</c> into <c>enc:v2</c>
+    ///     with the active key; <c>Reprotect</c> re-encrypts everything not under the active key (key
+    ///     rotation; CLI / ops); <c>CleanupUnreadable</c> deletes values whose key id is not in the key ring
+    ///     (irreversible except via the pre-sweep dump). Values with an unknown key id are kept by every other
+    ///     mode and reported for re-entry. Every writing mode first takes a pre-sweep dump of the tenant and is
+    ///     skipped when that fails. The job's status is read through <c>system/v1/jobs?id=…</c>, the report
+    ///     through <see cref="GetSecretSweepReport" />, the run through <c>{tenantId}/v1/secrets/sweep-runs</c>.
+    ///     Requires the tenant role <c>SecretManagement</c> (<c>403</c> otherwise).
+    /// </summary>
+    /// <param name="tenantId">The tenant id, from the route.</param>
+    /// <param name="mode">
+    ///     <c>Verify</c> (default), <c>Encrypt</c>, <c>Reprotect</c> or <c>CleanupUnreadable</c> (name or number).
+    ///     <c>Decrypt</c> is refused with <c>400</c>.
+    /// </param>
+    /// <param name="confirm">
+    ///     Must be <c>true</c> for <c>Encrypt</c> and <c>CleanupUnreadable</c>; otherwise <c>400</c> with the
+    ///     error code <c>ConfirmationRequired</c>.
+    /// </param>
+    // POST: {tenantId}/v1/jobs/secret-sweep?mode=Encrypt&confirm=true
+    [HttpPost]
+    [Route("secret-sweep")]
+    [Authorize(BotServiceConstants.SecretManagementPolicy)]
+    [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(CodedBadRequestErrorDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public IActionResult SecretSweep([FromRoute] [Required] string tenantId,
+        [FromQuery] SecretSweepMode mode = SecretSweepMode.Verify, [FromQuery] bool confirm = false)
+    {
+        return EnqueueSecretSweep(tenantId, mode, confirm);
+    }
+
+    /// <summary>
+    ///     Returns the last secret sweep report of the tenant taken from the route (AB#5539): counts per
+    ///     stored form and key id, per CK type and slot, the unreadable values (unknown key id, re-entry list),
+    ///     the secrets to re-enter and the failures. Never contains a value. Written by every sweep of the
+    ///     tenant - on demand, recurring and after a restore. Requires the tenant role
+    ///     <c>AdminPanelManagement</c> (<c>403</c> otherwise).
+    /// </summary>
+    /// <param name="tenantId">The tenant id, from the route.</param>
+    /// <param name="reportStore">Report store.</param>
+    // GET: {tenantId}/v1/jobs/secret-sweep/report
+    [HttpGet]
+    [Route("secret-sweep/report")]
+    [Authorize(BotServiceConstants.SecretAdministrationReadPolicy)]
+    [ProducesResponseType(typeof(SecretSweepReport), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public Task<IActionResult> GetSecretSweepReport([FromRoute] [Required] string tenantId,
+        [FromServices] ISecretSweepReportStore reportStore)
+    {
+        return GetSecretSweepReportAsync(tenantId, reportStore);
     }
 
     /// <summary>

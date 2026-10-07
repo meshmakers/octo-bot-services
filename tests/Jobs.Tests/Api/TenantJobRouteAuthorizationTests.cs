@@ -33,11 +33,12 @@ internal class TenantJobRouteAuthorizationTests
     private const string Child = JobsApiTestHost.Child;
     private const string Unrelated = JobsApiTestHost.Unrelated;
 
-    // The five tenant-addressed operations of this service, with the query arguments each needs
+    // The tenant-addressed operations of this service, with the query arguments each needs
     // beyond the tenant. Both controllers serve exactly this set.
     private const string ExportQuery = "?archiveRtId=6512a1b2c3d4e5f601020304";
     private const string RestoreQuery = "?tusFileId=upload-1&databaseName=octo-child";
     private const string ImportQuery = "?tusFileId=upload-1&archiveRtId=6512a1b2c3d4e5f601020304";
+    private const string SecretSweepQuery = "?mode=Encrypt&confirm=true";
 
     /// <summary>The equality case: a user token of the addressed tenant. Unchanged by AB#5060.</summary>
     [Test]
@@ -46,6 +47,7 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
+    [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_OwnTenantUserToken_IsAllowed(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync();
@@ -67,6 +69,7 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
+    [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_ParentUserToken_IsAllowedOnChildRoute(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync();
@@ -86,6 +89,7 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
+    [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_UnrelatedUserToken_IsForbidden(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync();
@@ -108,6 +112,7 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
+    [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_ParentServiceToken_IsNotAllowedByTheAncestorRule(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync(
@@ -128,6 +133,7 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
+    [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_OwnServiceToken_IsAllowed(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync(
@@ -158,6 +164,7 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
+    [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_EnqueuesTheJobForTheRouteTenant(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync();
@@ -204,6 +211,7 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
+    [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task SystemRoute_IsGone_AndEnqueuesNothing(string route, string query)
     {
         using var host = await JobsApiTestHost.StartAsync();

@@ -1,12 +1,15 @@
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Hangfire.Server;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
+using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.StreamData;
+using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -18,37 +21,82 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// <c>.octobak</c> and <c>restoreArchiveData</c> is set, each archive in the backup is restored into
 /// CrateDB via a clean drop/recreate/import sequence (concept §5.1); per-archive failures are
 /// recorded and the job still succeeds (continue + report, §2 decision #4).
+/// After the restore the secret sweep runs on the restored tenant (AB#5539, concept AB#5528 §6, decision 5):
+/// values of an unknown key id become "not set" and are reported for re-entry, older plaintext is encrypted.
+/// AB#5561: the staged upload is read from the artifact store (<c>restore-staging/&lt;tenant&gt;/&lt;uploadId&gt;</c>,
+/// plain or <c>.octoenc</c>) into the local scratch directory, decrypted when needed; an upload staged on the local
+/// disk before AB#5561 (or when staging into the store failed) is still restored from there.
 /// </summary>
 public class RestoreRepositoryJob(
     ILogger<RestoreRepositoryJob> logger,
     ISystemContext systemContext,
-    IBackupFileStorageService backupFileStorage) : IRestoreRepositoryJob
+    IBackupFileStorageService backupFileStorage,
+    ISecretSweepCoordinator? secretSweepCoordinator = null,
+    IBotArtifactStorage? artifactStorage = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <inheritdoc />
-    public async Task Run(string tenantId, string databaseName, string cacheKey,
-        string? oldDatabaseName, bool restoreArchiveData,
+    public async Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
+        string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext,
         IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
 
         // cacheKey is used as the tus file ID (or legacy cache key). The tenant is part of the
-        // address since AB#5060: uploads live under a per-tenant directory, so a restore can only
-        // ever resolve a file staged for the very tenant it is restoring.
-        var filePath = backupFileStorage.GetTusUploadFilePath(tenantId, cacheKey);
+        // address since AB#5060: uploads live under a per-tenant directory (and, since AB#5561, under the
+        // tenant's restore-staging prefix of the artifact store), so a restore can only ever resolve a file
+        // staged for the very tenant it is restoring.
+        var localUploadPath = backupFileStorage.GetTusUploadFilePath(tenantId, cacheKey);
+        var filePath = localUploadPath;
+        string? stagedFileName = null;
+        string? scratchPath = null;
 
         try
         {
             if (!await systemContext.IsSystemTenantExistingAsync())
             {
-                return;
+                return null;
             }
 
-            if (!File.Exists(filePath))
+            var staged = artifactStorage == null
+                ? null
+                : await artifactStorage.FindRestoreStagingAsync(tenantId, cacheKey, ct);
+            if (staged != null)
+            {
+                stagedFileName = staged.Value.FileName;
+                scratchPath = artifactStorage!.CreateScratchFilePath(".restore");
+                logger.LogInformation(
+                    "Reading staged upload '{FileName}' of tenant '{TenantId}' from the artifact store", stagedFileName,
+                    tenantId);
+                if (!await artifactStorage.TryWritePlainToFileAsync(ArtifactCategories.RestoreStaging, tenantId,
+                        stagedFileName, scratchPath, ct))
+                {
+                    throw new JobFailedException(
+                        $"The staged upload for tus file ID '{cacheKey}' disappeared from the artifact store " +
+                        "(expired?). Upload the backup again.");
+                }
+
+                filePath = scratchPath;
+            }
+            else if (!File.Exists(filePath))
             {
                 throw new JobFailedException(
                     $"Backup file not found at '{filePath}' for tus file ID '{cacheKey}'.");
+            }
+            else if (artifactStorage != null)
+            {
+                // Local fallback (pre-AB#5561 upload, or staging into the store failed): an uploaded .octoenc
+                // file is decrypted into the scratch directory exactly like a staged one, never fed to mongorestore
+                // as ciphertext.
+                var decryptedPath = artifactStorage.CreateScratchFilePath(".restore");
+                if (await artifactStorage.TryUnprotectLocalFileAsync(tenantId, filePath, decryptedPath, ct))
+                {
+                    logger.LogInformation("Decrypted the encrypted local upload of tenant '{TenantId}' for the restore",
+                        tenantId);
+                    scratchPath = decryptedPath;
+                    filePath = decryptedPath;
+                }
             }
 
             var fileInfo = new FileInfo(filePath);
@@ -72,11 +120,19 @@ public class RestoreRepositoryJob(
                 }
 
                 await RestoreMongoAsync(tenantId, databaseName, filePath, oldDatabaseName, ct);
-                return;
+            }
+            else
+            {
+                await RestoreOctoBakAsync(tenantId, databaseName, oldDatabaseName, filePath, manifest,
+                    restoreArchiveData, ct);
             }
 
-            await RestoreOctoBakAsync(tenantId, databaseName, oldDatabaseName, filePath, manifest, restoreArchiveData,
-                ct);
+            return new RestoreRepositoryResult
+            {
+                TenantId = tenantId,
+                DatabaseName = databaseName,
+                SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId, performContext?.BackgroundJob?.Id, ct)
+            };
         }
         catch (Exception e)
         {
@@ -85,8 +141,55 @@ public class RestoreRepositoryJob(
         }
         finally
         {
-            await backupFileStorage.DeleteFileAsync(filePath);
+            await backupFileStorage.DeleteFileAsync(localUploadPath);
+            artifactStorage?.DeleteScratchFile(scratchPath);
+            if (stagedFileName != null)
+            {
+                await DeleteStagedUploadAsync(tenantId, stagedFileName);
+            }
         }
+    }
+
+    /// <summary>
+    ///     A staged upload is consumed by its restore attempt (as the local tus file always was); the retention and
+    ///     the store's lifecycle rule remove it otherwise.
+    /// </summary>
+    private async Task DeleteStagedUploadAsync(string tenantId, string fileName)
+    {
+        try
+        {
+            await artifactStorage!.DeleteAsync(ArtifactCategories.RestoreStaging, tenantId, fileName);
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Could not delete the staged upload '{FileName}' of tenant '{TenantId}'", fileName,
+                tenantId);
+        }
+    }
+
+    /// <summary>
+    ///     Runs the post-restore secret sweep (AB#5539). The restore itself has succeeded at this point, so
+    ///     a problem of the sweep is reported, never thrown.
+    /// </summary>
+    private async Task<SecretSweepReport?> RunPostRestoreSecretSweepAsync(string tenantId, string? jobId,
+        CancellationToken ct)
+    {
+        if (secretSweepCoordinator == null)
+        {
+            return null;
+        }
+
+        var report = await secretSweepCoordinator.RunAfterRestoreAsync(tenantId, new SecretSweepRunInfo(jobId), ct);
+        if (report.SecretsToReEnter.Count > 0)
+        {
+            logger.LogWarning(
+                "Restore of tenant '{TenantId}': {Count} secret(s) are encrypted with a key unknown to this " +
+                "environment; they were kept, read as not set (key missing) and must be re-entered unless the " +
+                "key is added to the key ring (listed in the job result and in the tenant's secret sweep report)",
+                tenantId, report.SecretsToReEnter.Count);
+        }
+
+        return report;
     }
 
     /// <summary>
@@ -393,4 +496,26 @@ public class RestoreRepositoryJob(
         public static ArchiveRestoreResult Failed(string rtId, string reason) =>
             new(rtId, ArchiveRestoreOutcome.Failed, reason, 0, null);
     }
+}
+
+/// <summary>
+///     Result of a repository restore (job result).
+/// </summary>
+public class RestoreRepositoryResult
+{
+    /// <summary>
+    ///     Restored tenant.
+    /// </summary>
+    public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Restored database.
+    /// </summary>
+    public string DatabaseName { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     The post-restore secret sweep (AB#5539), including the secrets to re-enter
+    ///     (<see cref="SecretSweepReport.SecretsToReEnter" />); <c>null</c> when not wired.
+    /// </summary>
+    public SecretSweepReport? SecretSweep { get; set; }
 }
