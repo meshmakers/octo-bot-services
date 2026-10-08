@@ -36,6 +36,16 @@
         <!-- AB#4230: direct CrateDB stream-data access for the archive data export/import jobs. -->
         <PackageReference Include="Meshmakers.Octo.Runtime.Engine.CrateDb" Version="$(OctoCoreLibVersion)" />
         <PackageReference Include="Meshmakers.Octo.ConstructionKit.Models.StreamData" Version="$(OctoCoreLibVersion)" />
+        <!-- AB#5867 (N7): direct, floating reference on purpose. This host is the ONLY one that runs the
+             MassTransit Hangfire scheduler (AddHangfireMessageScheduler), so the scheduler topology it gets
+             is decided by the DistributionEventHub version resolved HERE. Transitively (via
+             Services.Contracts) NuGet picks the LOWEST version the contracts package was packed against,
+             not the newest on the feed: the 0.2-dev image of 2026-10-07 shipped DEH 0.2.2610.7002 although
+             0.2.2610.8006 (instance-scoped "dev-hangfire" queue) was published, so dev and main kept
+             sharing the legacy "hangfire" queue and RabbitMQ round-robined every schedule between the two
+             bot services (test-2-dev: job lost on every second re-registration). Pinned by
+             HangfireSchedulerTopologyGuardTests. -->
+        <PackageReference Include="Meshmakers.Octo.Common.DistributionEventHub" Version="$(OctoCoreLibVersion)" />
         <ProjectReference Include="..\BotServices.Resources\BotServices.Resources.csproj" />
         <ProjectReference Include="..\Jobs\Jobs.csproj" />
     </ItemGroup>
