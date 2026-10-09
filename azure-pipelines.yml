@@ -8,10 +8,7 @@
 # Bot-specific quirks preserved from the legacy YAML:
 #   - InstallSSHKey (no submodules:recursive — checkout has clean only)
 #   - download-ca — internal CA for dotnet restore
-#   - Build step passes /p:OctoPublishCatalog="$(effectivePublishCatalog)"
-#     and /p:OctoPrivateGitHubApiKey/OctoPublicGitHubApiKey for CK model
-#     catalog publish gating (only main / r* tags push to GitHub catalogs)
-#   - Test passes /p:OctoPublishCkModel=false — Test step must not re-publish CK libs
+#   - Build and Test pass /p:OctoPublishCkModel=false — the shared CK step publishes System.Bot
 #   - SystemTests excluded
 #   - HAS push-nuget — bot publishes Meshmakers.Octo.Bots NuGets
 #   - HAS CK library output: SystemBotCkModel
@@ -48,7 +45,7 @@ resources:
       type: github
       name: meshmakers/octo-pipeline-templates
       endpoint: meshmakers-access-token
-      ref: refs/tags/tpl-v0.6.7
+      ref: refs/tags/tpl-v1.1.2
 
 trigger:
   batch: true
@@ -110,13 +107,6 @@ stages:
               sshPassphrase: '$(SSHPassphrase)'
               sshKeySecureFile: '$(SSHPrivateKeyFile)'
           - template: templates/steps/set-version.yml@pipelineTemplates
-          # CK SemVer honesty gate (AB#4420): System.Bot is published DURING
-          # the dotnet build (/p:OctoPublishCatalog), so the gate must be able
-          # to fail first.
-          - template: templates/steps/validate-ck-versions.yml@pipelineTemplates
-            parameters:
-              constructionKitPaths:
-                - 'src/SystemBotCkModel/ConstructionKit'
           - template: templates/steps/download-ca.yml@pipelineTemplates
           # Fresh package list for the private feed only; nuget.org stays cached.
           # Replaces restore --force and noCache (AB#5720).
@@ -134,7 +124,7 @@ stages:
             inputs:
               command: 'build'
               projects: '$(solutionFile)'
-              arguments: '--configuration $(buildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer) /p:OctoPublishCatalog="$(effectivePublishCatalog)" /p:OctoPrivateGitHubApiKey=$(GitHubPAT) /p:OctoPublicGitHubApiKey=$(GitHubPAT)'
+              arguments: '--configuration $(buildConfiguration) /p:OctoNugetPrivateServer=$(nugetPrivateServer) /p:OctoPublishCkModel=false /p:OctoPrivateGitHubApiKey=$(GitHubPAT) /p:OctoPublicGitHubApiKey=$(GitHubPAT)'
               publishWebProjects: false
               zipAfterPublish: false
               modifyOutputPath: false
@@ -148,6 +138,10 @@ stages:
                 **/*Tests.csproj
                 !**/*SystemTests.csproj
               testRunTitle: 'CI'
+          - template: templates/steps/validate-and-publish-ck-versions.yml@pipelineTemplates
+            parameters:
+              constructionKitPaths:
+                - 'src/SystemBotCkModel/ConstructionKit'
           # Multi-arch image (AB#4451): arm64 for Apple-Silicon kind clusters and
           # edge devices, amd64 for the managed clusters.
           - template: templates/steps/build-and-push-docker.yml@pipelineTemplates
