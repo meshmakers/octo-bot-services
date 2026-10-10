@@ -41,7 +41,28 @@ public interface IImportModelJob
     /// <param name="key">The key definition in redis</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
+    /// <remarks>
+    ///     Kept for jobs that were enqueued before the initiating caller was passed along (AB#6392). It runs the
+    ///     import with the blueprint-lock protection and an unknown caller - never as a system import.
+    /// </remarks>
     [JobDisplayName("Importing Runtime Metadata to tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key, IBotCancellationToken? cancellationToken);
+
+    /// <summary>
+    ///     Imports a runtime model on behalf of the caller that started the import through the API (AB#6392). The
+    ///     import applies the blueprint-lock protection of CK types whose data policy opted in
+    ///     (<c>ProtectBlueprintLocked</c>): it fails atomically, listing every locked entity, before anything is
+    ///     written, and strips the blueprint bookkeeping attributes of the file.
+    /// </summary>
+    /// <param name="tenantId">The corresponding tenant</param>
+    /// <param name="importStrategy">The import strategy to use</param>
+    /// <param name="key">The key definition in redis</param>
+    /// <param name="initiatedBySubjectId">Subject id of the caller; a missing one is still protected, never system</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
+    /// <returns></returns>
+    [JobDisplayName("Importing Runtime Metadata to tenant '{0}'")]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key, string? initiatedBySubjectId,
+        IBotCancellationToken? cancellationToken);
 }

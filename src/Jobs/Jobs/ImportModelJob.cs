@@ -120,8 +120,16 @@ public class ImportModelJob : IImportModelJob
     }
 
     /// <inheritdoc />
-    public async Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
+    public Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
         IBotCancellationToken? cancellationToken)
+    {
+        // A job enqueued before AB#6392 carries no caller. It is still a user import: protect, never system.
+        return ImportRtAsync(tenantId, importStrategy, key, null, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
+        string? initiatedBySubjectId, IBotCancellationToken? cancellationToken)
     {
         try
         {
@@ -131,8 +139,20 @@ public class ImportModelJob : IImportModelJob
             _logger.LogInformation("Starting import of file \'{TempFile}\'", tempFile);
 
             var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
-            await _importRtModelCommand.ImportAsync(tenantRepository, tempFile.Item1, tempFile.Item2, importStrategy,
+            // AB#6392: the session of the import stays the system session; the caller context only adds the
+            // blueprint-lock protection of opted-in CK types.
+            await _importRtModelCommand.ImportAsCallerAsync(tenantRepository, tempFile.Item1, tempFile.Item2,
+                importStrategy, RtImportCallerContext.UserInitiated(initiatedBySubjectId),
                 cancellationToken?.ShutdownToken);
+
+            var lockSummary = _importRtModelCommand.BlueprintLockSummary;
+            if (lockSummary.HasFindings)
+            {
+                _logger.LogWarning(
+                    "Import to \'{TenantId}\' by \'{SubjectId}\': {StrippedAttributes} blueprint attribute value(s) of {StrippedEntities} entity(ies) were removed, {Audited} locked entity(ies) were overwritten under an audit-only policy",
+                    tenantId, initiatedBySubjectId, lockSummary.StrippedAttributeCount,
+                    lockSummary.StrippedEntityCount, lockSummary.AuditedViolationCount);
+            }
 
             await ClearCache(tenantId, key);
 
