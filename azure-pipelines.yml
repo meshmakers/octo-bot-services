@@ -45,7 +45,7 @@ resources:
       type: github
       name: meshmakers/octo-pipeline-templates
       endpoint: meshmakers-access-token
-      ref: refs/tags/tpl-v1.2.1
+      ref: refs/tags/tpl-v1.3.1
 
 trigger:
   batch: true
@@ -99,6 +99,14 @@ stages:
               octoCommVersionOverride: ${{ replace(parameters.octoCommVersion, 'auto', '') }}
           - checkout: self
             clean: true
+          # Redundant-run guard (AB#6344): tags the run with its input fingerprint and, per the pipeline
+          # variable CiGuardMode (default report = tags only, off = disabled, rollback), logs or ends a
+          # main run whose inputs an equal run already built or a newer run supersedes. Steps after it
+          # need ne(variables['CiGuardEnded'], 'true') before skip is switched on (report/off need nothing).
+          - template: templates/steps/guard-redundant-run.yml@pipelineTemplates
+            parameters:
+              parentPipelineId: $(resources.pipeline.octo-common-services.pipelineID)
+              parentRunId: $(resources.pipeline.octo-common-services.runID)
           - task: InstallSSHKey@0
             displayName: 'Install SSH key'
             inputs:
