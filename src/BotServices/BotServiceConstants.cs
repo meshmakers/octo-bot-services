@@ -38,6 +38,14 @@ internal static class BotServiceConstants
     public const string JobApiReadWritePolicy = "JobApiReadWritePolicy";
 
     /// <summary>
+    ///     Policy of the tenant-wide data jobs (AB#4497): dump, restore, archive export / import and the
+    ///     download of their artifacts. Full-access scope plus the tenant role <c>TenantManagement</c>, checked on
+    ///     the caller's own tenant (the tenant of the token), so a parent-tenant caller needs the role in the
+    ///     parent tenant.
+    /// </summary>
+    public const string TenantJobManagementPolicy = "TenantJobManagementPolicy";
+
+    /// <summary>
     ///     Policy of the secrets admin operations that change data (AB#5544, contract §6): trigger a secret
     ///     sweep, delete a pre-sweep dump early. Full-access scope plus the tenant role
     ///     <c>SecretManagement</c>.

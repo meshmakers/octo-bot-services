@@ -39,6 +39,24 @@ internal static class HangfireDashboardScopes
         return IsAuthenticated(user) && HasAnyScope(user!, CommonConstants.OctoApiFullAccess);
     }
 
+    /// <summary>
+    ///     AB#4497: the dashboard lists the jobs of every tenant, so only callers of the system tenant may use it.
+    ///     The tenant of the caller is the <c>tenant_id</c> claim of the token (the platform convention of
+    ///     <c>TenantAuthorizationMiddleware</c>); comparison is case-insensitive like tenant ids elsewhere.
+    /// </summary>
+    public static bool IsSystemTenantCaller(ClaimsPrincipal? user, string systemTenantId)
+    {
+        if (user == null || string.IsNullOrWhiteSpace(systemTenantId))
+        {
+            return false;
+        }
+
+        return user.FindAll(TenantIdClaimType).Any(c =>
+            string.Equals(c.Value, systemTenantId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private const string TenantIdClaimType = "tenant_id";
+
     private static bool IsAuthenticated(ClaimsPrincipal? user)
     {
         return user?.Identity is { IsAuthenticated: true };
@@ -89,12 +107,33 @@ internal static class HangfireDashboardScopes
 ///         order is ever changed.
 ///     </para>
 /// </remarks>
-internal class HangfireDashboardAuthorizationFilter : IDashboardAuthorizationFilter
+internal class HangfireDashboardAuthorizationFilter(string systemTenantId) : IDashboardAuthorizationFilter
 {
     public bool Authorize(DashboardContext context)
     {
         var httpContext = context.GetHttpContext();
 
-        return HangfireDashboardScopes.HasReadAccess(httpContext.User);
+        return HangfireDashboardScopes.HasReadAccess(httpContext.User) &&
+               HangfireDashboardScopes.IsSystemTenantCaller(httpContext.User, systemTenantId);
+    }
+}
+
+/// <summary>
+///     AB#4497: answers <c>403</c> for a dashboard request whose principal is not a caller of the system tenant.
+///     Runs after <see cref="HangfireDashboardBearerAuthenticationMiddleware" />, so the principal is the bearer
+///     principal carrying <c>tenant_id</c>. The Hangfire filter repeats the check (it is the only one Hangfire
+///     itself consults).
+/// </summary>
+internal class HangfireDashboardSystemTenantMiddleware(RequestDelegate next, string systemTenantId)
+{
+    public Task Invoke(HttpContext context)
+    {
+        if (!HangfireDashboardScopes.IsSystemTenantCaller(context.User, systemTenantId))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        }
+
+        return next(context);
     }
 }

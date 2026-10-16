@@ -274,6 +274,7 @@ try
         {
             { BotServiceConstants.JobApiReadOnlyPolicy, [CommonConstants.OctoApiReadOnly] },
             { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.OctoApiFullAccess] },
+            { BotServiceConstants.TenantJobManagementPolicy, [CommonConstants.OctoApiFullAccess] },
             { BotServiceConstants.SecretManagementPolicy, [CommonConstants.OctoApiFullAccess] },
             { BotServiceConstants.SecretAdministrationReadPolicy, [CommonConstants.OctoApiReadOnly] }
         };
@@ -454,10 +455,9 @@ try
                     return;
                 }
 
-                // Require the OctoApiFullAccess scope for write operations
-                var hasClaim = ctx.HttpContext.User.HasClaim(
-                    InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess);
-                if (!hasClaim)
+                // Require the OctoApiFullAccess scope for write operations and (AB#4497) the tenant role
+                // TenantManagement of the caller, like the restore / import routes this upload feeds.
+                if (!TusUploadAuthorization.MayUpload(ctx.HttpContext.User))
                 {
                     ctx.FailRequest(System.Net.HttpStatusCode.Forbidden);
                 }
@@ -553,11 +553,19 @@ try
     // UseOctoCookieBasedAuthentication() above converts into an Authorization header and a cookie.
     // app.UseAuthentication() only runs the default (Cookies) scheme, so the branch authenticates
     // the bearer scheme explicitly first; see HangfireDashboardBearerAuthenticationMiddleware.
+    //
+    // 🔴 AB#4497 — on top of the scope gate the dashboard is reachable only for callers of the SYSTEM tenant
+    // (the tenant_id claim of the token equals OctoSystemConfiguration.SystemTenantId). A tenant
+    // administrator of any other tenant would otherwise see the jobs of all tenants. Other tenants get 403.
+    var dashboardSystemTenantId = app.Services.GetRequiredService<IOptions<OctoSystemConfiguration>>().Value
+        .SystemTenantId;
     app.Map("/ui", branchedApp =>
     {
         branchedApp.UseRouting();
         branchedApp.UseMiddleware<HangfireDashboardBearerAuthenticationMiddleware>();
         branchedApp.UseAuthorization(BotServiceConstants.JobApiReadOnlyPolicy);
+
+        branchedApp.UseMiddleware<HangfireDashboardSystemTenantMiddleware>(dashboardSystemTenantId);
 
         branchedApp.UseHangfireDashboard("/jobs", new DashboardOptions
         {
@@ -565,7 +573,7 @@ try
             // Read-only scope may look at the jobs but must not requeue or delete them.
             IsReadOnlyFunc = dashboardContext =>
                 !HangfireDashboardScopes.HasWriteAccess(dashboardContext.GetHttpContext().User),
-            Authorization = [new HangfireDashboardAuthorizationFilter()]
+            Authorization = [new HangfireDashboardAuthorizationFilter(dashboardSystemTenantId)]
         });
     });
 

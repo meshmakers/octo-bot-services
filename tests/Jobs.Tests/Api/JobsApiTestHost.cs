@@ -101,7 +101,7 @@ internal sealed class JobsApiTestHost : IDisposable
 
     /// <summary>
     ///     A user token: carries <c>sub</c>, so the middleware takes the user path. Without
-    ///     <paramref name="roles" /> it carries both secrets admin roles (AB#5544) - a tenant administrator -
+    ///     <paramref name="roles" /> it carries the secrets admin roles (AB#5544) and TenantManagement (AB#4497) - a tenant administrator -
     ///     so the gate tests are not about roles; pass roles explicitly (or none via
     ///     <see cref="UserTokenWithRoles" />) to test them.
     /// </summary>
@@ -364,11 +364,11 @@ internal sealed class JobsApiTestHost : IDisposable
                 return Task.FromResult(AuthenticateResult.Fail("Malformed test token"));
             }
 
-            // "<kind>:<tenant>" = both secrets admin roles; "<kind>:<tenant>|<role>,<role>" = exactly these.
+            // "<kind>:<tenant>" = the tenant administrator roles; "<kind>:<tenant>|<role>,<role>" = exactly these.
             var tenantAndRoles = parts[1].Split('|', 2);
             var roles = tenantAndRoles.Length == 2
                 ? tenantAndRoles[1].Split(',', StringSplitOptions.RemoveEmptyEntries)
-                : [CommonConstants.AdminPanelManagementRole, CommonConstants.SecretManagementRole];
+                : [CommonConstants.AdminPanelManagementRole, CommonConstants.SecretManagementRole, CommonConstants.TenantManagementRole];
 
             var isUser = parts[0] == "user";
             var claims = new List<Claim>
