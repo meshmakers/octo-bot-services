@@ -41,6 +41,13 @@ internal static class BotAuthorizationPolicies
             policyBuilder.RequireClaim(InfrastructureCommon.ClaimScope,
                 CommonConstants.OctoApiFullAccess));
 
+        // AB#4497: dump, restore, archive export / import and artifact download need the tenant role
+        // TenantManagement on top of the scope. A dump is a whole-tenant backup that bypasses row-level data
+        // permissions by design, so it must not be reachable for every user with the octo_api scope.
+        options.AddPolicy(BotServiceConstants.TenantJobManagementPolicy, policyBuilder =>
+            policyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)
+                .RequireAssertion(context => HasTenantRole(context.User, CommonConstants.TenantManagementRole)));
+
         // AB#5544 (contract §6): trigger sweeps and delete dumps.
         options.AddPolicy(BotServiceConstants.SecretManagementPolicy, policyBuilder =>
             policyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)

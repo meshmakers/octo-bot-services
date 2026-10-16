@@ -103,6 +103,33 @@ child route, unrelated tenant 403, parent **service** token 403 under `Enforce` 
 passes, identical enqueued job on both surfaces, and the marker present on the tenant controller and
 nowhere else in the assembly.
 
+### Required roles of the job operations and the Hangfire dashboard (AB#4497)
+
+Scope alone (`octo_api`) is not enough for the tenant-wide data jobs. They need the **tenant role
+`TenantManagement`** in the caller's token (policy `TenantJobManagementPolicy` = full-access scope + role; `403`
+without it, no job is enqueued):
+
+| Operation | Route | Required |
+| --- | --- | --- |
+| Repository dump | `POST {tenantId}/v1/jobs/dump-repository` | scope + `TenantManagement` |
+| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | scope + `TenantManagement` |
+| Archive data export / import | `POST {tenantId}/v1/jobs/export-archive-data`, `.../import-archive-data-from-upload` | scope + `TenantManagement` |
+| tus upload feeding restore / import | `{tenantId}/v1/tus-upload` | scope + `TenantManagement` (`TusUploadAuthorization`) |
+| Artifact download (dump / export file) | `GET {tenantId}/v1/jobs/download`, deprecated `GET system/v1/jobs/download` | scope + `TenantManagement` |
+| Fixup script run | `POST {tenantId}/v1/jobs/run-fixup-scripts` | scope only (unchanged) |
+
+* The role is read from the **caller's own token**, i.e. the caller's own tenant. A user of a parent tenant keeps
+  `[AllowParentTenantAdministration]` on these routes, but needs `TenantManagement` in the **parent** tenant; the role is
+  not looked up in the target tenant.
+* A dump is a whole-tenant backup and **bypasses row-level data permissions by design**; the role gate is what protects
+  it. Export jobs running without the caller's security context is a separate story (AB#6734).
+* The Hangfire dashboard `/ui/jobs` lists the jobs of all tenants, so on top of the scope gate it is reachable only
+  for callers of the **system tenant** (`tenant_id` claim = `OctoSystemConfiguration.SystemTenantId`,
+  `HangfireDashboardSystemTenantMiddleware` + `HangfireDashboardAuthorizationFilter`); every other tenant gets `403`.
+* Tests: `TenantJobRoleAuthorizationTests` (per entry point: no role = 403 and nothing enqueued, with role = allowed,
+  parent user with / without role), `TenantJobRoleWiringTests` (policy registration as `Program.cs` calls it, production
+  gate defaults, policy on every entry point, tus rule, dashboard rule, `Program.cs` call sites).
+
 ### Secret sweep and secrets admin API (AB#5539, AB#5544)
 
 Implements phases 4 and 5 of the SECRET attribute value type (concept

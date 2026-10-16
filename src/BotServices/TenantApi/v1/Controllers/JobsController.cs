@@ -26,6 +26,14 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 /// </summary>
 /// <remarks>
 ///     <para>
+///         🔴 <b>Role (AB#4497).</b> Dump, restore, archive export, archive import and the artifact download need
+///         the tenant role <c>TenantManagement</c> in addition to the <c>octo_api</c> scope
+///         (<see cref="BotServiceConstants.TenantJobManagementPolicy" />, <c>403</c> otherwise, no job enqueued).
+///         The role is read from the caller's own token, i.e. the caller's own tenant: a parent-tenant user
+///         administering a child needs <c>TenantManagement</c> in the parent tenant. The fixup script run is not
+///         part of this rule. A dump is a whole-tenant backup and bypasses row-level data permissions by design.
+///     </para>
+///     <para>
 ///         🔴 <b>Why the route shape matters (AB#5060).</b> The transport tenant gate
 ///         (<c>TenantAuthorizationMiddleware</c>, wired in <c>Program.cs</c>) reads the tenant from the
 ///         <b>route value</b>. As long as these operations addressed their tenant through
@@ -125,7 +133,7 @@ public class JobsController : JobsControllerBase
     // POST: {tenantId}/v1/jobs/restore-from-upload
     [HttpPost]
     [Route("restore-from-upload")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -140,7 +148,9 @@ public class JobsController : JobsControllerBase
     }
 
     /// <summary>
-    ///     Dumps the repository for the tenant taken from the route.
+    ///     Dumps the repository for the tenant taken from the route. Requires the tenant role
+    ///     <c>TenantManagement</c> of the caller's own tenant (AB#4497; <c>403</c> otherwise). The dump is a
+    ///     whole-tenant backup that bypasses row-level data permissions by design.
     /// </summary>
     /// <param name="tenantId">The tenant id, from the route.</param>
     /// <param name="includeArchiveData">
@@ -151,7 +161,7 @@ public class JobsController : JobsControllerBase
     // POST: {tenantId}/v1/jobs/dump-repository
     [HttpPost]
     [Route("dump-repository")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult DumpRepository([FromRoute] [Required] string tenantId,
@@ -174,7 +184,7 @@ public class JobsController : JobsControllerBase
     // POST: {tenantId}/v1/jobs/export-archive-data
     [HttpPost]
     [Route("export-archive-data")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult ExportArchiveData(
@@ -199,7 +209,7 @@ public class JobsController : JobsControllerBase
     // POST: {tenantId}/v1/jobs/import-archive-data-from-upload
     [HttpPost]
     [Route("import-archive-data-from-upload")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -293,7 +303,7 @@ public class JobsController : JobsControllerBase
     // GET: {tenantId}/v1/jobs/download?id=abc
     [HttpGet]
     [Route("download")]
-    [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
     [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

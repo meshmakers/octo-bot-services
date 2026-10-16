@@ -120,11 +120,13 @@ public class JobsController : JobsControllerBase
     ///     Deprecated in favour of <c>GET {tenantId}/v1/jobs/download?id=…</c> (AB#5070), which the
     ///     transport gate can see. This variant stays functional and now performs the equivalent check
     ///     itself, because leaving an active hole open until stage 3 of AB#5060 is not acceptable.
+    ///     Like the tenant route it needs the tenant role <c>TenantManagement</c> (AB#4497): the artifacts are
+    ///     dumps and exports.
     /// </remarks>
     // GET: system/jobs/download?id=abc
     [HttpGet]
     [Route("download")]
-    [Authorize(BotServiceConstants.JobApiReadOnlyPolicy)]
+    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
     [ProducesResponseType(typeof(NotFoundErrorDto), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
