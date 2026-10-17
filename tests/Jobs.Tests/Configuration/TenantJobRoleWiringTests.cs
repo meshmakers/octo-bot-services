@@ -140,7 +140,7 @@ internal class TenantJobRoleWiringTests
         await Assert.That(code).DoesNotContain("ServiceTokenEnforcement");
         await Assert.That(code).Contains("BotServiceConstants.TenantJobManagementPolicy");
         await Assert.That(code).Contains("TusUploadAuthorization.MayUpload(");
-        await Assert.That(code).Contains("HangfireDashboardSystemTenantMiddleware>(dashboardSystemTenantId)");
+        await Assert.That(code).Contains("HangfireDashboardAccessMiddleware>(dashboardSystemTenantId)");
         await Assert.That(code).Contains("new HangfireDashboardAuthorizationFilter(dashboardSystemTenantId)");
     }
 
@@ -206,7 +206,7 @@ internal class TenantJobRoleWiringTests
     public async Task DashboardMiddleware_TenantAToken_Gets403_AndDashboardIsNotReached()
     {
         var reached = false;
-        var middleware = new HangfireDashboardSystemTenantMiddleware(_ =>
+        var middleware = new HangfireDashboardAccessMiddleware(_ =>
         {
             reached = true;
             return Task.CompletedTask;
@@ -226,20 +226,103 @@ internal class TenantJobRoleWiringTests
     public async Task DashboardMiddleware_SystemTenantToken_ReachesTheDashboard()
     {
         var reached = false;
-        var middleware = new HangfireDashboardSystemTenantMiddleware(_ =>
+        var middleware = new HangfireDashboardAccessMiddleware(_ =>
         {
             reached = true;
             return Task.CompletedTask;
         }, SystemTenant);
         var context = new DefaultHttpContext
         {
-            User = Caller(SystemTenant, CommonConstants.OctoApiFullAccess)
+            User = Caller(SystemTenant, CommonConstants.OctoApiFullAccess, ClaimTypes.Role, CommonConstants.TenantManagementRole)
         };
 
         await middleware.Invoke(context);
 
         await Assert.That(reached).IsTrue();
         await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status200OK);
+    }
+
+
+    [Test]
+    public async Task DashboardMiddleware_SystemTenantTokenWithoutTenantManagement_Gets403()
+    {
+        var reached = false;
+        var middleware = new HangfireDashboardAccessMiddleware(_ =>
+        {
+            reached = true;
+            return Task.CompletedTask;
+        }, SystemTenant);
+        var context = new DefaultHttpContext
+        {
+            User = Caller(SystemTenant, CommonConstants.OctoApiFullAccess,
+                ClaimTypes.Role, CommonConstants.AdminPanelManagementRole)
+        };
+
+        await middleware.Invoke(context);
+
+        await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status403Forbidden);
+        await Assert.That(reached).IsFalse();
+    }
+
+    [Test]
+    public async Task DashboardMiddleware_TenantATokenWithTenantManagement_Gets403()
+    {
+        var reached = false;
+        var middleware = new HangfireDashboardAccessMiddleware(_ =>
+        {
+            reached = true;
+            return Task.CompletedTask;
+        }, SystemTenant);
+        var context = new DefaultHttpContext
+        {
+            User = Caller("tenant-a", CommonConstants.OctoApiFullAccess, ClaimTypes.Role, CommonConstants.TenantManagementRole)
+        };
+
+        await middleware.Invoke(context);
+
+        await Assert.That(context.Response.StatusCode).IsEqualTo(StatusCodes.Status403Forbidden);
+        await Assert.That(reached).IsFalse();
+    }
+
+    [Test]
+    public async Task Dashboard_SystemTenantAdministrator_RequiresTenantAndRole_BothRoleSpellings()
+    {
+        await Assert.That(HangfireDashboardScopes.IsSystemTenantAdministrator(
+            Caller(SystemTenant, null, ClaimTypes.Role, CommonConstants.TenantManagementRole), SystemTenant)).IsTrue();
+        await Assert.That(HangfireDashboardScopes.IsSystemTenantAdministrator(
+            Caller(SystemTenant, null, "role", CommonConstants.TenantManagementRole), SystemTenant)).IsTrue();
+        await Assert.That(HangfireDashboardScopes.IsSystemTenantAdministrator(
+            Caller(SystemTenant, null), SystemTenant)).IsFalse();
+        await Assert.That(HangfireDashboardScopes.IsSystemTenantAdministrator(
+            Caller("tenant-a", null, ClaimTypes.Role, CommonConstants.TenantManagementRole), SystemTenant)).IsFalse();
+        await Assert.That(HangfireDashboardScopes.IsSystemTenantAdministrator(null, SystemTenant)).IsFalse();
+    }
+
+    [Test]
+    public async Task DashboardFilter_RequiresScopeSystemTenantAndTenantManagement()
+    {
+        var filter = new HangfireDashboardAuthorizationFilter(SystemTenant);
+
+        await Assert.That(Allows(filter, Caller(SystemTenant, CommonConstants.OctoApiFullAccess, ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsTrue();
+        await Assert.That(Allows(filter, Caller(SystemTenant, CommonConstants.OctoApiReadOnly, ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsTrue();
+        // role missing
+        await Assert.That(Allows(filter, Caller(SystemTenant, CommonConstants.OctoApiFullAccess))).IsFalse();
+        // other tenant
+        await Assert.That(Allows(filter, Caller("tenant-a", CommonConstants.OctoApiFullAccess, ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsFalse();
+        // scope missing
+        await Assert.That(Allows(filter, Caller(SystemTenant, null, ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsFalse();
+    }
+
+    private static bool Allows(HangfireDashboardAuthorizationFilter filter, ClaimsPrincipal user)
+    {
+        var httpContext = new DefaultHttpContext
+        {
+            User = user,
+            RequestServices = new ServiceCollection().BuildServiceProvider()
+        };
+        var context = new Hangfire.Dashboard.AspNetCoreDashboardContext(
+            NSubstitute.Substitute.For<Hangfire.JobStorage>(), new Hangfire.DashboardOptions(), httpContext);
+        return filter.Authorize(context);
     }
 
     private static string RepositoryRoot([CallerFilePath] string sourceFile = "")

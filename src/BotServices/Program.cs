@@ -555,8 +555,9 @@ try
     // the bearer scheme explicitly first; see HangfireDashboardBearerAuthenticationMiddleware.
     //
     // 🔴 AB#4497 — on top of the scope gate the dashboard is reachable only for callers of the SYSTEM tenant
-    // (the tenant_id claim of the token equals OctoSystemConfiguration.SystemTenantId). A tenant
-    // administrator of any other tenant would otherwise see the jobs of all tenants. Other tenants get 403.
+    // (the tenant_id claim of the token equals OctoSystemConfiguration.SystemTenantId) who hold the tenant role
+    // TenantManagement. A tenant administrator of any other tenant would otherwise see the jobs of all tenants.
+    // Other tenants and system-tenant callers without the role get 403.
     var dashboardSystemTenantId = app.Services.GetRequiredService<IOptions<OctoSystemConfiguration>>().Value
         .SystemTenantId;
     app.Map("/ui", branchedApp =>
@@ -565,7 +566,7 @@ try
         branchedApp.UseMiddleware<HangfireDashboardBearerAuthenticationMiddleware>();
         branchedApp.UseAuthorization(BotServiceConstants.JobApiReadOnlyPolicy);
 
-        branchedApp.UseMiddleware<HangfireDashboardSystemTenantMiddleware>(dashboardSystemTenantId);
+        branchedApp.UseMiddleware<HangfireDashboardAccessMiddleware>(dashboardSystemTenantId);
 
         branchedApp.UseHangfireDashboard("/jobs", new DashboardOptions
         {

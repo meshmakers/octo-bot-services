@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Hangfire.Dashboard;
+using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Services.Infrastructure;
 
@@ -40,7 +41,8 @@ internal static class HangfireDashboardScopes
     }
 
     /// <summary>
-    ///     AB#4497: the dashboard lists the jobs of every tenant, so only callers of the system tenant may use it.
+    ///     AB#4497: the dashboard lists the jobs of every tenant, so only callers of the system tenant may use it
+    ///     (and, see <see cref="IsSystemTenantAdministrator" />, only with <c>TenantManagement</c>).
     ///     The tenant of the caller is the <c>tenant_id</c> claim of the token (the platform convention of
     ///     <c>TenantAuthorizationMiddleware</c>); comparison is case-insensitive like tenant ids elsewhere.
     /// </summary>
@@ -53,6 +55,24 @@ internal static class HangfireDashboardScopes
 
         return user.FindAll(TenantIdClaimType).Any(c =>
             string.Equals(c.Value, systemTenantId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    ///     AB#4497: the dashboard also needs the tenant role <c>TenantManagement</c> (one <c>role</c> claim per role;
+    ///     both claim spellings are probed like in the authorization policies of this service).
+    /// </summary>
+    public static bool HasTenantManagementRole(ClaimsPrincipal? user)
+    {
+        return user != null &&
+               BotAuthorizationPolicies.HasTenantRole(user, CommonConstants.TenantManagementRole);
+    }
+
+    /// <summary>
+    ///     AB#4497: the dashboard's tenant gate - a caller of the system tenant that holds <c>TenantManagement</c>.
+    /// </summary>
+    public static bool IsSystemTenantAdministrator(ClaimsPrincipal? user, string systemTenantId)
+    {
+        return IsSystemTenantCaller(user, systemTenantId) && HasTenantManagementRole(user);
     }
 
     private const string TenantIdClaimType = "tenant_id";
@@ -114,21 +134,22 @@ internal class HangfireDashboardAuthorizationFilter(string systemTenantId) : IDa
         var httpContext = context.GetHttpContext();
 
         return HangfireDashboardScopes.HasReadAccess(httpContext.User) &&
-               HangfireDashboardScopes.IsSystemTenantCaller(httpContext.User, systemTenantId);
+               HangfireDashboardScopes.IsSystemTenantAdministrator(httpContext.User, systemTenantId);
     }
 }
 
 /// <summary>
-///     AB#4497: answers <c>403</c> for a dashboard request whose principal is not a caller of the system tenant.
+///     AB#4497: answers <c>403</c> for a dashboard request whose principal is not a caller of the system tenant
+///     holding the tenant role <c>TenantManagement</c>.
 ///     Runs after <see cref="HangfireDashboardBearerAuthenticationMiddleware" />, so the principal is the bearer
 ///     principal carrying <c>tenant_id</c>. The Hangfire filter repeats the check (it is the only one Hangfire
 ///     itself consults).
 /// </summary>
-internal class HangfireDashboardSystemTenantMiddleware(RequestDelegate next, string systemTenantId)
+internal class HangfireDashboardAccessMiddleware(RequestDelegate next, string systemTenantId)
 {
     public Task Invoke(HttpContext context)
     {
-        if (!HangfireDashboardScopes.IsSystemTenantCaller(context.User, systemTenantId))
+        if (!HangfireDashboardScopes.IsSystemTenantAdministrator(context.User, systemTenantId))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return Task.CompletedTask;

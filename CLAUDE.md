@@ -12,7 +12,7 @@ root `CLAUDE.md` rules (`dotnet build Octo.Bots.sln -c DebugL`, tests are TUnit:
 | Fixup script run | scope only |
 | Secret sweep trigger / delete dump | scope + `SecretManagement`; sweep report / runs: read scope + `AdminPanelManagement` |
 | Job status / delete (System API) | scope + job tenant binding (`JobTenantAccessGuard`) |
-| Hangfire dashboard `/ui/jobs` | scope + caller of the **system tenant** (`tenant_id` claim) |
+| Hangfire dashboard `/ui/jobs` | scope + caller of the **system tenant** (`tenant_id` claim) **and** tenant role `TenantManagement` (`HangfireDashboardAccessMiddleware` + `HangfireDashboardAuthorizationFilter`; others get 403) |
 
 Rules:
 - The role is checked on the caller's own token. A parent-tenant user (`[AllowParentTenantAdministration]`) needs
