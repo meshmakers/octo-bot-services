@@ -124,8 +124,9 @@ without it, no job is enqueued):
 * A dump is a whole-tenant backup and **bypasses row-level data permissions by design**; the role gate is what protects
   it. Export jobs running without the caller's security context is a separate story (AB#6734).
 * The Hangfire dashboard `/ui/jobs` lists the jobs of all tenants, so on top of the scope gate it is reachable only
-  for callers of the **system tenant** (`tenant_id` claim = `OctoSystemConfiguration.SystemTenantId`,
-  `HangfireDashboardSystemTenantMiddleware` + `HangfireDashboardAuthorizationFilter`); every other tenant gets `403`.
+  for callers of the **system tenant** (`tenant_id` claim = `OctoSystemConfiguration.SystemTenantId`) **that also hold
+  the tenant role `TenantManagement`** (`HangfireDashboardAccessMiddleware` + `HangfireDashboardAuthorizationFilter`);
+  every other tenant, and a system-tenant caller without the role, gets `403`.
 * Tests: `TenantJobRoleAuthorizationTests` (per entry point: no role = 403 and nothing enqueued, with role = allowed,
   parent user with / without role), `TenantJobRoleWiringTests` (policy registration as `Program.cs` calls it, production
   gate defaults, policy on every entry point, tus rule, dashboard rule, `Program.cs` call sites).
