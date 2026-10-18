@@ -216,6 +216,8 @@ registered by `AddObservability()`); alert on `> 0`. The engine itself does not 
 
 ### Artifact storage (AB#5561, AB#5559)
 
+At start-up the bot logs one info line (logger `Meshmakers.Octo.Backend.Jobs.Services.ArtifactStoreStartupLog`): provider, bucket or container, instance prefix, whether a CrateDB endpoint is set and whether copy staging is possible (yes/no with the reason). It never contains a key, secret, SAS token or a URI with credentials.
+
 Pre-sweep dumps, tenant dumps (`DumpRepositoryJob`) and staged restore uploads live in the platform
 artifact store (`Meshmakers.Octo.Services.ArtifactStorage`, `IArtifactStore`; providers `FileSystem`, `S3`,
 `AzureBlob`), so they survive pod restarts and work with any number of replicas. Keys:
@@ -226,6 +228,13 @@ artifact store (`Meshmakers.Octo.Services.ArtifactStorage`, `IArtifactStore`; pr
 | `presweep` | writing secret sweeps | always (no key ring → no writing sweep) | `Bot:SecretSweep:BackupRetentionDays` (7 d) | 8 d |
 | `tenant-dumps` | `DumpRepositoryJob` | when a key ring is configured, else plain | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
 | `restore-staging` | tus restore uploads (metadata `databaseName`) on completion | when a key ring is configured, else plain | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
+| `copy-staging` | native archive dump and restore (format 2, CrateDB `COPY TO` / `COPY FROM`; AB#5967) | never (the CrateDB nodes have to read the files) | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
+
+`copy-staging` keys are nested: `<instancePrefix>/copy-staging/<tenant>/<runId>/<archiveRtId>/data/<slice>/<file>.json.gz` (and
+`…/genmap/all/…` for a rollup). A run deletes its own folder at the end (`IBotArtifactStorage.DeleteRunAsync`, returns the number
+of objects); the hourly cleanup removes the objects of a crashed run after the retention and logs each run it found (tenant, run
+id, number of objects). Its objects are never part of the key-id retention check (`DumpKeyMissing` looks at `presweep` and
+`tenant-dumps` only). The category needs its own lifecycle rule (expiry after one day) on each store.
 
 - **Tenant dumps** contain secret ciphertext and every piece of business data, so they are encrypted too
   when a key ring exists. The job result is a store reference (`octo-artifact:tenant-dumps/<tenant>/<file>`);
@@ -271,6 +280,62 @@ the store holds every category. A file system root inside the tus or dump direct
 **Legacy local dumps** (`Bot:SecretSweep:BackupStoragePath/<tenant>/*.presweep.tar.gz`, written before
 AB#5561) are **not migrated**: the run history keeps showing them, early deletion and restore still work on
 them, and the hourly cleanup deletes them when their 7 days are over.
+
+### Tenant backup formats (AB#4231, AB#5967)
+
+A dump with archive data (`Dump -iad` in the CLI, the Studio checkbox, MCP `dump_tenant`) produces one
+`<tenant>-<utc>-<guid>.octobak.zip`. Download, upload and the commands are the same for both formats; which path ran is in the job
+log and in `manifest.json` (`formatVersion`).
+
+| | Format 1 | Format 2 |
+| --- | --- | --- |
+| `formatVersion` | `1` | `2` |
+| Archive data | `archives/<rtId>.ndjson`, one row per line, written through the service | `archives/<rtId>/data/<slice>/<file>.json.gz` and, for a rollup, `archives/<rtId>/genmap/all/<file>.json.gz`: the files CrateDB wrote with `COPY TO` |
+| Needs | nothing | an `S3` or `AzureBlob` artifact store (the staging area), a CrateDB with `stats.jobs_log_filter` set to keep `COPY` out of `sys.jobs_log` |
+| Written | to a local file, then stored | streamed straight into the artifact store; no local copy of the container (the scratch directory holds the mongodump blob only) |
+
+**Dump, format 2.** Order: mongodump first, then every archive with a table (`IStreamDataRepository.DumpArchiveToStagingAsync`: data slices,
+and for a rollup the generation map read before and after, repeated when it moved), then the container: `mongo.tar.gz`, the generation
+maps, the data slices (byte copies of the staged files, stored without compression), `manifest.json` last. The manifest records per
+archive the tables with their columns, the slices (counted, copied and loaded row counts, staged bytes), the attempts and the
+moments of the generation map read and of the last data slice, and at the top the storage version of the source and the moment
+mongodump finished. The finished container is encrypted like any dump (including its archive entries) when a key ring exists. The
+run's `copy-staging` files are deleted at the end, also after a failure or a cancellation; a failure names the archive and how many
+archives and slices were done, and messages of the data store pass through the redaction of the staging location (no key, secret or
+SAS token in the job log, the result or an exception).
+
+**Restore, format 1 and 2** (`Restore -rad`, same upload as before; the format is detected). A mongodump, a ZIP without manifest
+and a format 1 container take the unchanged path (the upload is decrypted to the scratch directory and read with a ZIP reader).
+A format 2 container is read **as a stream** (`ForwardZipReader`, no seek, no copy of the container): the `mongo.tar.gz` entry
+goes to the scratch directory (the scratch usage is the mongodump blob plus a small constant), the archive entries are copied byte
+for byte into `copy-staging/<tenant>/<runId>/…`, the manifest is read last; an encrypted upload is read to its last byte, so a
+tampered or truncated file is detected before anything is restored. Then, per archive of the manifest that exists after the Mongo
+restore and passes the schema match: disable, drop the table, create it fresh (platform DDL), `LoadArchiveFromStagingAsync` (slices
+loaded by CrateDB `COPY FROM`, counted against the manifest; a slice counts as loaded when the loaded rows equal its count and
+none was rejected), restore the backed-up status. One archive's failure (including a row count that does not match) is reported
+and the loop goes on; before anything is restored the job asks the stream data factory (cluster level, no tenant context) whether the native copy is ready, and again the repository before the first archive table is touched
+(`CheckStagingCopyReadinessAsync`); a missing job log filter or a missing native copy fails the restore there, naming the
+reason, and nothing is restored when the factory answers not ready (the repository check after the Mongo restore is a second line of defence). Should the filter disappear
+while the loop runs, the loop stops after that archive and the rest are reported as not attempted. The run's staging files are deleted at the end. The
+job result lists per archive the outcome, rows and seconds, and `backupFormatVersion`. The restore works under the same or another
+tenant id (the files hold no tenant id). It fails **before the Mongo restore** with a message that names the missing piece when
+the backup is format 2 with archive data and the installation has no staging area (no factory, a `FileSystem` store, Azure
+without account key) or no native copy; an unknown `formatVersion` is refused listing the supported versions `1 and 2`.
+The storage version recorded in the manifest and the target's are logged side by side; a difference is not refused.
+
+**Rollup reconcile** (after the archives of every restore with archive data, format 1 and 2; AB#5967 slice 2). A recompute flag
+restored from the backup (`RecomputeInProgress`) is reset first, because it would suppress the orphan check. The
+restore-reconcile marker is set (reclaim, forward aggregation and recompute stand still for the tenant), the rollups are
+validated (`ValidateRollupsAsync`). A consistent restore needs no repair: the marker is cleared and the result reports `ok`.
+Otherwise `RepairRollupsAsync` (validate, repair, validate, synchronous inside the job) runs; it clears the marker only when the
+tenant validates ok afterwards. The result (`rollupReconcile`) carries per rollup the findings before, the repair steps with
+their status and the findings after. A failing step leaves the marker set and is named in `failedStep`; the restore itself has
+succeeded and the job does not fail.
+
+**Fallback to format 1** (the job log names the reason; nothing else changes): no artifact store or a `FileSystem` store, an Azure
+store without an account key (managed identity is phase 2), a stream data repository without native copy
+(`SupportsStagingCopy` false), or a CrateDB whose job log filter is missing (the readiness check, or `ArchiveCopyRefusedException` with reason
+`JobLogNotFiltered`).
 
 ### The tenant gate was a no-op until AB#5054
 

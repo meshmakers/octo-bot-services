@@ -568,6 +568,12 @@ public abstract class JobsControllerBase : ControllerBase
             Reason = status?.Reason,
             ErrorMessage = errorMessage
         };
+
+        if (status is { StateName: "Succeeded" } && status.Data.TryGetValue("Result", out var result))
+        {
+            RestoreOutcome.Apply(jobDto, result);
+        }
+
         return jobDto;
     }
 

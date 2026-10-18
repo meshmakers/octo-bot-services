@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using Meshmakers.Octo.Runtime.Contracts.Secrets;
@@ -144,6 +145,76 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     public async Task<StoredArtifact> StoreFileAsync(string category, string tenantId, string fileName,
         string localFilePath, ArtifactEncryption encryption, CancellationToken cancellationToken = default)
     {
+        await using var source = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return await StoreStreamCoreAsync(category, tenantId, fileName, source, encryption,
+            () => new FileInfo(localFilePath).Length, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<StoredArtifact> StoreStreamAsync(string category, string tenantId, string fileName, Stream plaintext,
+        ArtifactEncryption encryption, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(plaintext);
+        return StoreStreamCoreAsync(category, tenantId, fileName, plaintext, encryption, () => 0, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<StoredArtifact> StoreFromWriterAsync(string category, string tenantId, string fileName,
+        Func<Stream, CancellationToken, Task> write, ArtifactEncryption encryption,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(write);
+        var pipe = new Pipe(new PipeOptions(pauseWriterThreshold: 4 * 1024 * 1024,
+            resumeWriterThreshold: 2 * 1024 * 1024));
+        using var producerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var produce = Task.Run(async () =>
+        {
+            try
+            {
+                await using (var target = pipe.Writer.AsStream(true))
+                {
+                    await write(target, producerCancellation.Token);
+                    await target.FlushAsync(producerCancellation.Token);
+                }
+
+                await pipe.Writer.CompleteAsync();
+            }
+            catch (Exception e)
+            {
+                await pipe.Writer.CompleteAsync(e);
+                throw;
+            }
+        }, CancellationToken.None);
+
+        StoredArtifact stored;
+        try
+        {
+            stored = await StoreStreamCoreAsync(category, tenantId, fileName, pipe.Reader.AsStream(true), encryption,
+                () => 0, cancellationToken);
+        }
+        catch (Exception storeError)
+        {
+            // The producer may be blocked on a full pipe or still writing: stop it, then prefer its own error.
+            await producerCancellation.CancelAsync();
+            await pipe.Reader.CompleteAsync(storeError);
+            var produceError = await CaptureAsync(produce);
+            if (produceError != null && produceError is not OperationCanceledException)
+            {
+                ExceptionDispatchInfo.Throw(produceError);
+            }
+
+            throw;
+        }
+
+        await pipe.Reader.CompleteAsync();
+        await produce;
+        return stored;
+    }
+
+    private async Task<StoredArtifact> StoreStreamCoreAsync(string category, string tenantId, string fileName,
+        Stream source, ArtifactEncryption encryption, Func<long> fallbackSize, CancellationToken cancellationToken)
+    {
         var encrypt = encryption switch
         {
             ArtifactEncryption.Required => CanEncrypt
@@ -169,8 +240,6 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
 
         try
         {
-            await using var source = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
             if (encrypt)
             {
                 await PutEncryptedAsync(store, key, source, metadata,
@@ -193,8 +262,7 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
         _logger.LogInformation(
             "Stored artifact '{Category}/{TenantId}/{FileName}' ({Size} bytes, encrypted: {Encrypted}) in the " +
             "{Provider} artifact store", category, tenant, storedName, info?.Size, encrypt, store.ProviderName);
-        return new StoredArtifact(category, tenant, storedName, info?.Size ?? new FileInfo(localFilePath).Length,
-            encrypt);
+        return new StoredArtifact(category, tenant, storedName, info?.Size ?? fallbackSize(), encrypt);
     }
 
     /// <inheritdoc />
@@ -442,6 +510,127 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     public bool CanUnprotect(SecretFileHeader header)
     {
         return _protector.CanUnprotect(header);
+    }
+
+    /// <inheritdoc />
+    public async Task<Stream?> OpenPlainReadAsync(string category, string tenantId, string fileName,
+        CancellationToken cancellationToken = default)
+    {
+        var download = await OpenDownloadAsync(category, tenantId, fileName, cancellationToken);
+        if (download == null)
+        {
+            return null;
+        }
+
+        if (!download.Encrypted)
+        {
+            return download.Content;
+        }
+
+        // Decrypt on a background task into a bounded pipe: the reader sees every verified byte and then, for a
+        // truncated or tampered file, the exception of the protector instead of the end of the stream.
+        var pipe = new Pipe(new PipeOptions(pauseWriterThreshold: 4 * 1024 * 1024,
+            resumeWriterThreshold: 2 * 1024 * 1024));
+        var cancellation = new CancellationTokenSource();
+        var produce = Task.Run(async () =>
+        {
+            try
+            {
+                await using (download)
+                {
+                    await CopyPlainAsync(download, pipe.Writer.AsStream(true), cancellation.Token);
+                }
+
+                await pipe.Writer.CompleteAsync();
+            }
+            catch (Exception e)
+            {
+                await pipe.Writer.CompleteAsync(e);
+            }
+        }, CancellationToken.None);
+        return new PlainReadStream(pipe.Reader.AsStream(), cancellation, produce);
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<StagingObject> ListStagingAsync(string tenantId, string runId,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var prefix = _keys.RunPrefix(ArtifactCategories.CopyStaging, tenantId, runId);
+        await foreach (var info in _store.ListAsync(prefix, cancellationToken))
+        {
+            yield return new StagingObject(info.Key[prefix.Length..], info.Size);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<Stream?> OpenStagingReadAsync(string tenantId, string runId, string relativePath,
+        CancellationToken cancellationToken = default)
+    {
+        return _store.OpenReadAsync(
+            _keys.BuildNested(ArtifactCategories.CopyStaging, tenantId, runId, relativePath), cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task PutStagingAsync(string tenantId, string runId, string relativePath, Stream content,
+        CancellationToken cancellationToken = default)
+    {
+        var key = _keys.BuildNested(ArtifactCategories.CopyStaging, tenantId, runId, relativePath);
+        try
+        {
+            await _store.PutAsync(key, content, new ArtifactMetadata(ContentTypeOf(relativePath)), cancellationToken);
+        }
+        catch
+        {
+            await TryDeleteAsync(_store, key);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<int> DeleteRunAsync(string tenantId, string runId, CancellationToken cancellationToken = default)
+    {
+        var prefix = _keys.RunPrefix(ArtifactCategories.CopyStaging, tenantId, runId);
+        var keys = new List<string>();
+        await foreach (var info in _store.ListAsync(prefix, cancellationToken))
+        {
+            keys.Add(info.Key);
+        }
+
+        // Delete after listing: deleting while a provider pages through a listing can skip entries.
+        var deleted = 0;
+        foreach (var key in keys)
+        {
+            if (await _store.DeleteAsync(key, cancellationToken))
+            {
+                deleted++;
+            }
+        }
+
+        if (deleted > 0)
+        {
+            _logger.LogInformation("Deleted {Count} object(s) of copy staging run '{RunId}' of tenant '{TenantId}'",
+                deleted, runId, ArtifactKeyBuilder.NormalizeTenantId(tenantId));
+        }
+
+        return deleted;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ArtifactNestedKeyParts>> DeleteOlderThanNestedAsync(string category,
+        TimeSpan maxAge, CancellationToken cancellationToken = default)
+    {
+        var deletedKeys = await GetStore(category)
+            .DeleteOlderThanAsync(_keys.CategoryPrefix(category), maxAge, cancellationToken);
+        var deleted = new List<ArtifactNestedKeyParts>(deletedKeys.Count);
+        foreach (var key in deletedKeys)
+        {
+            if (_keys.TryParseNested(key, out var parts) && parts != null)
+            {
+                deleted.Add(parts);
+            }
+        }
+
+        return deleted;
     }
 
     /// <summary>

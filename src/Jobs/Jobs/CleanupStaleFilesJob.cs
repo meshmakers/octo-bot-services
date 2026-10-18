@@ -10,8 +10,9 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// Implements a recurring job that cleans up stale backup files: local tus uploads, dumps and scratch files after
 /// <c>fileRetentionHours</c>, pre-sweep secret backups (AB#5539) after <c>secretBackupRetentionDays</c> — in the
 /// artifact store (AB#5561) and, for legacy dumps written before it, on the local disk — and the artifact store's
-/// tenant dumps and restore staging files after <c>artifactRetentionHours</c>. The storage backend's lifecycle
-/// rules are the backstop, not a replacement.
+/// tenant dumps and restore staging files after <c>artifactRetentionHours</c>, and the nested run folders of the native
+/// archive copy (category <c>copy-staging</c>, AB#5967) left behind by a crashed run after the same retention. The
+/// storage backend's lifecycle rules are the backstop, not a replacement.
 /// </summary>
 public class CleanupStaleFilesJob(
     ILogger<CleanupStaleFilesJob> logger,
@@ -132,6 +133,30 @@ public class CleanupStaleFilesJob(
                 logger.LogError(e, "Error during the '{Category}' cleanup of the artifact store", category);
                 firstError ??= e;
             }
+        }
+
+        // The files of a native archive dump or restore (AB#5967) lie in nested run folders. A run deletes them
+        // itself; this is the backstop for a crashed run, and it names every run it found.
+        try
+        {
+            var staged = await artifacts.DeleteOlderThanNestedAsync(ArtifactCategories.CopyStaging,
+                TimeSpan.FromHours(Math.Max(1, artifactRetentionHours)), ct);
+            if (staged.Count > 0)
+            {
+                foreach (var run in staged.GroupBy(p => (p.TenantId, p.RunId)))
+                {
+                    logger.LogInformation(
+                        "Deleted {Count} object(s) of copy staging run '{RunId}' of tenant '{TenantId}' older than " +
+                        "{Hours} hours (left behind by a crashed dump or restore)", run.Count(), run.Key.RunId,
+                        run.Key.TenantId, artifactRetentionHours);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Error during the '{Category}' cleanup of the artifact store",
+                ArtifactCategories.CopyStaging);
+            firstError ??= e;
         }
 
         if (firstError != null)

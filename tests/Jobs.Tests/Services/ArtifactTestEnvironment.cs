@@ -87,6 +87,13 @@ internal sealed class ArtifactTestEnvironment : IDisposable
             DateTime.UtcNow - age);
     }
 
+    /// <summary>Backdates the artifact with the full store key <paramref name="key" /> (nested keys included).</summary>
+    public void AgeKey(string key, TimeSpan age)
+    {
+        File.SetLastWriteTimeUtc(Path.Combine(StoreRoot, key.Replace('/', Path.DirectorySeparatorChar)),
+            DateTime.UtcNow - age);
+    }
+
     /// <summary>Writes a local file with <paramref name="content" /> and returns its path.</summary>
     public string WriteFile(string name, byte[] content)
     {

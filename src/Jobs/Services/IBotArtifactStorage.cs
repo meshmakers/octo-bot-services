@@ -159,7 +159,83 @@ public interface IBotArtifactStorage
     ///     True when the key id of <paramref name="header" /> is in the key ring.
     /// </summary>
     bool CanUnprotect(SecretFileHeader header);
+
+    /// <summary>
+    ///     Stores the plaintext read from <paramref name="plaintext" /> (to its end) under
+    ///     <c>&lt;category&gt;/&lt;tenantId&gt;/&lt;fileName&gt;</c>, encrypted as <paramref name="encryption" /> says,
+    ///     without a local file in between: the content is streamed to the store (encrypted on the fly) and never
+    ///     buffered whole. The stream does not need to be seekable. When the read, the encryption, the upload or the
+    ///     cancellation fails, no partial artifact stays under the final key.
+    /// </summary>
+    /// <exception cref="SecretEncryptionNotConfiguredException">
+    ///     <paramref name="encryption" /> is <see cref="ArtifactEncryption.Required" /> and no active key exists.
+    /// </exception>
+    Task<StoredArtifact> StoreStreamAsync(string category, string tenantId, string fileName, Stream plaintext,
+        ArtifactEncryption encryption, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Like <see cref="StoreStreamAsync" /> for a producer that writes the content: <paramref name="write" /> receives
+    ///     the (non-seekable) stream the artifact is built on, e.g. a ZIP container assembled from parts. The producer
+    ///     and the upload run concurrently through a bounded pipe. When the producer throws, nothing is stored and its
+    ///     exception propagates.
+    /// </summary>
+    Task<StoredArtifact> StoreFromWriterAsync(string category, string tenantId, string fileName,
+        Func<Stream, CancellationToken, Task> write, ArtifactEncryption encryption,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Opens an artifact for reading its plaintext as a stream: decrypted on the fly when it is an <c>OCTOENC1</c>
+    ///     file, the stored bytes otherwise. Nothing is written to disk.
+    ///     🔴 A truncated or tampered encrypted artifact makes a read throw <see cref="InvalidSecretFileException" />
+    ///     (or <see cref="UnknownSecretKeyIdException" />) <b>before</b> the end of the stream; what the caller consumed
+    ///     up to then must be discarded. The caller disposes the stream.
+    /// </summary>
+    /// <returns><c>null</c> when the artifact does not exist.</returns>
+    Task<Stream?> OpenPlainReadAsync(string category, string tenantId, string fileName,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Lists the objects of one run in the copy staging area
+    ///     (<c>&lt;category copy-staging&gt;/&lt;tenantId&gt;/&lt;runId&gt;/…</c>), the paths relative to the run folder.
+    /// </summary>
+    IAsyncEnumerable<StagingObject> ListStagingAsync(string tenantId, string runId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Opens one object of a run in the copy staging area; <c>null</c> when it does not exist. Staging objects are
+    ///     never encrypted (the CrateDB nodes have to read them).
+    /// </summary>
+    Task<Stream?> OpenStagingReadAsync(string tenantId, string runId, string relativePath,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Writes one object of a run into the copy staging area (a byte copy, nothing is unpacked or encrypted).
+    ///     No partial object stays when the write fails.
+    /// </summary>
+    Task PutStagingAsync(string tenantId, string runId, string relativePath, Stream content,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Deletes every object below the run folder of the copy staging area.
+    /// </summary>
+    /// <returns>The number of deleted objects; a second call returns 0.</returns>
+    Task<int> DeleteRunAsync(string tenantId, string runId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     App-side retention of a category with nested keys (<see cref="ArtifactCategories.CopyStaging" />, all tenants
+    ///     of this instance): deletes every object older than <paramref name="maxAge" />.
+    /// </summary>
+    /// <returns>The deleted objects with tenant and run id.</returns>
+    Task<IReadOnlyList<ArtifactNestedKeyParts>> DeleteOlderThanNestedAsync(string category, TimeSpan maxAge,
+        CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+///     An object of a run in the copy staging area.
+/// </summary>
+/// <param name="RelativePath">The path below the run folder, <c>/</c>-separated.</param>
+/// <param name="Size">Size in bytes.</param>
+public sealed record StagingObject(string RelativePath, long Size);
 
 /// <summary>
 ///     Whether an artifact is encrypted with the key ring.
