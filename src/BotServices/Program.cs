@@ -182,6 +182,7 @@ try
     // is the file system below <temp>/octo-bot/artifacts, so a local start needs no new settings. Precedence of the
     // file system root and the Bot:SecretSweep:BackupStoragePath alias: see AddOctoBotArtifactStorage / README.
     builder.Services.AddOctoBotArtifactStorage(builder.Configuration, botOptions.ScratchPath);
+    builder.Services.AddHostedService<ArtifactStoreStartupLogService>();
     builder.Services.AddOctoNotification();
     builder.Services.AddCkModelSystemBotV3();
 

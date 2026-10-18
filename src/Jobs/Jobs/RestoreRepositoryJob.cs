@@ -10,6 +10,8 @@ using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.StreamData;
 using Meshmakers.Octo.Services.ArtifactStorage;
+using Meshmakers.Octo.Services.ArtifactStorage.Staging;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Services;
 using Microsoft.Extensions.Logging;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -26,13 +28,20 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// AB#5561: the staged upload is read from the artifact store (<c>restore-staging/&lt;tenant&gt;/&lt;uploadId&gt;</c>,
 /// plain or <c>.octoenc</c>) into the local scratch directory, decrypted when needed; an upload staged on the local
 /// disk before AB#5561 (or when staging into the store failed) is still restored from there.
+/// AB#5967: a format 2 container (the files of the native archive copy) is read as a stream - the mongodump blob goes to the
+/// scratch directory, the archive files are copied byte for byte into the <c>copy-staging</c> area and loaded by the data store
+/// itself (<c>COPY FROM</c>); see <c>RestoreRepositoryJob.Native.cs</c>. After the archives, the rollups are validated and
+/// repaired when needed (AB#5967 slice 2).
 /// </summary>
-public class RestoreRepositoryJob(
+public partial class RestoreRepositoryJob(
     ILogger<RestoreRepositoryJob> logger,
     ISystemContext systemContext,
     IBackupFileStorageService backupFileStorage,
     ISecretSweepCoordinator? secretSweepCoordinator = null,
-    IBotArtifactStorage? artifactStorage = null) : IRestoreRepositoryJob
+    IBotArtifactStorage? artifactStorage = null,
+    IArchiveCopyStagingLocationFactory? stagingFactory = null,
+    TimeProvider? timeProvider = null,
+    IStreamDataRepositoryFactory? streamDataFactory = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -65,6 +74,20 @@ public class RestoreRepositoryJob(
             if (staged != null)
             {
                 stagedFileName = staged.Value.FileName;
+
+                // Format 2 is read as a stream from the store; anything else (a mongodump, format 1) is not handled
+                // here and takes the unchanged path below.
+                var nativeFromStore = await TryRestoreNativeAsync(tenantId, databaseName, oldDatabaseName,
+                    restoreArchiveData,
+                    () => artifactStorage!.OpenPlainReadAsync(ArtifactCategories.RestoreStaging, tenantId,
+                        stagedFileName, ct), ct);
+                if (nativeFromStore != null)
+                {
+                    nativeFromStore.SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId,
+                        performContext?.BackgroundJob?.Id, ct);
+                    return nativeFromStore;
+                }
+
                 scratchPath = artifactStorage!.CreateScratchFilePath(".restore");
                 logger.LogInformation(
                     "Reading staged upload '{FileName}' of tenant '{TenantId}' from the artifact store", stagedFileName,
@@ -106,9 +129,25 @@ public class RestoreRepositoryJob(
                     $"Backup file at '{filePath}' for tus file ID '{cacheKey}' is empty (0 bytes). The upload may not have completed successfully.");
             }
 
+            if (staged == null)
+            {
+                // A local upload (no staging in the store): format 2 is read from the file as a stream as well.
+                var nativeFromFile = await TryRestoreNativeAsync(tenantId, databaseName, oldDatabaseName,
+                    restoreArchiveData,
+                    () => Task.FromResult<Stream?>(new FileStream(filePath, FileMode.Open, FileAccess.Read,
+                        FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan)), ct);
+                if (nativeFromFile != null)
+                {
+                    nativeFromFile.SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId,
+                        performContext?.BackgroundJob?.Id, ct);
+                    return nativeFromFile;
+                }
+            }
+
             // Auto-detect the artifact format: an .octobak is a ZIP carrying manifest.json; anything
             // else is treated as a legacy mongodump .tar.gz (today's path, unchanged).
             var manifest = TryReadManifest(filePath);
+            RestoreRepositoryResult? octoBakResult = null;
 
             if (manifest is null)
             {
@@ -123,7 +162,7 @@ public class RestoreRepositoryJob(
             }
             else
             {
-                await RestoreOctoBakAsync(tenantId, databaseName, oldDatabaseName, filePath, manifest,
+                octoBakResult = await RestoreOctoBakAsync(tenantId, databaseName, oldDatabaseName, filePath, manifest,
                     restoreArchiveData, ct);
             }
 
@@ -131,6 +170,9 @@ public class RestoreRepositoryJob(
             {
                 TenantId = tenantId,
                 DatabaseName = databaseName,
+                BackupFormatVersion = manifest?.FormatVersion,
+                Archives = octoBakResult?.Archives ?? [],
+                RollupReconcile = octoBakResult?.RollupReconcile,
                 SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId, performContext?.BackgroundJob?.Id, ct)
             };
         }
@@ -197,18 +239,27 @@ public class RestoreRepositoryJob(
     ///     then — when <paramref name="restoreArchiveData"/> is set — restores each archive's CrateDB
     ///     rows via the clean per-archive sequence (concept §5/§5.1).
     /// </summary>
-    private async Task RestoreOctoBakAsync(string tenantId, string databaseName, string? oldDatabaseName,
-        string filePath, BackupManifest manifest, bool restoreArchiveData, CancellationToken ct)
+    private async Task<RestoreRepositoryResult> RestoreOctoBakAsync(string tenantId, string databaseName,
+        string? oldDatabaseName, string filePath, BackupManifest manifest, bool restoreArchiveData,
+        CancellationToken ct)
     {
         logger.LogInformation(
             "Detected .octobak backup for tenant '{TenantId}' (formatVersion {Version}, {ArchiveCount} archive(s))",
             tenantId, manifest.FormatVersion, manifest.Archives.Count);
 
-        if (manifest.FormatVersion != BackupArchiveContainer.CurrentFormatVersion)
+        if (!BackupArchiveContainer.IsSupported(manifest.FormatVersion))
         {
             throw new JobFailedException(
-                $"Unsupported backup format version {manifest.FormatVersion}. This service supports format version " +
-                $"{BackupArchiveContainer.CurrentFormatVersion} only.");
+                $"Unsupported backup format version {manifest.FormatVersion}. This service supports format versions " +
+                $"{BackupArchiveContainer.SupportedFormatVersionsText}.");
+        }
+
+        if (manifest.FormatVersion == BackupArchiveContainer.NativeFormatVersion)
+        {
+            // Reached only when the native path was not available at all (no artifact store).
+            throw new JobFailedException(
+                $"The backup of tenant '{tenantId}' is format {manifest.FormatVersion} (native archive copy) and needs a " +
+                "staging area in the artifact store, but none is configured.");
         }
 
         await using var zipFileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -243,10 +294,10 @@ public class RestoreRepositoryJob(
             logger.LogInformation(
                 "restoreArchiveData is off; restored Mongo only for tenant '{TenantId}', archives left untouched " +
                 "(no Crate tables, identical to legacy behaviour).", tenantId);
-            return;
+            return new RestoreRepositoryResult();
         }
 
-        await RestoreArchivesAsync(tenantId, manifest, zip, ct);
+        return await RestoreArchivesAsync(tenantId, manifest, zip, ct);
     }
 
     private async Task RestoreMongoAsync(string tenantId, string databaseName, string blobPath,
@@ -270,8 +321,8 @@ public class RestoreRepositoryJob(
     ///     sequence. One archive's failure is recorded and the loop continues (concept §2 decision #4);
     ///     the job succeeds even with per-archive warnings.
     /// </summary>
-    private async Task RestoreArchivesAsync(string tenantId, BackupManifest manifest, ZipArchive zip,
-        CancellationToken ct)
+    private async Task<RestoreRepositoryResult> RestoreArchivesAsync(string tenantId, BackupManifest manifest,
+        ZipArchive zip, CancellationToken ct)
     {
         var tenantContext = await systemContext.FindTenantContextAsync(tenantId)
                             ?? throw new JobFailedException(
@@ -286,19 +337,108 @@ public class RestoreRepositoryJob(
                 "restoreArchiveData was requested but stream data is not enabled for tenant '{TenantId}' after the " +
                 "Mongo restore; skipping archive data restore. {ArchiveCount} archive(s) in the backup were not " +
                 "imported.", tenantId, manifest.Archives.Count);
-            return;
+            return new RestoreRepositoryResult();
         }
 
         var archiveStore = tenantContext.GetArchiveRuntimeStore();
         var results = new List<ArchiveRestoreResult>(manifest.Archives.Count);
 
-        foreach (var entry in manifest.Archives)
+        var (ordered, sourcesOfOthers) = await OrderSourcesFirstAsync(tenantContext, manifest.Archives);
+
+        // See RestoreArchivesNativeAsync: a source that was not Activated but has rollups stays Activated until they are
+        // restored (the restore-reconcile marker keeps the forward aggregation away meanwhile).
+        var deferred = ordered.Where(e => e.NdjsonEntry != null && sourcesOfOthers.Contains(e.Schema.RtId) &&
+                                          ParseStatus(e.Status) != CkArchiveStatus.Activated)
+            .Select(e => e.Schema.RtId).ToHashSet(StringComparer.Ordinal);
+        if (deferred.Count > 0)
+        {
+            await repository.SetRestoreReconcilePendingAsync(true, ct);
+        }
+
+        foreach (var entry in ordered)
         {
             ct.ThrowIfCancellationRequested();
-            results.Add(await RestoreOneArchiveAsync(tenantId, entry, zip, repository, lifecycle, archiveStore, ct));
+            results.Add(await RestoreOneArchiveAsync(tenantId, entry, zip, repository, lifecycle, archiveStore,
+                deferred.Contains(entry.Schema.RtId), ct));
+        }
+
+        for (var i = 0; i < results.Count; i++)
+        {
+            if (deferred.Contains(results[i].RtId) && results[i].Outcome == ArchiveRestoreOutcome.Imported)
+            {
+                await lifecycle.DisableAsync(new OctoObjectId(results[i].RtId));
+                results[i] = results[i] with { RestoredStatus = CkArchiveStatus.Disabled };
+            }
         }
 
         LogRestoreSummary(tenantId, results);
+        var reconcile = await ReconcileRollupsAsync(tenantId, tenantContext, repository, results, ct);
+        if (deferred.Count > 0 && reconcile == null)
+        {
+            await repository.SetRestoreReconcilePendingAsync(false, ct);
+        }
+
+        return new RestoreRepositoryResult { Archives = results.Select(ToSummary).ToList(), RollupReconcile = reconcile };
+    }
+
+    /// <summary>
+    ///     The archives of the manifest with every source before the rollups that read it (raw archives first, then
+    ///     rollups by the length of their source chain; manifest order otherwise). A rollup cannot be activated before its
+    ///     source is <c>Activated</c> again, and the dump lists the archives in no dependency order.
+    /// </summary>
+    private static async Task<(IReadOnlyList<BackupManifestArchive> Ordered, HashSet<string> SourcesOfOthers)>
+        OrderSourcesFirstAsync(ITenantContext tenantContext, IReadOnlyList<BackupManifestArchive> archives)
+    {
+        var sourcesOfOthers = new HashSet<string>(StringComparer.Ordinal);
+        var rollupStore = tenantContext.GetRollupArchiveRuntimeStore();
+        if (rollupStore == null || archives.Count < 2)
+        {
+            return (archives, sourcesOfOthers);
+        }
+
+        var sources = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        await foreach (var rollup in rollupStore.EnumerateAsync())
+        {
+            sources[rollup.RtId.ToString()] = rollup.Sources.Select(r => r.SourceArchiveRtId.ToString()).ToList();
+        }
+
+        if (sources.Count == 0)
+        {
+            return (archives, sourcesOfOthers);
+        }
+
+        var inManifest = archives.Select(a => a.Schema.RtId).ToHashSet(StringComparer.Ordinal);
+        foreach (var (rollupId, parents) in sources.Where(kv => inManifest.Contains(kv.Key)))
+        {
+            foreach (var parent in parents.Where(inManifest.Contains))
+            {
+                sourcesOfOthers.Add(parent);
+            }
+        }
+
+        var depths = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        int DepthOf(string rtId, HashSet<string> visiting)
+        {
+            if (depths.TryGetValue(rtId, out var known))
+            {
+                return known;
+            }
+
+            if (!sources.TryGetValue(rtId, out var parents) || !visiting.Add(rtId))
+            {
+                return 0;
+            }
+
+            var depth = 1 + parents.Select(p => DepthOf(p, visiting)).DefaultIfEmpty(0).Max();
+            visiting.Remove(rtId);
+            depths[rtId] = depth;
+            return depth;
+        }
+
+        var ordered = archives.Select((entry, index) => (entry, index, depth: DepthOf(entry.Schema.RtId, [])))
+            .OrderBy(x => x.depth).ThenBy(x => x.index).Select(x => x.entry).ToList();
+        return (ordered, sourcesOfOthers);
     }
 
     /// <summary>
@@ -307,9 +447,10 @@ public class RestoreRepositoryJob(
     /// </summary>
     private async Task<ArchiveRestoreResult> RestoreOneArchiveAsync(string tenantId, BackupManifestArchive entry,
         ZipArchive zip, IStreamDataRepository repository, IArchiveLifecycleService lifecycle,
-        IArchiveRuntimeStore archiveStore, CancellationToken ct)
+        IArchiveRuntimeStore archiveStore, bool keepActivatedForDependents, CancellationToken ct)
     {
         var rtId = entry.Schema.RtId;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
@@ -371,7 +512,12 @@ public class RestoreRepositoryJob(
             // The result reports the status the archive actually ends up in, not the parsed backup value.
             var backedUpStatus = ParseStatus(entry.Status);
             var restoredStatus = CkArchiveStatus.Disabled;
-            if (backedUpStatus == CkArchiveStatus.Activated)
+            if (keepActivatedForDependents)
+            {
+                await lifecycle.EnableAsync(objectId);
+                restoredStatus = CkArchiveStatus.Activated;
+            }
+            else if (backedUpStatus == CkArchiveStatus.Activated)
             {
                 await lifecycle.EnableAsync(objectId);
                 restoredStatus = CkArchiveStatus.Activated;
@@ -386,7 +532,10 @@ public class RestoreRepositoryJob(
                     rtId, tenantId, entry.Status);
             }
 
-            return ArchiveRestoreResult.Imported(rtId, counter.Count, restoredStatus);
+            return ArchiveRestoreResult.Imported(rtId, counter.Count, restoredStatus) with
+            {
+                Seconds = stopwatch.Elapsed.TotalSeconds
+            };
         }
         catch (OperationCanceledException)
         {
@@ -459,6 +608,15 @@ public class RestoreRepositoryJob(
         }
     }
 
+    private static RestoredArchiveSummary ToSummary(ArchiveRestoreResult result) => new()
+    {
+        RtId = result.RtId,
+        Outcome = result.Outcome.ToString(),
+        Rows = result.RowCount,
+        Seconds = Math.Round(result.Seconds, 1),
+        Detail = result.Outcome == ArchiveRestoreOutcome.Imported ? $"status {result.RestoredStatus}" : result.Detail
+    };
+
     private static CkArchiveStatus ParseStatus(string status)
     {
         // Unknown / unparseable status defaults to Disabled — the safe outcome (the table exists with
@@ -487,6 +645,11 @@ public class RestoreRepositoryJob(
         long RowCount,
         CkArchiveStatus? RestoredStatus)
     {
+        public double Seconds { get; init; }
+
+        /// <summary>True when a failure applies to every further archive as well (the job log filter is missing).</summary>
+        public bool StopsTheRestore { get; init; }
+
         public static ArchiveRestoreResult Imported(string rtId, long rowCount, CkArchiveStatus restoredStatus) =>
             new(rtId, ArchiveRestoreOutcome.Imported, null, rowCount, restoredStatus);
 
@@ -518,4 +681,119 @@ public class RestoreRepositoryResult
     ///     (<see cref="SecretSweepReport.SecretsToReEnter" />); <c>null</c> when not wired.
     /// </summary>
     public SecretSweepReport? SecretSweep { get; set; }
+
+    /// <summary>
+    ///     The <c>formatVersion</c> of the restored <c>.octobak</c> (1 or 2); <c>null</c> for a mongodump.
+    /// </summary>
+    public int? BackupFormatVersion { get; set; }
+
+    /// <summary>
+    ///     One entry per archive of the backup: what happened, rows loaded and seconds spent (AB#5967).
+    /// </summary>
+    public List<RestoredArchiveSummary> Archives { get; set; } = [];
+
+    /// <summary>
+    ///     The rollup reconcile after the archives (validate, repair, validate; AB#5967 slice 2); <c>null</c> when no
+    ///     archive data was restored or the data store has no rollup validation.
+    /// </summary>
+    public RollupReconcileSummary? RollupReconcile { get; set; }
+}
+
+/// <summary>
+///     Outcome of one archive of a restore (job result).
+/// </summary>
+public class RestoredArchiveSummary
+{
+    /// <summary>The archive.</summary>
+    public string RtId { get; set; } = string.Empty;
+
+    /// <summary><c>Imported</c>, <c>Skipped</c> or <c>Failed</c>.</summary>
+    public string Outcome { get; set; } = string.Empty;
+
+    /// <summary>Rows loaded (verified against the manifest for a native restore).</summary>
+    public long Rows { get; set; }
+
+    /// <summary>Seconds the archive took, from dropping the old table to the restored status.</summary>
+    public double Seconds { get; set; }
+
+    /// <summary>Why it was skipped or failed (redacted); the status it ended in for an imported archive.</summary>
+    public string? Detail { get; set; }
+}
+
+/// <summary>
+///     The rollup reconcile of a restore: the validation after the load, the repair steps and the validation after
+///     them (job result).
+/// </summary>
+public class RollupReconcileSummary
+{
+    /// <summary>True when the tenant's rollups validate ok at the end (the restore-reconcile marker is clear).</summary>
+    public bool Ok { get; set; }
+
+    /// <summary>True when the first validation found something and a repair ran.</summary>
+    public bool RepairRan { get; set; }
+
+    /// <summary>The first failed step, named (rollup, step, reason); <c>null</c> when nothing failed.</summary>
+    public string? FailedStep { get; set; }
+
+    /// <summary>Rollups whose stale recompute flag (restored from the backup) was reset.</summary>
+    public List<string> ResetRecomputeFlags { get; set; } = [];
+
+    /// <summary>Per rollup: findings before, repair steps, findings after.</summary>
+    public List<RollupReconcileEntry> Rollups { get; set; } = [];
+
+    /// <summary>
+    ///     Every archive of the backup that failed to restore. As long as one is listed the restore-reconcile marker stays
+    ///     set, whatever the validator reports: the bot knows the manifest, the validator does not.
+    /// </summary>
+    public List<FailedArchiveSummary> FailedArchives { get; set; } = [];
+
+    /// <summary>
+    ///     The rollups that could not be checked (no table, source missing, archive failed, never activated), each with the
+    ///     cause and whether it keeps the marker set.
+    /// </summary>
+    public List<NotCheckedRollupSummary> NotCheckedRollups { get; set; } = [];
+}
+
+/// <summary>An archive that failed to restore (job result).</summary>
+public class FailedArchiveSummary
+{
+    /// <summary>The archive.</summary>
+    public string ArchiveRtId { get; set; } = string.Empty;
+
+    /// <summary>Why it failed (redacted).</summary>
+    public string Reason { get; set; } = string.Empty;
+}
+
+/// <summary>A rollup the reconcile could not check (job result).</summary>
+public class NotCheckedRollupSummary
+{
+    /// <summary>The rollup.</summary>
+    public string RollupRtId { get; set; } = string.Empty;
+
+    /// <summary><c>NoLiveTable</c>, <c>NeverActivated</c>, <c>SourceMissing</c> or <c>ArchiveFailed</c>.</summary>
+    public string Cause { get; set; } = string.Empty;
+
+    /// <summary>English text for logs and the CLI.</summary>
+    public string Reason { get; set; } = string.Empty;
+
+    /// <summary>True when the gap keeps the restore-reconcile marker set.</summary>
+    public bool IsBlocking { get; set; }
+}
+
+/// <summary>
+///     Validate, repair, validate for one rollup (job result).
+/// </summary>
+public class RollupReconcileEntry
+{
+    /// <summary>The rollup archive.</summary>
+    public string RollupRtId { get; set; } = string.Empty;
+
+    /// <summary>Findings of the validation after the load; empty when it was ok.</summary>
+    public List<string> Before { get; set; } = [];
+
+    /// <summary>The repair steps with their status, in order.</summary>
+    public List<string> Repair { get; set; } = [];
+
+    /// <summary>Findings of the validation after the repair; empty when it was ok.</summary>
+    public List<string> After { get; set; } = [];
 }

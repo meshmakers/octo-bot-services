@@ -8,6 +8,7 @@ using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.StreamData;
 using Meshmakers.Octo.Services.ArtifactStorage;
+using Meshmakers.Octo.Services.ArtifactStorage.Staging;
 using Microsoft.Extensions.Logging;
 using RepositoryUpdate;
 
@@ -23,12 +24,19 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// data), and the job result is a store reference (<see cref="StoredArtifact.ToResultReference" />); the download
 /// endpoint decrypts it on the fly, so clients receive the same file as before. Without an artifact store the
 /// local file path is the result (legacy).
+/// AB#5967: with a staging area (S3 or Azure artifact store) and a stream data repository that copies natively, the
+/// archives are copied by the data store itself (CrateDB <c>COPY TO</c>) into the <c>copy-staging</c> area and packed
+/// byte for byte into a format 2 container that is streamed straight into the artifact store (see
+/// <c>DumpRepositoryJob.Native.cs</c>); every other case, and a refusal of the job log filter, runs as format 1 and the job
+/// log names the reason.
 /// </summary>
-public class DumpRepositoryJob(
+public partial class DumpRepositoryJob(
     ILogger<DumpRepositoryJob> logger,
     ISystemContext systemContext,
     IBackupFileStorageService backupFileStorage,
-    IBotArtifactStorage? artifactStorage = null) : IDumpRepositoryJob
+    IBotArtifactStorage? artifactStorage = null,
+    IArchiveCopyStagingLocationFactory? stagingFactory = null,
+    TimeProvider? timeProvider = null) : IDumpRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -79,6 +87,10 @@ public class DumpRepositoryJob(
                 throw JobFailedException.CommandExecutionFailed(r, tenantId, "mongodump");
             }
 
+            // The archives are copied after mongodump, never before (concept §6): the restored metadata then never
+            // lies ahead of the restored data.
+            var mongoFinishedAtUtc = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+
             if (!includeArchiveData)
             {
                 // Default path — the mongodump blob IS the downloadable result, unchanged.
@@ -87,7 +99,14 @@ public class DumpRepositoryJob(
                 return await PublishAsync(tenantId, mongoFilePath, ct);
             }
 
-            // 2. includeArchiveData — wrap the mongo blob + archive rows into an .octobak.zip and
+            // 2a. includeArchiveData with a staging area: native copy, format 2, streamed into the artifact store.
+            var nativeResult = await TryDumpNativeAsync(tenantId, tenantContext, mongoFilePath, mongoFinishedAtUtc, ct);
+            if (nativeResult != null)
+            {
+                return nativeResult;
+            }
+
+            // 2b. includeArchiveData — wrap the mongo blob + archive rows into an .octobak.zip and
             //    register that as the downloadable result. The intermediate mongo blob is deleted.
             var archivePath = await BuildBackupArchiveAsync(tenantId, tenantContext, mongoFilePath, ct);
             return await PublishAsync(tenantId, archivePath, ct);
