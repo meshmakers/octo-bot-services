@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- AB#6734: the export jobs against a real engine and a real MongoDB (Testcontainers): a restricted data
+         policy table must shrink the exported file to what the requesting caller may read. Needs Docker.
+         InternalsVisibleTo for this assembly is declared in src/Jobs/Jobs.csproj. -->
+    <PropertyGroup>
+        <AssemblyName>Meshmakers.Octo.Backend.Jobs.IntegrationTests</AssemblyName>
+        <RootNamespace>Meshmakers.Octo.Backend.Jobs.IntegrationTests</RootNamespace>
+        <IsPackable>false</IsPackable>
+        <IsTestProject>true</IsTestProject>
+        <Configurations>Debug;Release;DebugL</Configurations>
+        <Platforms>AnyCPU</Platforms>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="TUnit" Version="1.65.68" />
+        <PackageReference Include="Testcontainers.MongoDb" Version="4.14.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Jobs\Jobs.csproj" />
+        <ProjectReference Include="..\ExportTestCkModel\ExportTestCkModel.csproj" />
+    </ItemGroup>
+
+</Project>

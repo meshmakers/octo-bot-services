@@ -1,0 +1,5 @@
+"$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
+attributes:
+  - id: Name
+    description: Designation of an entity.
+    valueType: String

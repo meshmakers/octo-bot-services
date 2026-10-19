@@ -57,6 +57,24 @@ public interface IJobTenantAccessGuard
     ///     job of a <i>different</i> tenant to be reachable there.
     /// </remarks>
     bool IsJobOfTenant(string routeTenantId, string? jobTenantId, string jobId);
+
+    /// <summary>
+    ///     Second condition for jobs whose artifact belongs to the user who requested them (the runtime-data
+    ///     exports, AB#6734), checked after the tenant condition above has passed: the caller must be the
+    ///     initiating subject, so that another user of the same tenant who learned the job id gets nothing.
+    /// </summary>
+    /// <remarks>
+    ///     Exempt, exactly as the tenant rule treats them today (AB#5070): a user token issued for an
+    ///     <b>ancestor</b> of the job's tenant (the parent-tenant administration rule) and an allow-listed
+    ///     cross-tenant service client. A missing <paramref name="initiatingSubjectId" /> (a job from before the
+    ///     binding existed) is not an exemption: such an artifact is only reachable through the two exemptions.
+    /// </remarks>
+    /// <param name="user">The caller</param>
+    /// <param name="jobTenantId">Tenant the job ran for (already established)</param>
+    /// <param name="initiatingSubjectId">Subject stored with the job; null when none was stored</param>
+    /// <param name="jobId">Job id, for the log</param>
+    Task<bool> MayAccessInitiatorBoundJobAsync(ClaimsPrincipal user, string jobTenantId,
+        string? initiatingSubjectId, string jobId);
 }
 
 /// <inheritdoc />
@@ -106,6 +124,47 @@ internal sealed class JobTenantAccessGuard(
         return isServiceToken
             ? AllowServiceToken(user, jobTenantId, jobId)
             : await AllowUserTokenAsync(user, jobTenantId, jobId);
+    }
+
+    public async Task<bool> MayAccessInitiatorBoundJobAsync(ClaimsPrincipal user, string jobTenantId,
+        string? initiatingSubjectId, string jobId)
+    {
+        // The same mapping as the caller context of the export (asset repository GraphQL Helpers): sub,
+        // NameIdentifier, then client_id for a client-credentials token.
+        var callerSubject = user.FindFirstValue("sub")
+                            ?? user.FindFirstValue(ClaimTypes.NameIdentifier)
+                            ?? user.FindFirstValue(ClientIdClaimType);
+
+        if (!string.IsNullOrWhiteSpace(initiatingSubjectId) && !string.IsNullOrWhiteSpace(callerSubject) &&
+            string.Equals(callerSubject, initiatingSubjectId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var tokenTenantId = user.FindFirstValue(TenantIdClaimType);
+        var foreignTenantToken = !string.IsNullOrEmpty(tokenTenantId) &&
+                                 !string.Equals(tokenTenantId, jobTenantId, StringComparison.OrdinalIgnoreCase);
+        var isServiceToken = !user.HasClaim(c => c.Type == "sub" || c.Type == ClaimTypes.NameIdentifier);
+
+        if (foreignTenantToken)
+        {
+            if (!isServiceToken && await IsChildTenantAsync(tokenTenantId!, jobTenantId, jobId))
+            {
+                return true;
+            }
+
+            if (isServiceToken && options.Value.IsCrossTenantServiceClient(user.FindFirstValue(ClientIdClaimType)))
+            {
+                return true;
+            }
+        }
+
+        logger.LogWarning(
+            "Denied: subject '{Subject}' (client '{ClientId}') accesses job '{JobId}' of tenant '{JobTenantId}' that " +
+            "belongs to another subject; the artifact of a runtime-data export is bound to the user who requested " +
+            "it (AB#6734)",
+            callerSubject ?? "<none>", user.FindFirstValue(ClientIdClaimType) ?? "<none>", jobId, jobTenantId);
+        return false;
     }
 
     private async Task<bool> AllowUserTokenAsync(ClaimsPrincipal user, string jobTenantId, string jobId)

@@ -42,14 +42,20 @@ public class ExportModelJob : IExportModelJob
     {
         try
         {
-            _logger.LogInformation("Preparing output file for query \'{QueryId}\' of tenant \'{TenantId}\'",
-                rtByQueryCommandRequest.QueryId, rtByQueryCommandRequest.TenantId);
+            // AB#6734: a job without caller context (enqueued by an older asset repository) fails before
+            // anything is read or written - an export is never run as the system.
+            var securityContext = ExportCallerContext.Require(rtByQueryCommandRequest.TenantId, "query",
+                rtByQueryCommandRequest.InitiatedBySubjectId, rtByQueryCommandRequest.InitiatedByRoleNames);
+
+            _logger.LogInformation(
+                "Preparing output file for query \'{QueryId}\' of tenant \'{TenantId}\' for subject \'{SubjectId}\'",
+                rtByQueryCommandRequest.QueryId, rtByQueryCommandRequest.TenantId, securityContext.SubjectId);
             var tempFile = Path.GetTempFileName();
 
             _logger.LogInformation("Starting export of file \'{TempFile}\'", tempFile);
 
             await _exportRtModelByQueryCommand.ExportAsync(rtByQueryCommandRequest.TenantId,
-                rtByQueryCommandRequest.QueryId, tempFile,
+                rtByQueryCommandRequest.QueryId, securityContext, tempFile,
                 cancellationToken?.ShutdownToken);
 
             var key = await CacheFileToDistributedCache(rtByQueryCommandRequest.TenantId, tempFile);
@@ -72,12 +78,18 @@ public class ExportModelJob : IExportModelJob
     {
         try
         {
-            _logger.LogInformation("Preparing output file for deep graph of tenant \'{TenantId}\'", rtByDeepGraphCommandRequest.TenantId);
+            // AB#6734: see ExportRtModelByQueryAsync.
+            var securityContext = ExportCallerContext.Require(rtByDeepGraphCommandRequest.TenantId, "deep graph",
+                rtByDeepGraphCommandRequest.InitiatedBySubjectId, rtByDeepGraphCommandRequest.InitiatedByRoleNames);
+
+            _logger.LogInformation(
+                "Preparing output file for deep graph of tenant \'{TenantId}\' for subject \'{SubjectId}\'",
+                rtByDeepGraphCommandRequest.TenantId, securityContext.SubjectId);
             var tempFile = Path.GetTempFileName();
 
             _logger.LogInformation("Starting export of file \'{TempFile}\'", tempFile);
 
-            await _rtModelByDeepGraphCommand.ExportAsync(rtByDeepGraphCommandRequest.TenantId, rtByDeepGraphCommandRequest, tempFile,
+            await _rtModelByDeepGraphCommand.ExportAsync(rtByDeepGraphCommandRequest.TenantId, rtByDeepGraphCommandRequest, securityContext, tempFile,
                 cancellationToken?.ShutdownToken);
 
             var key = await CacheFileToDistributedCache(rtByDeepGraphCommandRequest.TenantId, tempFile);

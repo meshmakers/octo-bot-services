@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- AB#6734: a tiny CK model for the export tests against a real engine and MongoDB (Jobs.IntegrationTests).
+         Location <- Continent <- Country (ParentChild), so a query export and a deep-graph export can be
+         restricted by type. Not packaged, not published. -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+        <Configurations>Debug;Release;DebugL</Configurations>
+        <Platforms>AnyCPU</Platforms>
+        <OctoPublishCkModel>false</OctoPublishCkModel>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Meshmakers.Octo.ConstructionKit.SourceGeneration" OutputItemType="Analyzer" ReferenceOutputAssembly="false" Version="$(OctoCoreLibVersion)" PrivateAssets="all" />
+        <PackageReference Include="Meshmakers.Octo.ConstructionKit.MsBuildTasks" Version="$(OctoCoreLibVersion)" PrivateAssets="all" />
+        <PackageReference Include="Meshmakers.Octo.Runtime.Contracts" Version="$(OctoCoreLibVersion)" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ConstructionKitFolder Visible="false" Include="$(MSBuildProjectDirectory)\ConstructionKit"/>
+    </ItemGroup>
+
+</Project>

@@ -29,6 +29,14 @@ public class JobFailedException : Exception
         return new JobFailedException($"File type '{contentType}' is not supported.");
     }
 
+    internal static Exception ExportCallerContextMissing(string tenantId, string exportKind)
+    {
+        return new JobFailedException(
+            $"The {exportKind} export for tenant '{tenantId}' carries no caller identity (subject id) and is refused: " +
+            "an export runs with the data permissions of the user who requested it and never as the system. " +
+            "The request was sent by an older asset repository build. Update the asset repository and request the export again.");
+    }
+
     internal static Exception CacheStreamNotFound(string tenantId, string key)
     {
         return new JobFailedException($"No value of key '{key} in distribute cache for tenant '{tenantId}' found.");

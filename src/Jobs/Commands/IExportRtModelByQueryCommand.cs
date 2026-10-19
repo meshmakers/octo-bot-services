@@ -1,4 +1,5 @@
 using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.Runtime.Contracts;
 
 namespace Meshmakers.Octo.Backend.Jobs.Commands;
 
@@ -12,9 +13,13 @@ public interface IExportRtModelByQueryCommand
     /// </summary>
     /// <param name="tenantId">The corresponding tenant id</param>
     /// <param name="queryId">ID of query, whose data is exported</param>
+    /// <param name="securityContext">
+    ///     The requesting caller (AB#6734); the export reads with this caller's data permissions. The system
+    ///     context is refused.
+    /// </param>
     /// <param name="filePath">The file path to export to</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
-    Task ExportAsync(string tenantId, OctoObjectId queryId, string filePath,
+    Task ExportAsync(string tenantId, OctoObjectId queryId, RtSecurityContext securityContext, string filePath,
         CancellationToken? cancellationToken);
 }

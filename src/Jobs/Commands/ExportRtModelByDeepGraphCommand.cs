@@ -20,17 +20,24 @@ internal class ExportRtModelByDeepGraphCommand(
     IRtSerializer rtSerializer) : CommandBase, IExportRtModelByDeepGraphCommand
 {
     public async Task ExportAsync(string tenantId, ExportRtByDeepGraphCommandRequest rtByDeepGraphCommandRequest,
-        string filePath,
+        RtSecurityContext securityContext, string filePath,
         CancellationToken? cancellationToken)
     {
         CheckAndThrowCancellation(cancellationToken);
+
+        // AB#6734: the session carries the requesting caller, never the system context (which bypasses every
+        // data permission); the engine prunes the deep graph and filters the entity reads.
+        if (!ExportCallerContext.IsUsable(securityContext))
+        {
+            throw JobFailedException.ExportCallerContextMissing(tenantId, "deep graph");
+        }
 
         var tenantRepository = await systemContext.FindTenantRepositoryAsync(tenantId);
 
             // Ensure the cache is loaded for the tenant
         await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
 
-        var session = await tenantRepository.GetSessionAsync();
+        var session = await ExportCallerContext.OpenSessionAsync(tenantRepository, securityContext, tenantId, "deep graph");
         try
         {
             session.StartTransaction();

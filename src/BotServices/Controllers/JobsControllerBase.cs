@@ -489,6 +489,13 @@ public abstract class JobsControllerBase : ControllerBase
             ? await _tenantAccessGuard.MayAccessJobAsync(User, jobTenantId, id)
             : _tenantAccessGuard.IsJobOfTenant(routeTenantId, jobTenantId, id);
 
+        // AB#6734: the artifact of a runtime-data export additionally belongs to the user who requested it.
+        if (allowed && jobTenantId != null && JobTenantBinding.IsInitiatorBound(jobDetails.Job))
+        {
+            allowed = await _tenantAccessGuard.MayAccessInitiatorBoundJobAsync(User, jobTenantId,
+                JobTenantBinding.TryResolveInitiatingSubject(jobDetails.Job), id);
+        }
+
         // A bare 403, exactly like the transport gate: the refusal must not say whether the job
         // exists, which tenant it belongs to, or which of the two reasons applied.
         return allowed
