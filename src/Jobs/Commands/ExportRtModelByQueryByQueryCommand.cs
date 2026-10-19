@@ -3,6 +3,7 @@ using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v2;
+using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Repositories.Query;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
@@ -20,14 +21,21 @@ internal class ExportRtModelByQueryByQueryCommand(
     IRtSerializer rtSerializer)
     : CommandBase, IExportRtModelByQueryCommand
 {
-    public async Task ExportAsync(string tenantId, OctoObjectId queryId, string filePath,
-        CancellationToken? cancellationToken)
+    public async Task ExportAsync(string tenantId, OctoObjectId queryId, RtSecurityContext securityContext,
+        string filePath, CancellationToken? cancellationToken)
     {
         CheckAndThrowCancellation(cancellationToken);
 
+        // AB#6734: the session carries the requesting caller, never the system context (which bypasses every
+        // data permission); the engine then filters the rows the query returns.
+        if (!ExportCallerContext.IsUsable(securityContext))
+        {
+            throw JobFailedException.ExportCallerContextMissing(tenantId, "query");
+        }
+
         var tenantRepository = await systemContext.FindTenantRepositoryAsync(tenantId);
 
-        var session = await tenantRepository.GetSessionAsync();
+        var session = await ExportCallerContext.OpenSessionAsync(tenantRepository, securityContext, tenantId, "query");
         try
         {
             session.StartTransaction();

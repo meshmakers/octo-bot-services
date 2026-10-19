@@ -111,6 +111,18 @@ internal sealed class JobsApiTestHost : IDisposable
     }
 
     /// <summary>A user token with exactly <paramref name="roles" /> (possibly none).</summary>
+    /// <summary>A user token of <paramref name="tenantId" /> with an explicit subject (AB#6734); default tenant roles.</summary>
+    public static string UserTokenAs(string tenantId, string subject)
+    {
+        return $"user:{tenantId}|*|{subject}";
+    }
+
+    /// <summary>A client-credentials token of <paramref name="tenantId" /> issued for the client <paramref name="clientId" /> (AB#6734).</summary>
+    public static string ServiceTokenOfClient(string tenantId, string clientId)
+    {
+        return $"service:{tenantId}|*|{clientId}";
+    }
+
     public static string UserTokenWithRoles(string tenantId, params string[] roles)
     {
         return $"user:{tenantId}|{string.Join(',', roles)}";
@@ -172,6 +184,9 @@ internal sealed class JobsApiTestHost : IDisposable
     public IBackgroundJobClient BackgroundJobClient => _backgroundJobClient;
 
     public IJobStorageAccessor JobStorage => _jobStorage;
+
+    /// <summary>The distributed cache the export results are served from (AB#6734).</summary>
+    public IDistributedCacheService DistributedCache { get; } = Substitute.For<IDistributedCacheService>();
 
     /// <summary>
     ///     The secret sweep report store (AB#5539), a substitute a test can seed.
@@ -271,7 +286,7 @@ internal sealed class JobsApiTestHost : IDisposable
         builder.Services.AddSingleton(_backgroundJobClient);
         builder.Services.AddSingleton(backupFileStorage);
         builder.Services.AddSingleton<IBotArtifactStorage>(Artifacts.Storage);
-        builder.Services.AddSingleton(Substitute.For<IDistributedCacheService>());
+        builder.Services.AddSingleton(DistributedCache);
         builder.Services.AddSingleton(hierarchy);
         builder.Services.AddSingleton(_jobStorage);
         builder.Services.AddSingleton(_secretSweepReportStore);
@@ -365,16 +380,19 @@ internal sealed class JobsApiTestHost : IDisposable
             }
 
             // "<kind>:<tenant>" = the tenant administrator roles; "<kind>:<tenant>|<role>,<role>" = exactly these.
-            var tenantAndRoles = parts[1].Split('|', 2);
-            var roles = tenantAndRoles.Length == 2
+            // "<kind>:<tenant>|<roles or *>|<subject or client>" - "*" = the tenant administrator roles; the optional third segment names the subject of a user
+            // token (default "test-subject") or the client id of a service token (default "octo-worker").
+            var tenantAndRoles = parts[1].Split('|', 3);
+            var roles = tenantAndRoles.Length >= 2 && tenantAndRoles[1] != "*"
                 ? tenantAndRoles[1].Split(',', StringSplitOptions.RemoveEmptyEntries)
                 : [CommonConstants.AdminPanelManagementRole, CommonConstants.SecretManagementRole, CommonConstants.TenantManagementRole];
+            var named = tenantAndRoles.Length == 3 && tenantAndRoles[2].Length > 0 ? tenantAndRoles[2] : null;
 
             var isUser = parts[0] == "user";
             var claims = new List<Claim>
             {
                 new("tenant_id", tenantAndRoles[0]),
-                new("client_id", isUser ? "octo-cli" : "octo-worker"),
+                new("client_id", isUser ? "octo-cli" : named ?? "octo-worker"),
                 new(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)
             };
             // AB#5539: role claims arrive the way the real bearer handler hands them over — renamed to
@@ -384,7 +402,7 @@ internal sealed class JobsApiTestHost : IDisposable
 
             if (isUser)
             {
-                claims.Add(new Claim("sub", "test-subject"));
+                claims.Add(new Claim("sub", named ?? "test-subject"));
                 claims.Add(new Claim("name", UserName));
             }
 

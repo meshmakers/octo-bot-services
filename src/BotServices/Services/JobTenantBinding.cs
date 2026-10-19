@@ -58,6 +58,45 @@ public static class JobTenantBinding
     private const string TenantParameterName = "tenantId";
 
     /// <summary>
+    ///     True for the jobs whose result belongs to the user who requested them (AB#6734): the runtime-data
+    ///     exports. Other jobs (dump, restore, archive, sweep) are bound to the tenant only.
+    /// </summary>
+    public static bool IsInitiatorBound(Job? job)
+    {
+        return job?.Type == typeof(Meshmakers.Octo.Backend.Jobs.Jobs.IExportModelJob);
+    }
+
+    /// <summary>
+    ///     The subject that requested an initiator-bound job (AB#6734), read from the job's own stored
+    ///     arguments - the export request carries it - so the binding is created atomically with the job and
+    ///     cannot be missed by a crash between enqueue and a second write. Null when none is stored.
+    /// </summary>
+    public static string? TryResolveInitiatingSubject(Job? job)
+    {
+        var args = job?.Args;
+        if (args == null)
+        {
+            return null;
+        }
+
+        foreach (var arg in args)
+        {
+            var subject = arg switch
+            {
+                ExportRtByQueryCommandRequest query => query.InitiatedBySubjectId,
+                ExportRtByDeepGraphCommandRequest graph => graph.InitiatedBySubjectId,
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(subject))
+            {
+                return subject;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     ///     The tenant <paramref name="job" /> belongs to, or <c>null</c> when it cannot be determined.
     /// </summary>
     public static string? TryResolveTenantId(Job? job)

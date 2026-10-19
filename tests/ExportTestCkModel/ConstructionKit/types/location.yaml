@@ -1,0 +1,17 @@
+"$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
+types:
+  - typeId: Location
+    derivedFromCkTypeId: ${System}/Entity
+    isAbstract: true
+    attributes:
+    - id: ${this}/Name
+      name: Name
+
+  - typeId: Continent
+    derivedFromCkTypeId: ${this}/Location
+
+  - typeId: Country
+    derivedFromCkTypeId: ${this}/Location
+    associations:
+    - id: ${System}/ParentChild
+      targetCkTypeId: ${this}/Continent

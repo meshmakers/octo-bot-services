@@ -33,6 +33,7 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="Meshmakers.Octo.Backend.Jobs.Tests" />
+        <InternalsVisibleTo Include="Meshmakers.Octo.Backend.Jobs.IntegrationTests" />
         <!-- Required so NSubstitute (Castle DynamicProxy) can mock ILogger<T> closed over internal types -->
         <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
     </ItemGroup>

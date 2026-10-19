@@ -1,0 +1,4 @@
+"$schema": "https://schemas.meshmakers.cloud/construction-kit-meta.schema.json"
+modelId: "ExportTest-1.0.0"
+dependencies:
+  - System-[2.5,3.0)
