@@ -72,7 +72,36 @@ internal static class NdjsonRowReader
         JsonValueKind.Number => element.TryGetInt64(out var l) ? l : (object)element.GetDouble(),
         JsonValueKind.True => true,
         JsonValueKind.False => false,
-        // Objects/arrays do not occur in exported rows; raw JSON text is the non-lossy fallback.
+        JsonValueKind.Array => ConvertArray(element),
+        // An object (a record column is exported as its JSON text) keeps the raw JSON text, the non-lossy fallback.
         _ => element.GetRawText(),
     };
+
+    /// <summary>
+    ///     An array column is exported as a JSON array. The driver binds a typed .NET array to a CrateDB array column on every
+    ///     CrateDB version, but not the JSON text of an array: CrateDB 5.x refuses it for a text or number array and 6.4 for
+    ///     every array, including an array of records (AB#7149). So the array is read as <c>string[]</c>, <c>long?[]</c>,
+    ///     <c>double?[]</c> or <c>bool?[]</c> after its elements; the elements of a record array are exported as the JSON text of
+    ///     each record, so they read as <c>string[]</c> too. An empty array reads as <c>string[]</c>; mixed or nested
+    ///     elements keep the raw JSON text.
+    /// </summary>
+    private static object ConvertArray(JsonElement array)
+    {
+        var items = array.EnumerateArray().ToList();
+        var kinds = items.Select(i => i.ValueKind).Where(k => k != JsonValueKind.Null).Distinct().ToList();
+
+        static bool IsNull(JsonElement e) => e.ValueKind == JsonValueKind.Null;
+
+        return kinds switch
+        {
+            [] or [JsonValueKind.String] => items.Select(i => IsNull(i) ? null : i.GetString()).ToArray(),
+            [JsonValueKind.Object] => items.Select(i => IsNull(i) ? null : i.GetRawText()).ToArray(),
+            [JsonValueKind.Number] when items.All(i => IsNull(i) || i.TryGetInt64(out _)) =>
+                items.Select(i => IsNull(i) ? (long?)null : i.GetInt64()).ToArray(),
+            [JsonValueKind.Number] => items.Select(i => IsNull(i) ? (double?)null : i.GetDouble()).ToArray(),
+            [JsonValueKind.True] or [JsonValueKind.False] or [JsonValueKind.True, JsonValueKind.False]
+                or [JsonValueKind.False, JsonValueKind.True] => items.Select(i => IsNull(i) ? (bool?)null : i.GetBoolean()).ToArray(),
+            _ => array.GetRawText(),
+        };
+    }
 }
