@@ -88,4 +88,40 @@ public class NdjsonRowReaderTests
         await Assert.That(rows).Count().IsEqualTo(2);
         await Assert.That(count).IsEqualTo(2);
     }
+
+    [Test]
+    public async Task ReadRowsAsync_ArrayColumns_YieldTypedArrays()
+    {
+        // CrateDB takes a typed array for an array column on every version, but not the JSON text of an array: 5.x refuses it for
+        // a text or number array, 6.4 for every array including an array of records (AB#7149).
+        var rows = await ReadAsync(
+            """{"rtid":"6789a00000000000010011a3","tags":["a","b"],"counts":[1,2],"ratios":[1.5,2],"flags":[true,false],"records":["{\"name\":\"n\",\"value\":1.5}"],"gaps":[1,null],"none":[]}""" +
+            "\n");
+
+        var row = rows[0];
+        await Assert.That(row["tags"]).IsTypeOf<string[]>();
+        await Assert.That((string[])row["tags"]!).IsEquivalentTo(["a", "b"]);
+        await Assert.That((long?[])row["counts"]!).IsEquivalentTo(new long?[] { 1, 2 });
+        await Assert.That((double?[])row["ratios"]!).IsEquivalentTo(new double?[] { 1.5, 2 });
+        await Assert.That((bool?[])row["flags"]!).IsEquivalentTo(new bool?[] { true, false });
+        await Assert.That((string[])row["records"]!).IsEquivalentTo(["{\"name\":\"n\",\"value\":1.5}"]);
+        await Assert.That((long?[])row["gaps"]!).IsEquivalentTo(new long?[] { 1, null });
+        await Assert.That((string[])row["none"]!).IsEmpty();
+    }
+
+    [Test]
+    public async Task ReadRowsAsync_ArrayOfRecordObjects_YieldsTheJsonTextOfEachRecord()
+    {
+        var rows = await ReadAsync("""{"rtid":"6789a00000000000010011a3","records":[{"name":"n","value":1.5}]}""" + "\n");
+
+        await Assert.That((string[])rows[0]["records"]!).IsEquivalentTo(["""{"name":"n","value":1.5}"""]);
+    }
+
+    [Test]
+    public async Task ReadRowsAsync_ArrayWithMixedElements_KeepsTheRawJsonText()
+    {
+        var rows = await ReadAsync("""{"rtid":"6789a00000000000010011a3","mixed":[1,"a"]}""" + "\n");
+
+        await Assert.That(rows[0]["mixed"]).IsEqualTo("""[1,"a"]""");
+    }
 }
