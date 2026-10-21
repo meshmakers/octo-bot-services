@@ -122,7 +122,9 @@ without it, no job is enqueued):
   `[AllowParentTenantAdministration]` on these routes, but needs `TenantManagement` in the **parent** tenant; the role is
   not looked up in the target tenant.
 * A dump is a whole-tenant backup and **bypasses row-level data permissions by design**; the role gate is what protects
-  it. Export jobs running without the caller's security context is a separate story (AB#6734).
+  it. The runtime-data exports (`ExportRtByQuery`, `ExportRtByDeepGraph`) are the opposite: they run with the identity
+  and roles of the user who requested them, so the result contains only what that user may read, and only the
+  initiating subject can download it (see "Export jobs run as the caller" in `CLAUDE.md`).
 * The Hangfire dashboard `/ui/jobs` lists the jobs of all tenants, so on top of the scope gate it is reachable only
   for callers of the **system tenant** (`tenant_id` claim = `OctoSystemConfiguration.SystemTenantId`) **that also hold
   the tenant role `TenantManagement`** (`HangfireDashboardAccessMiddleware` + `HangfireDashboardAuthorizationFilter`);
