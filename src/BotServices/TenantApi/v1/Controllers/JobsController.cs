@@ -26,7 +26,7 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         🔴 <b>Role (AB#4497).</b> Dump, restore, archive export, archive import and the artifact download need
+///         🔴 <b>Role (AB#4497, AB#6848).</b> Dump, restore, archive export, archive import, the fixup script run and the artifact download need
 ///         the tenant role <c>TenantManagement</c> in addition to the <c>octo_api</c> scope
 ///         (<see cref="BotServiceConstants.TenantJobManagementPolicy" />, <c>403</c> otherwise, no job enqueued).
 ///         The role is read from the caller's own token, i.e. the caller's own tenant: a parent-tenant user
@@ -107,15 +107,17 @@ public class JobsController : JobsControllerBase
     }
 
     /// <summary>
-    ///     Runs the fixup scripts for the tenant taken from the route.
+    ///     Runs the fixup scripts for the tenant taken from the route. Needs the tenant role
+    ///     <c>TenantManagement</c> (AB#6848): the scripts repair tenant data, so scope alone is not enough.
     /// </summary>
     /// <param name="tenantId">The tenant id, from the route.</param>
     // POST: {tenantId}/v1/jobs/run-fixup-scripts
     [HttpPost]
     [Route("run-fixup-scripts")]
-    [Authorize(BotServiceConstants.JobApiReadWritePolicy)]
+    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public IActionResult RunFixupScripts([FromRoute] [Required] string tenantId)
     {
         return EnqueueRunFixupScripts(tenantId);
