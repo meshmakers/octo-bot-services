@@ -116,7 +116,7 @@ without it, no job is enqueued):
 | Archive data export / import | `POST {tenantId}/v1/jobs/export-archive-data`, `.../import-archive-data-from-upload` | scope + `TenantManagement` |
 | tus upload feeding restore / import | `{tenantId}/v1/tus-upload` | scope + `TenantManagement` (`TusUploadAuthorization`) |
 | Artifact download (dump / export file) | `GET {tenantId}/v1/jobs/download`, deprecated `GET system/v1/jobs/download` | scope + `TenantManagement` |
-| Fixup script run | `POST {tenantId}/v1/jobs/run-fixup-scripts` | scope only (unchanged) |
+| Fixup script run | `POST {tenantId}/v1/jobs/run-fixup-scripts` | scope + `TenantManagement` |
 
 * The role is read from the **caller's own token**, i.e. the caller's own tenant. A user of a parent tenant keeps
   `[AllowParentTenantAdministration]` on these routes, but needs `TenantManagement` in the **parent** tenant; the role is

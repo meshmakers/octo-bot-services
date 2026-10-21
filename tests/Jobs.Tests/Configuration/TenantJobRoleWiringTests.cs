@@ -90,8 +90,9 @@ internal class TenantJobRoleWiringTests
             ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsFalse();
     }
 
-    /// <summary>Every entry point of the tenant routes carries the policy; the fixup run does not (not in scope).</summary>
+    /// <summary>Every entry point of the tenant routes carries the policy (AB#6848 added the fixup run).</summary>
     [Test]
+    [Arguments(nameof(TenantJobsController.RunFixupScripts))]
     [Arguments(nameof(TenantJobsController.DumpRepository))]
     [Arguments(nameof(TenantJobsController.RestoreFromUpload))]
     [Arguments(nameof(TenantJobsController.ExportArchiveData))]

@@ -4,7 +4,7 @@ using Meshmakers.Octo.Communication.Contracts;
 namespace Meshmakers.Octo.Backend.Jobs.Tests.Api;
 
 /// <summary>
-///     AB#4497 — dump, restore, archive export, archive import and the download of their artifacts need the
+///     AB#4497 / AB#6848 — dump, restore, archive export, archive import, the fixup script run and the download of their artifacts need the
 ///     tenant role <c>TenantManagement</c> on top of the <c>octo_api</c> scope. A token with the scope but
 ///     without the role answers <c>403</c> and no job is enqueued. For a parent-tenant caller the role is the one
 ///     in the caller's own (parent) tenant.
@@ -20,6 +20,7 @@ internal class TenantJobRoleAuthorizationTests
 
     /// <summary>Scope octo_api, but none of the roles.</summary>
     [Test]
+    [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
@@ -37,6 +38,7 @@ internal class TenantJobRoleAuthorizationTests
 
     /// <summary>Other administrator roles do not substitute TenantManagement.</summary>
     [Test]
+    [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
@@ -54,6 +56,7 @@ internal class TenantJobRoleAuthorizationTests
     }
 
     [Test]
+    [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
@@ -71,6 +74,7 @@ internal class TenantJobRoleAuthorizationTests
 
     /// <summary>A parent-tenant user without the role in the parent tenant gets 403 on the child route.</summary>
     [Test]
+    [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
@@ -88,6 +92,7 @@ internal class TenantJobRoleAuthorizationTests
 
     /// <summary>A parent-tenant user with TenantManagement (in the parent tenant) may administer the child.</summary>
     [Test]
+    [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
     [Arguments("restore-from-upload", RestoreQuery)]
@@ -117,17 +122,5 @@ internal class TenantJobRoleAuthorizationTests
         var response = await host.GetAsync(path, JobsApiTestHost.UserTokenWithRoles(Child));
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-    }
-
-    /// <summary>Not part of AB#4497: the fixup script run keeps its scope-only rule (listed as an open question).</summary>
-    [Test]
-    public async Task RunFixupScripts_IsNotRoleGated()
-    {
-        using var host = await JobsApiTestHost.StartAsync();
-
-        var response = await host.PostAsync($"/{Child}/v1/jobs/run-fixup-scripts",
-            JobsApiTestHost.UserTokenWithRoles(Child));
-
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 }
