@@ -19,6 +19,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Jobs\Jobs.csproj" />
+        <ProjectReference Include="..\..\src\BotServices\BotServices.csproj" />
         <ProjectReference Include="..\ExportTestCkModel\ExportTestCkModel.csproj" />
     </ItemGroup>
 

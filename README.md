@@ -435,3 +435,20 @@ The complete OctoMesh documentation is available at https://docs.meshmakers.clou
 ## License
 
 Released under the MIT License.
+
+## Hangfire job storage: schema migration (AB#7196)
+
+Hangfire.Mongo keeps its schema version in `<job database>.hangfire.schema` (`{_id: 25}` for Hangfire.Mongo 1.16.x). The
+storage is configured in `HangfireMongoStorageSetup` and **never drops job data** (recurring jobs = the cron triggers of
+all tenant pipelines):
+
+* Older schema version: migrated in place (`MigrateMongoMigrationStrategy`); every Hangfire collection is copied first to
+  `<collection>.<fromVersion>.migrationbackup-<utc timestamp>` (`CollectionMongoBackupStrategy`). The backups are not
+  removed automatically - drop them once the migrated data has been verified.
+* Schema document missing but Hangfire data present (e.g. after a database restore): the document is restored as
+  version 24 first (the library would otherwise replay all legacy migration steps on current data and back up the wrong
+  collections), then migrated to 25 with a backup. A database without Hangfire data is initialised normally.
+* Schema newer than the library supports (downgrade), an unknown marker or more than one schema document: the service
+  stops with a `HangfireSchemaException` that names the database and the found/supported version. Nothing is changed.
+
+Covered by `tests/Jobs.IntegrationTests/HangfireSchemaMigrationTests` (real MongoDB via Testcontainers, needs Docker).
