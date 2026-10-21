@@ -19,6 +19,14 @@ public class ImportModelJob : IImportModelJob
     private readonly ICompressionService _compressionService;
     private readonly IImportCkModelCommand _importCkModelCommand;
     private readonly IImportRtModelCommand _importRtModelCommand;
+    private readonly IReadOnlyList<TimeSpan> _cacheLookupRetryDelays;
+
+    /// <summary>
+    ///     Waits between the lookups of a cache stream that is not (yet) there (AB#7256): the import is enqueued right
+    ///     after the asset repository wrote the file, so the first lookup can be early. Three lookups in total.
+    /// </summary>
+    internal static readonly IReadOnlyList<TimeSpan> DefaultCacheLookupRetryDelays =
+        [TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(2)];
 
     /// <summary>
     ///     Constructor
@@ -29,10 +37,12 @@ public class ImportModelJob : IImportModelJob
     /// <param name="compressionService">Service for compressing and decompressing files</param>
     /// <param name="importCkModelCommand">Command to import a CK model</param>
     /// <param name="importRtModelCommand">Command to import an RT model</param>
+    /// <param name="cacheLookupRetryDelays">Waits between repeated lookups of a missing cache stream (tests only)</param>
     public ImportModelJob(ILogger<ImportModelJob> logger, ISystemContext systemContext,
         IDistributedCacheService distributedCacheService, ICompressionService compressionService,
         IImportCkModelCommand importCkModelCommand,
-        IImportRtModelCommand importRtModelCommand)
+        IImportRtModelCommand importRtModelCommand,
+        IReadOnlyList<TimeSpan>? cacheLookupRetryDelays = null)
     {
         _logger = logger;
         _systemContext = systemContext;
@@ -40,6 +50,7 @@ public class ImportModelJob : IImportModelJob
         _compressionService = compressionService;
         _importCkModelCommand = importCkModelCommand;
         _importRtModelCommand = importRtModelCommand;
+        _cacheLookupRetryDelays = cacheLookupRetryDelays ?? DefaultCacheLookupRetryDelays;
     }
 
     /// <summary>
@@ -99,8 +110,6 @@ public class ImportModelJob : IImportModelJob
                 await _importCkModelCommand.ImportAsync(tenantId, tempFile.Item1,
                     cancellationToken?.ShutdownToken);
 
-                await ClearCache(tenantId, key);
-
                 _logger.LogInformation(
                     "Batch import step {Step}/{Total}: Import of file '{TempFile}' completed",
                     i + 1, keys.Count, tempFile);
@@ -112,6 +121,13 @@ public class ImportModelJob : IImportModelJob
                     i + 1, keys.Count);
                 throw;
             }
+        }
+
+        // AB#7256: the cache streams are cleared only when every step succeeded, so that a retry of the job (see
+        // IImportModelJob) finds all of them again. After a failure they expire with the cache (one hour).
+        foreach (var key in keys)
+        {
+            await ClearCache(tenantId, key);
         }
 
         _logger.LogInformation(
@@ -168,6 +184,15 @@ public class ImportModelJob : IImportModelJob
     private async Task<Tuple<string, string>> GetTempFile(string tenantId, string key)
     {
         var cacheStream = await _distributedCacheService.GetCacheStreamByIdAsync(tenantId, key);
+        for (var attempt = 0; cacheStream == null && attempt < _cacheLookupRetryDelays.Count; attempt++)
+        {
+            _logger.LogWarning(
+                "Cache stream '{Key}' of tenant '{TenantId}' not found, looking again in {Delay} (lookup {Attempt}/{Total})",
+                key, tenantId, _cacheLookupRetryDelays[attempt], attempt + 2, _cacheLookupRetryDelays.Count + 1);
+            await Task.Delay(_cacheLookupRetryDelays[attempt]);
+            cacheStream = await _distributedCacheService.GetCacheStreamByIdAsync(tenantId, key);
+        }
+
         if (cacheStream == null)
         {
             throw JobFailedException.CacheStreamNotFound(tenantId, key);

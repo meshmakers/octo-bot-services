@@ -133,6 +133,22 @@ without it, no job is enqueued):
   parent user with / without role), `TenantJobRoleWiringTests` (policy registration as `Program.cs` calls it, production
   gate defaults, policy on every entry point, tus rule, dashboard rule, `Program.cs` call sites).
 
+### Import jobs: cache lookup and retry policy (AB#7256)
+
+CK and RT imports read the uploaded model from the distributed cache (a temporary GridFS file of the tenant database
+that the asset repository wrote moments before the job was enqueued).
+
+* **Cache lookup**: `ImportModelJob` looks the file up up to three times (waits of 0.5 s and 2 s). A file that is really
+  missing fails the job with `JobFailedException.CacheStreamNotFound`, whose message names tenant and cache key. The
+  read itself asks the primary when a secondary has not received the file yet (engine-mongodb, "GridFS read preference
+  and read-your-writes").
+* **Hangfire retry** (`IImportModelJob`): a failed import job is never deleted (`OnAttemptsExceeded = Fail`), it stays
+  `Failed` in the dashboard for diagnosis. `ImportCkAsync` and `ImportCkBatchAsync` are retried three times (after 10,
+  30 and 60 s): importing a CK model version that is already installed is a no-op, and the cache streams are cleared
+  only after a successful import (the batch clears all of its keys at the end), so a retry finds the files again.
+  `ImportRtAsync` is not retried by Hangfire because the RT import strategies are not idempotent.
+* Other job types (export, dump, restore, sweeps) keep `Attempts = 0` and `Delete`; they do not read the cache.
+
 ### Secret sweep and secrets admin API (AB#5539, AB#5544)
 
 Implements phases 4 and 5 of the SECRET attribute value type (concept
