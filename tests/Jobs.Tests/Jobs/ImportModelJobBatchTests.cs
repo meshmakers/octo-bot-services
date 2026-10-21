@@ -19,7 +19,8 @@ public class ImportModelJobBatchTests
     private ImportModelJob CreateJob()
     {
         return new ImportModelJob(_logger, Substitute.For<Meshmakers.Octo.Runtime.Contracts.MongoDb.ISystemContext>(),
-            _cacheService, _compressionService, _importCkModelCommand, _importRtModelCommand);
+            _cacheService, _compressionService, _importCkModelCommand, _importRtModelCommand,
+            [TimeSpan.Zero, TimeSpan.Zero]);
     }
 
     [Test]
