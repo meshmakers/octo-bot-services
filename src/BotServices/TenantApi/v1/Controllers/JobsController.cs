@@ -30,8 +30,7 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 ///         the tenant role <c>TenantManagement</c> in addition to the <c>octo_api</c> scope
 ///         (<see cref="BotServiceConstants.TenantJobManagementPolicy" />, <c>403</c> otherwise, no job enqueued).
 ///         The role is read from the caller's own token, i.e. the caller's own tenant: a parent-tenant user
-///         administering a child needs <c>TenantManagement</c> in the parent tenant. The fixup script run is not
-///         part of this rule. A dump is a whole-tenant backup and bypasses row-level data permissions by design.
+///         administering a child needs <c>TenantManagement</c> in the parent tenant. A dump is a whole-tenant backup and bypasses row-level data permissions by design.
 ///     </para>
 ///     <para>
 ///         🔴 <b>Why the route shape matters (AB#5060).</b> The transport tenant gate
