@@ -10,6 +10,7 @@ using Hangfire.Mongo.Migration.Strategies.Backup;
 using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
+using Meshmakers.Octo.Backend.BotServices.HangfireSetup;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -296,14 +297,8 @@ try
         var octoBotServicesOptions = serviceProvider.GetRequiredService<IOptions<OctoBotServicesOptions>>();
         var systemOptions = serviceProvider.GetRequiredService<IOptions<OctoSystemConfiguration>>();
 
-        var storageOptions = new MongoStorageOptions
-        {
-            MigrationOptions = new MongoMigrationOptions
-            {
-                MigrationStrategy = new DropMongoMigrationStrategy(),
-                BackupStrategy = new NoneMongoBackupStrategy()
-            }
-        };
+        // AB#7196: migrate in place with a collection backup; never drop recurring jobs.
+        var storageOptions = HangfireMongoStorageSetup.CreateStorageOptions();
         var mongoUrlBuilder = new MongoUrlBuilder
         {
             DatabaseName = string.IsNullOrWhiteSpace(octoBotServicesOptions.Value.InstancePrefix) ? octoBotServicesOptions.Value.JobDatabaseName :
@@ -328,7 +323,20 @@ try
             mongoUrlBuilder.Server = MongoServerAddress.Parse(systemOptions.Value.DatabaseHost);
         }
 
-        config.UseMongoStorage(mongoUrlBuilder.ToString(), storageOptions);
+        var mongoUrl = mongoUrlBuilder.ToString();
+        var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(HangfireMongoStorageSetup));
+        try
+        {
+            HangfireMongoStorageSetup.PrepareSchema(
+                new MongoClient(mongoUrl).GetDatabase(mongoUrlBuilder.DatabaseName), storageOptions, logger);
+        }
+        catch (HangfireSchemaException e)
+        {
+            logger.LogCritical(e, "Hangfire job storage cannot start: {Message}", e.Message);
+            throw;
+        }
+
+        config.UseMongoStorage(mongoUrl, storageOptions);
         config.UseNLogLogProvider();
     });
 
