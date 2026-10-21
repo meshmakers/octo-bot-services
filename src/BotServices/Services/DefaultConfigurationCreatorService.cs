@@ -21,14 +21,18 @@ internal class DefaultConfigurationCreatorService(
     ISystemContext systemContext,
     IJobCreatorService jobCreatorService,
     ICommandClient<CreateIdentityDataCommandRequest> createIdentityDataCommandClient,
-    IOptions<OctoBotServicesOptions> octoBotServicesOptions)
+    IOptions<OctoBotServicesOptions> octoBotServicesOptions,
+    FailedTenantRegistry failedTenantRegistry,
+    TenantSetupRetryTracker tenantSetupRetryTracker)
     : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
         BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
         null, // migrationService - we don't need migrations here
         null, // ckModelUpgradeService - we don't need CK model migrations
         null, // runtimeRepositoryProvider - not needed without CK model migrations
         null, // serviceEnabledKey - the service is auto-enabled
-        true) // autoEnable
+        true, // autoEnable
+        failedTenantRegistry: failedTenantRegistry, // AB#7249: deferred-start failures are retried with backoff
+        setupRetryTracker: tenantSetupRetryTracker) // AB#7249: failed setups are retried, no MongoDB needed
 {
     public override async Task InitializeAsync()
     {
