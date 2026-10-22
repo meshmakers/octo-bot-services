@@ -143,6 +143,41 @@ public partial class RestoreRepositoryJob
         }
     }
 
+    /// <summary>
+    ///     The archive data of the whole backup must fit on the storage nodes below CrateDB's high disk watermark, and that is
+    ///     decided before anything is replaced (AB#7274): the per-archive check of the load runs after the Mongo phase and after
+    ///     the earlier archives, when a refusal has already cost the tenant its database. The files are staged by now, so their
+    ///     size is known. Space that the restore frees by replacing tables of the target tenant is not subtracted.
+    /// </summary>
+    private async Task EnsureBackupFitsStorageAsync(string tenantId, ContainerPass pass, CancellationToken ct)
+    {
+        if (streamDataFactory == null || pass.RunId == null)
+        {
+            return;
+        }
+
+        long stagedBytes = 0;
+        await foreach (var item in artifactStorage!.ListStagingAsync(tenantId, pass.RunId, ct))
+        {
+            stagedBytes += item.Size;
+        }
+
+        var headroom = await streamDataFactory.CheckStagingDiskHeadroomAsync(stagedBytes, ct);
+        if (headroom is not { IsSufficient: false })
+        {
+            logger.LogInformation(
+                "The archive data of the backup for tenant '{TenantId}' ({StagedBytes} staged bytes) fits below the disk watermarks.",
+                tenantId, stagedBytes);
+            return;
+        }
+
+        logger.LogWarning("The archive data of the backup for tenant '{TenantId}' does not fit on the storage nodes: {Reason}",
+            tenantId, headroom.Reason);
+        throw new JobFailedException(
+            $"The archive data of the backup for tenant '{tenantId}' does not fit on the storage nodes: {headroom.Reason} " +
+            "Nothing was restored. Free disk space or add storage nodes and run the restore again.");
+    }
+
     private async Task<RestoreRepositoryResult> RestoreNativeAsync(string tenantId, string databaseName,
         string? oldDatabaseName, bool restoreArchiveData, ContainerPass pass, CancellationToken ct)
     {
@@ -189,6 +224,8 @@ public partial class RestoreRepositoryJob
                         $"cannot run the native copy: {readiness.Reason ?? "not ready"} Nothing was restored.");
                 }
             }
+
+            await EnsureBackupFitsStorageAsync(tenantId, pass, ct);
         }
 
         await RestoreMongoAsync(tenantId, databaseName, pass.MongoScratch, oldDatabaseName, ct);
@@ -635,7 +672,9 @@ public partial class RestoreRepositoryJob
     {
         foreach (var gap in summary.NotCheckedRollups)
         {
-            logger.LogWarning("Rollup reconcile of tenant '{TenantId}': rollup '{RollupRtId}' was not checked ({Cause}): {Reason}",
+            // An informational gap (never activated, disabled without a table) is a normal state, not a warning (AB#7274).
+            logger.Log(gap.IsBlocking ? LogLevel.Warning : LogLevel.Information,
+                "Rollup reconcile of tenant '{TenantId}': rollup '{RollupRtId}' was not checked ({Cause}): {Reason}",
                 tenantId, gap.RollupRtId, gap.Cause, gap.Reason);
         }
     }
