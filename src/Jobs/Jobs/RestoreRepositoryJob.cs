@@ -770,7 +770,7 @@ public class NotCheckedRollupSummary
     /// <summary>The rollup.</summary>
     public string RollupRtId { get; set; } = string.Empty;
 
-    /// <summary><c>NoLiveTable</c>, <c>NeverActivated</c>, <c>SourceMissing</c> or <c>ArchiveFailed</c>.</summary>
+    /// <summary><c>NoLiveTable</c>, <c>NeverActivated</c>, <c>Disabled</c>, <c>SourceMissing</c> or <c>ArchiveFailed</c>.</summary>
     public string Cause { get; set; } = string.Empty;
 
     /// <summary>English text for logs and the CLI.</summary>

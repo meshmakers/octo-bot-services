@@ -197,7 +197,7 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
         await Assert.That(result!.BackupFormatVersion).IsEqualTo(2);
         await Assert.That(result.TenantId).IsEqualTo(Tenant);
         await Assert.That(result.DatabaseName).IsEqualTo("tenantdb");
-        await Assert.That(result.Archives.Count).IsEqualTo(2);
+        await Assert.That(result!.Archives!.Count).IsEqualTo(2);
         await Assert.That(result.Archives.All(a => a.Outcome == "Imported")).IsTrue();
         await Assert.That(result.Archives.Single(a => a.RtId == RtIdA).Rows).IsEqualTo(2000L);
         await Assert.That(result.Archives.Single(a => a.RtId == RtIdB).Rows).IsEqualTo(50L);
@@ -415,6 +415,49 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
         await Assert.That(restores.Count).IsEqualTo(0);
         await _systemContext.DidNotReceive().FindTenantContextAsync(Arg.Any<string>());
         await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Any<OctoObjectId>());
+    }
+
+    [Test]
+    public async Task Run_Format2_WhenTheBackupDoesNotFitBelowTheDiskWatermark_TheMongoRestoreNeverRuns_AndTheTenantIsUnchanged()
+    {
+        var restores = CaptureRestores();
+        SetupPostRestore((RtIdA, CkArchiveStatus.Activated));
+        await StageContainerAsync([NativeEntry(RtIdA, CkArchiveStatus.Activated, ("s1", 10))]);
+        const string reason = "Loading the archive data of the backup needs about 30.0 GiB per node (12 times the 5.0 GiB of staged files, " +
+                              "2 copies of every shard over 2 node(s)), but node 'data-hot-1' has 8.0 GiB available and room for 2.0 GiB " +
+                              "below the high disk watermark (90%).";
+        _streamFactory.CheckStagingDiskHeadroomAsync(Arg.Any<long>(), Arg.Any<CancellationToken>())
+            .Returns(new StagingDiskHeadroom(false, 5L << 30, 60L << 30,
+                [new NodeDiskHeadroom("data-hot-1", 30L << 30, 8L << 30, 2L << 30, "90%")], reason));
+        _systemContext.ClearReceivedCalls();
+
+        var error = await Assert.That(async () => await RunAsync()).Throws<JobFailedException>();
+
+        await Assert.That(error!.Message.Contains("30.0 GiB per node")).IsTrue();
+        await Assert.That(error.Message.Contains("node 'data-hot-1' has 8.0 GiB available and room for 2.0 GiB")).IsTrue();
+        await Assert.That(error.Message.Contains("high disk watermark (90%)")).IsTrue();
+        await Assert.That(error.Message.Contains("Nothing was restored")).IsTrue();
+        await Assert.That(restores.Count).IsEqualTo(0);
+        await _systemContext.DidNotReceive().FindTenantContextAsync(Arg.Any<string>());
+        await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Any<OctoObjectId>());
+    }
+
+    [Test]
+    public async Task Run_Format2_WhenTheBackupFits_ItRunsAsBefore_AndTheCheckGetsTheStagedBytesOfAllArchives()
+    {
+        var restores = CaptureRestores();
+        SetupPostRestore((RtIdA, CkArchiveStatus.Activated), (RtIdB, CkArchiveStatus.Activated));
+        await StageContainerAsync([
+            NativeEntry(RtIdA, CkArchiveStatus.Activated, ("s1", 10)),
+            NativeEntry(RtIdB, CkArchiveStatus.Activated, ("s1", 25))]);
+        _streamFactory.CheckStagingDiskHeadroomAsync(Arg.Any<long>(), Arg.Any<CancellationToken>())
+            .Returns(new StagingDiskHeadroom(true, 35, 420, [new NodeDiskHeadroom("data-hot-1", 420, 1L << 40, 1L << 40, "90%")], null));
+
+        var result = await RunAsync();
+
+        await Assert.That(restores.Count).IsEqualTo(1);
+        await Assert.That(result!.Archives!.Count).IsEqualTo(2);
+        await _streamFactory.Received(1).CheckStagingDiskHeadroomAsync(Arg.Is<long>(b => b >= 35), Arg.Any<CancellationToken>());
     }
 
     [Test]
