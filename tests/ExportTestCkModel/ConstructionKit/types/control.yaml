@@ -1,0 +1,11 @@
+"$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
+types:
+  # AB#7446 — like Loxone/Control: an entity holding a seed-owned RecordArray of data points.
+  - typeId: Control
+    derivedFromCkTypeId: ${System}/Entity
+    attributes:
+      - id: ${this}/Name
+        name: Name
+      - id: ${this}/States
+        name: States
+        isOptional: true

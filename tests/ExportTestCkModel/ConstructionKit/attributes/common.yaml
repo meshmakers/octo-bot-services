@@ -3,3 +3,24 @@ attributes:
   - id: Name
     description: Designation of an entity.
     valueType: String
+
+  # AB#7446 — the ownership layout of System.Communication/DataPoint (identity members are seed-owned, live values are
+  # runtime state), so the export/import round trip of a seed-owned RecordArray with mixed member ownership is
+  # tested here, in the repository that owns the export commands. System.Communication itself cannot be referenced
+  # from octo-bot-services (it depends on System.Bot).
+  - id: ExternalId
+    description: External identifier of a sample (the identity of the data point).
+    valueType: String
+    ownership: SeedOwned
+  - id: CurrentValue
+    description: Live value of a sample.
+    valueType: String
+    isRuntimeState: true
+  - id: LastUpdate
+    description: Time of the last update of a sample.
+    valueType: DateTime
+    isRuntimeState: true
+  - id: States
+    description: Samples of a control (seed-owned RecordArray).
+    valueType: RecordArray
+    valueCkRecordId: ${this}/DataPointSample
