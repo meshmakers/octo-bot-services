@@ -80,4 +80,31 @@ public class ImportModelJobRtTests
             .Throws<ExchangeException>();
         await _cacheService.DidNotReceive().DeleteCacheStreamAsync("tenant-1", "key-1");
     }
+
+    [Test]
+    public async Task ImportRtAsync_GenericCreateRefusal_FailsTheJobWithTheEngineMessage_AndKeepsTheCacheFile()
+    {
+        // The engine refuses a new entity of a type whose method replaces the generic create with ONE
+        // ExchangeException (message 137). The job lets it pass unchanged, so the failed job carries the code, the
+        // reason token and the CK type, method and rtId of the engine message as its exception message.
+        const string engineMessage =
+            "Import rejected [137] GENERIC_CREATE_REPLACED_BY_METHOD: 1 new entity cannot be created by an import " +
+            "because a method replaces the generic create of its type. Nothing was written. Import refused: the new " +
+            "entity '650000000000000000000001' of type 'Test/Account' cannot be created by an import because method " +
+            "'Test/Account.Create-1' replaces the generic create (reason GENERIC_CREATE_REPLACED_BY_METHOD)";
+        _importRtModelCommand.ImportAsCallerAsync(Arg.Any<Meshmakers.Octo.Runtime.Contracts.Repositories.IRuntimeRepository>(),
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ImportStrategy>(), Arg.Any<RtImportCallerContext>(),
+                Arg.Any<CancellationToken?>(), Arg.Any<RtImportBlankingPolicy>(),
+                Arg.Any<IReadOnlyCollection<RtImportBlankingConfirmation>?>())
+            .Returns<Task>(_ => throw new ExchangeException(engineMessage, 137));
+
+        var job = CreateJob();
+
+        var exception = await Assert
+            .That(async () => await job.ImportRtAsync("tenant-1", ImportStrategy.Insert, "key-1", "user-sub-1", null))
+            .Throws<ExchangeException>();
+        await Assert.That(exception!.MessageNumber).IsEqualTo(137);
+        await Assert.That(exception.Message).IsEqualTo(engineMessage);
+        await _cacheService.DidNotReceive().DeleteCacheStreamAsync("tenant-1", "key-1");
+    }
 }
