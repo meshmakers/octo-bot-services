@@ -1,0 +1,18 @@
+"$schema": "https://schemas.meshmakers.cloud/construction-kit-elements.schema.json"
+records:
+  # Same shape and ownership as System.Communication/DataPoint (AB#7446).
+  - recordId: DataPointSample
+    description: A sample of a control. ExternalId is required.
+    isFinal: true
+    isAbstract: false
+    attributes:
+      - id: ${this}/Name
+        name: Name
+      - id: ${this}/ExternalId
+        name: ExternalId
+      - id: ${this}/CurrentValue
+        name: CurrentValue
+        isOptional: true
+      - id: ${this}/LastUpdate
+        name: LastUpdate
+        isOptional: true

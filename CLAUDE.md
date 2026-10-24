@@ -54,6 +54,13 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
 - ImportRt: `InitiatedBySubjectId` (AB#6392) is enough for the lock protection - it is a per-type policy opt-in
   (`ProtectBlueprintLocked`), not a per-role classification - so no roles are passed. Note: the import session stays the
   system session by design of AB#6392 (write grants are not evaluated per caller there).
+- Export/import round trip of record arrays (AB#7446): `Jobs.IntegrationTests/DataPointRoundTripTests` (needs Docker) exports an entity
+  with a seed-owned RecordArray of `DataPointSample` (the ownership layout of `System.Communication/DataPoint`: `Name` and the
+  required `ExternalId` seed-owned, `CurrentValue` / `LastUpdate` runtime state; `tests/ExportTestCkModel`, `Control`) by deep graph
+  and by query, checks that the file carries identity and no live values, imports it into an emptied tenant and reads the records
+  back. Export evaluates record MEMBERS one by one, so a member that is runtime state is missing from every exported record - the
+  bug behind `Loxone/Control.States` losing `ExternalId` (fixed in the System.Communication model, 4.11.0). One test pins a known
+  engine gap: an import does not validate the required members of a record, so a file without `ExternalId` is accepted.
 - Tests: `tests/Jobs.IntegrationTests` (`ExportPermissionTests`, needs Docker): the two real export commands against the real engine and a
   Testcontainers MongoDB with a restricted policy table and the tiny `tests/ExportTestCkModel` - denied type, owned-only, allowed caller,
   unrestricted tenant (same bytes for every caller), system context refused, for the query and the deep-graph export. Unit tests:
