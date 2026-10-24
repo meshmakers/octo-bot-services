@@ -74,3 +74,17 @@ giving up). `DefaultConfigurationCreatorService` takes the DI instance (`tenantS
 `octo.tenant_setup.failed` / `octo.tenant_setup.pending_seconds` (tag `octo.tenant.id`) feed the Dash0 alert. Details,
 options and tests: octo-common-services `CLAUDE.md`, section "Tenant Setup - Failure Handling". Test here:
 `tests/Jobs.Tests/Services/TenantSetupRetryWiringTests.cs`. Tests use one isolated `TenantSetupRetryTracker` per test and share it across the creator instances of that test when exercising a retry.
+
+## Publishing the system CK model: explicit release decision (AB#7433)
+
+A merge to `main` does **not** publish `System.Bot` to the CK catalogs. The pipeline parameter `publishSystemCkModels`
+(boolean, **default false**; same name and semantics as AB#7343 in `octo-construction-kit-engine`, AB#7432 in the
+communication controller) feeds `publishOnMain` of `validate-and-publish-ck-versions.yml` (`tpl-v1.8.0`). A main build still
+runs ValidateVersion, the schema compile and the cascade check, logs `CK publish on main is OFF (publishOnMain=false)` and
+publishes nothing. Reason: a new System* version breaks exact-pinned dependents on live tenants until they are re-pinned.
+
+**To publish explicitly** (needs the release decision of the platform owner): Azure DevOps -> pipeline `octo-bot-services-CI` ->
+*Run pipeline* -> branch `main` -> tick *Publish System CK models to the CK catalogs (main)*; CLI:
+`az pipelines run --id 94 --branch main --parameters publishSystemCkModels=true`. `r*` tags (release train) publish as
+before; `dev/*`/`test/*` builds never publish to the shared catalogs. A merge that bumps the model therefore leaves the version
+unpublished until that run; repos that restore it from the catalog must wait for it.

@@ -26,6 +26,15 @@ parameters:
   - name: octoCommVersion
     type: string
     default: 'auto'
+  # Explicit release decision for the System CK model of this repo, System.Bot (AB#7433, same gate and name as AB#7343 in
+  # octo-construction-kit-engine). A merge to main must NOT publish a new version on its own: a new System* version breaks
+  # exact-pinned dependents on live tenants until they are re-pinned. Default false = a main build validates and compiles
+  # the model but publishes nothing. Set true (Run pipeline on main -> "Publish System CK models") to publish.
+  # r* tags (release train) publish as before.
+  - name: publishSystemCkModels
+    displayName: 'Publish System CK models to the CK catalogs (main)'
+    type: boolean
+    default: false
 
 resources:
   # Chain link: exactly ONE upstream pipeline resource per repo. Pipeline
@@ -45,7 +54,7 @@ resources:
       type: github
       name: meshmakers/octo-pipeline-templates
       endpoint: meshmakers-access-token
-      ref: refs/tags/tpl-v1.7.0
+      ref: refs/tags/tpl-v1.8.0
 
 trigger:
   batch: true
@@ -158,6 +167,7 @@ stages:
               testRunTitle: 'CI'
           - template: templates/steps/validate-and-publish-ck-versions.yml@pipelineTemplates
             parameters:
+              publishOnMain: ${{ parameters.publishSystemCkModels }}
               constructionKitPaths:
                 - 'src/SystemBotCkModel/ConstructionKit'
               condition: ne(variables['CiGuardEnded'], 'true')
