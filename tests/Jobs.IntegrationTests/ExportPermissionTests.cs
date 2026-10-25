@@ -192,6 +192,8 @@ public class ExportPermissionTests
 
         await Assert.That(asEmployee).Contains("Country-Austria").And.Contains("Country-Germany");
         await Assert.That(asOutsider).IsEqualTo(asEmployee);
+        await Assert.That(asEmployee.IndexOf(seed.Austria.ToString(), StringComparison.Ordinal))
+            .IsLessThan(asEmployee.IndexOf(seed.Germany.ToString(), StringComparison.Ordinal));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -235,7 +237,12 @@ public class ExportPermissionTests
         var asOutsider = await ExportByDeepGraphAsync(seed, Outsider);
 
         await Assert.That(asEmployee).Contains("Country-Austria").And.Contains("Country-Germany");
+        // AB#7471: byte-identical on purpose - the export orders entities by CK type and RtId (the database returns
+        // the deep graph in no stable order), so users can diff two exports. Austria was inserted first, so its
+        // RtId sorts first.
         await Assert.That(asOutsider).IsEqualTo(asEmployee);
+        await Assert.That(asEmployee.IndexOf(seed.Austria.ToString(), StringComparison.Ordinal))
+            .IsLessThan(asEmployee.IndexOf(seed.Germany.ToString(), StringComparison.Ordinal));
     }
 
     // ---------------------------------------------------------------------------------------------

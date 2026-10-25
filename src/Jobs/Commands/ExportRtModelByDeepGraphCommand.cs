@@ -55,7 +55,12 @@ internal class ExportRtModelByDeepGraphCommand(
             CheckAndThrowCancellation(cancellationToken);
 
             var itemsDictionary = resultSet.Items.ToDictionary(k => k.Id.RtId, v => v);
-            var groupedByCkType = resultSet.Items.GroupBy(x => x.Id.CkTypeId);
+            // AB#7471: the engine returns graph items and associations in database order (graph lookup, no sort), which
+            // differs between runs. Order the file by CK type, RtId and association, so two exports of the same data are
+            // byte-identical and can be diffed.
+            var groupedByCkType = resultSet.Items
+                .GroupBy(x => x.Id.CkTypeId)
+                .OrderBy(g => g.Key.ToString(), StringComparer.Ordinal);
             var model = new RtModelRootTcDto();
             foreach (var grouping in groupedByCkType)
             {
@@ -67,7 +72,7 @@ internal class ExportRtModelByDeepGraphCommand(
                 // Ensure the cache is loaded for the tenant
                 await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
 
-                foreach (var rtEntity in s.Items)
+                foreach (var rtEntity in s.Items.OrderBy(e => e.RtId.ToString(), StringComparer.Ordinal))
                 {
                     var entityDto = rtEntityToDtoConverter.Convert(tenantId, rtEntity);
 
@@ -75,7 +80,9 @@ internal class ExportRtModelByDeepGraphCommand(
                     {
                         entityDto.Associations = new List<RtAssociationTcDto>();
 
-                        foreach (var associationItem in item.Associations)
+                        foreach (var associationItem in item.Associations
+                                     .OrderBy(a => a.AssociationRoleId?.ToString(), StringComparer.Ordinal)
+                                     .ThenBy(a => a.TargetRtId.ToString(), StringComparer.Ordinal))
                         {
                             var roleId = associationItem.AssociationRoleId ??
                                          throw OperationFailedException.AssociationRoleIdUndefined();
@@ -170,6 +177,7 @@ internal class ExportRtModelByDeepGraphCommand(
         // Convert to version ranges using [major.minor,major+1.0) pattern
         return allRequired
             .Where(m => m.Name != "System") // System model is always available
+            .OrderBy(m => m.Name, StringComparer.Ordinal)
             .Select(m => new CkModelIdVersionRange(m.Name,
                 $"[{m.Version.Major}.{m.Version.Minor},{m.Version.Major + 1}.0)"))
             .ToList();

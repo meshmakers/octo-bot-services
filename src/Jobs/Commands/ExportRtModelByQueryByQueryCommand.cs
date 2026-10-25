@@ -88,7 +88,12 @@ internal class ExportRtModelByQueryByQueryCommand(
             CheckAndThrowCancellation(cancellationToken);
 
             var model = new RtModelRootTcDto();
-            model.Entities.AddRange(resultSet.Items.Select(entity => rtEntityToDtoConverter.Convert(tenantId, entity)));
+            // AB#7471: a query without an explicit sorting returns database order, which is not stable; fall back to RtId
+            // so two exports of the same data are byte-identical. A sorting defined on the query is kept as is.
+            var items = sortingDtoList is { Count: > 0 }
+                ? resultSet.Items
+                : resultSet.Items.OrderBy(e => e.RtId.ToString(), StringComparer.Ordinal);
+            model.Entities.AddRange(items.Select(entity => rtEntityToDtoConverter.Convert(tenantId, entity)));
 
             CheckAndThrowCancellation(cancellationToken);
 
@@ -121,6 +126,7 @@ internal class ExportRtModelByQueryByQueryCommand(
         // Convert to version ranges using [major.minor,major+1.0) pattern
         return requiredModelIds
             .Where(m => m.Name != "System") // System model is always available
+            .OrderBy(m => m.Name, StringComparer.Ordinal)
             .Select(m => new CkModelIdVersionRange(m.Name,
                 $"[{m.Version.Major}.{m.Version.Minor},{m.Version.Major + 1}.0)"))
             .ToList();

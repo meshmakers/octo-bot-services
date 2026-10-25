@@ -17,6 +17,8 @@ The jobs themselves live in the reusable `Meshmakers.Octo.Backend.Jobs` library 
 
 Runtime-model exports automatically embed the CK model dependencies required by the exported entities into the transport container. The deep-graph export resolves the full transitive dependency closure (a model's dependencies, their dependencies, and so on) based on the models installed in the tenant, so the exported file lists every model version range the import target must satisfy. The `System` model is omitted because it is always available.
 
+The export file is deterministic (AB#7471): the deep-graph export orders entities by CK type id and RtId, associations by role and target, and model dependencies by name; the query export orders by RtId unless the query defines its own sorting. Two exports of the same data are byte-identical and can be diffed.
+
 ### Tenant-routed job operations (AB#5060)
 
 The five job operations whose subject is **one tenant** — repository dump, restore from a tus upload,
