@@ -208,16 +208,11 @@ public class DataPointRoundTripTests
     }
 
     /// <summary>
-    ///     Step 5 of the bug: what an import does with a file exported BEFORE the fix, i.e. records without their
-    ///     required <c>ExternalId</c>. KNOWN GAP, pinned as observed: the engine does not validate the required members
-    ///     of a record on import, so the file is accepted and the data points are stored WITHOUT their identity
-    ///     (nothing fails, nothing is logged). If the engine starts rejecting such records this test is to be changed
-    ///     to expect the rejection - that is the better behaviour.
+    ///     Builds the file of step 5 of the bug: what a file exported BEFORE the AB#7446 fix looks like, i.e. data point
+    ///     records without their required <c>ExternalId</c>. Leaves the tenant empty, ready for the import.
     /// </summary>
-    [Test]
-    public async Task Import_OfAFileWhoseRecordsLackTheRequiredExternalId_IsAcceptedWithoutValidation_KnownGap()
+    private static async Task<(string File, OctoObjectId RtId)> ExportWithoutExternalIdAsync(ExportEngineFixture fixture)
     {
-        var fixture = await ExportEngineFixture.GetAsync();
         await fixture.ResetAsync();
         var rtId = await InsertControlAsync(fixture);
         var exported = await ExportByDeepGraphAsync(fixture, rtId);
@@ -233,11 +228,75 @@ public class DataPointRoundTripTests
         var withoutExternalId = string.Join('\n', lines);
         await Assert.That(withoutExternalId).DoesNotContain("state-uuid");
         await fixture.ResetAsync();
+        return (withoutExternalId, rtId);
+    }
 
-        await ImportAsync(fixture, withoutExternalId);
+    /// <summary>
+    ///     AB#7450 (default mode, <c>Import:StrictMandatoryValidation</c> off): a file whose records lack the required
+    ///     <c>ExternalId</c> is still imported - existing imports, blueprint applies and restores stay unchanged - but
+    ///     the import now reports it: one audit event for the affected entity naming every record member with its path.
+    /// </summary>
+    [Test]
+    public async Task Import_OfAFileWhoseRecordsLackTheRequiredExternalId_IsAcceptedAndReported()
+    {
+        var fixture = await ExportEngineFixture.GetAsync();
+        var (file, rtId) = await ExportWithoutExternalIdAsync(fixture);
+
+        await ImportAsync(fixture, file);
 
         var states = await ReadStatesAsync(fixture, rtId);
         await Assert.That(states.Count).IsEqualTo(2);
         await Assert.That(states.All(s => string.IsNullOrEmpty((string?)s.GetAttributeValueOrDefault("ExternalId")))).IsTrue();
+
+        var reported = fixture.AuditTrail.MissingMandatory;
+        await Assert.That(reported.Count).IsEqualTo(1);
+        await Assert.That(reported[0].RtId).IsEqualTo(rtId);
+        await Assert.That(reported[0].Missing.Count).IsEqualTo(2);
+        await Assert.That(reported[0].Missing.Any(m => m.StartsWith("ExportTest", StringComparison.Ordinal) &&
+                                                       m.EndsWith("/ExternalId-1 at States[0]", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(reported[0].Missing.Any(m => m.EndsWith(" at States[1]", StringComparison.Ordinal))).IsTrue();
+    }
+
+    /// <summary>
+    ///     AB#7450 (strict mode): the same file is rejected before anything is written - no entity of the file is stored.
+    /// </summary>
+    [Test]
+    public async Task Import_OfAFileWhoseRecordsLackTheRequiredExternalId_IsRejectedInStrictMode()
+    {
+        var fixture = await ExportEngineFixture.GetAsync();
+        var (file, rtId) = await ExportWithoutExternalIdAsync(fixture);
+        fixture.ImportOptions.StrictMandatoryValidation = true;
+        try
+        {
+            var exception = await Assert.ThrowsAsync<ExchangeException>(() => ImportAsync(fixture, file));
+            await Assert.That(exception!.Message).Contains("States[0]");
+        }
+        finally
+        {
+            fixture.ImportOptions.StrictMandatoryValidation = false;
+        }
+
+        var repository = await fixture.SystemContext.FindTenantRepositoryAsync(fixture.TenantId);
+        using var session = await repository.GetSessionAsync();
+        var result = await repository.GetRtEntitiesByIdAsync(session, ExportTestCkIds.RtCkControlTypeId, [rtId],
+            RtEntityQueryOptions.Create());
+        await Assert.That(result.Items.Count()).IsEqualTo(0);
+    }
+
+    /// <summary>
+    ///     AB#7450: a file that carries the identity of every record produces no report.
+    /// </summary>
+    [Test]
+    public async Task Import_OfACompleteFile_ReportsNothing()
+    {
+        var fixture = await ExportEngineFixture.GetAsync();
+        await fixture.ResetAsync();
+        var rtId = await InsertControlAsync(fixture);
+        var exported = await ExportByDeepGraphAsync(fixture, rtId);
+        await fixture.ResetAsync();
+
+        await ImportAsync(fixture, exported);
+
+        await Assert.That(fixture.AuditTrail.MissingMandatory.Count).IsEqualTo(0);
     }
 }
