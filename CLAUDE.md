@@ -59,8 +59,10 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
   required `ExternalId` seed-owned, `CurrentValue` / `LastUpdate` runtime state; `tests/ExportTestCkModel`, `Control`) by deep graph
   and by query, checks that the file carries identity and no live values, imports it into an emptied tenant and reads the records
   back. Export evaluates record MEMBERS one by one, so a member that is runtime state is missing from every exported record - the
-  bug behind `Loxone/Control.States` losing `ExternalId` (fixed in the System.Communication model, 4.11.0). One test pins a known
-  engine gap: an import does not validate the required members of a record, so a file without `ExternalId` is accepted.
+  bug behind `Loxone/Control.States` losing `ExternalId` (fixed in the System.Communication model, 4.11.0). AB#7450: the engine's import validation
+  now covers required record members: a file without `ExternalId` is still imported by default but produces one audit event per
+  entity (`<ckAttributeId> at States[n]`, recorded by `RecordingRtImportAuditTrail` in `ExportEngineFixture`), and is rejected
+  before anything is written with `Import:StrictMandatoryValidation` (tests switch `RtImportOptions` on the fixture; `ResetAsync` restores it).
 - Tests: `tests/Jobs.IntegrationTests` (`ExportPermissionTests`, needs Docker): the two real export commands against the real engine and a
   Testcontainers MongoDB with a restricted policy table and the tiny `tests/ExportTestCkModel` - denied type, owned-only, allowed caller,
   unrestricted tenant (same bytes for every caller), system context refused, for the query and the deep-graph export. Unit tests:

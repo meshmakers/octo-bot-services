@@ -1,5 +1,6 @@
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.DataPermissions;
+using Meshmakers.Octo.Runtime.Contracts.Exchange;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Runtime.Contracts.Repositories;
@@ -29,6 +30,51 @@ internal sealed class TestDataPermissionResolver : IDataPermissionResolver
 }
 
 /// <summary>
+///     Records the import audit events of the engine (AB#7450: the missing-mandatory-attributes event) instead of
+///     forwarding them to an audit sink, so a test can assert what an import reported.
+/// </summary>
+internal sealed class RecordingRtImportAuditTrail : IRtImportAuditTrail
+{
+    private readonly List<(OctoObjectId RtId, IReadOnlyList<string> Missing)> _missing = [];
+
+    public IReadOnlyList<(OctoObjectId RtId, IReadOnlyList<string> Missing)> MissingMandatory
+    {
+        get
+        {
+            lock (_missing)
+            {
+                return _missing.ToArray();
+            }
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_missing)
+        {
+            _missing.Clear();
+        }
+    }
+
+    public Task RecordMissingMandatoryAttributesAsync(string? tenantId, RtCkId<CkTypeId> ckTypeId, OctoObjectId rtId,
+        IReadOnlyList<string> missingCkAttributeIds)
+    {
+        lock (_missing)
+        {
+            _missing.Add((rtId, missingCkAttributeIds));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task RecordSkippedDanglingEdgesAsync(string? tenantId, int skippedCount,
+        IReadOnlyList<string> sampleEdgeDescriptions) => Task.CompletedTask;
+
+    public Task RecordReplacedToOneEdgesAsync(string? tenantId, int replacedCount,
+        IReadOnlyList<string> sampleEdgeDescriptions) => Task.CompletedTask;
+}
+
+/// <summary>
 ///     One real engine on one real MongoDB (Testcontainers replica set) for the whole test process: the BSON class maps
 ///     of the driver are process-global and must be registered exactly once. The system tenant carries the System CK
 ///     model and the small <c>ExportTest</c> model; every test starts from an empty tenant (<see cref="ResetAsync" />).
@@ -41,12 +87,20 @@ internal sealed class ExportEngineFixture
     private const string AdminUser = "octo-system-admin";
     private const string AdminPassword = "OctoAdmin1";
 
-    private ExportEngineFixture(ServiceProvider provider, string tenantId, TestDataPermissionResolver resolver)
+    private ExportEngineFixture(ServiceProvider provider, string tenantId, TestDataPermissionResolver resolver,
+        RecordingRtImportAuditTrail auditTrail)
     {
         Provider = provider;
         TenantId = tenantId;
         Resolver = resolver;
+        AuditTrail = auditTrail;
     }
+
+    /// <summary>The import audit events recorded since the last <see cref="ResetAsync" />.</summary>
+    public RecordingRtImportAuditTrail AuditTrail { get; }
+
+    /// <summary>The import options of the engine (singleton); a test may switch strict validation and must restore it.</summary>
+    public RtImportOptions ImportOptions => Provider.GetRequiredService<RtImportOptions>();
 
     public ServiceProvider Provider { get; }
 
@@ -90,6 +144,7 @@ internal sealed class ExportEngineFixture
 
         var tenantId = $"botexporttests{Guid.NewGuid():N}";
         var resolver = new TestDataPermissionResolver();
+        var auditTrail = new RecordingRtImportAuditTrail();
 
         var services = new ServiceCollection();
         services.AddRuntimeEngine().AddMongoDbRuntimeRepository();
@@ -97,6 +152,7 @@ internal sealed class ExportEngineFixture
         services.AddLogging(b => b.ClearProviders().SetMinimumLevel(LogLevel.Warning));
         // Last registration wins over the TryAddSingleton in AddRuntimeEngine.
         services.AddSingleton<IDataPermissionResolver>(resolver);
+        services.AddSingleton<IRtImportAuditTrail>(auditTrail);
         services.Configure<OctoSystemConfiguration>(t =>
         {
             t.SystemTenantId = tenantId;
@@ -112,7 +168,7 @@ internal sealed class ExportEngineFixture
         var systemContext = provider.GetRequiredService<ISystemContext>();
         await systemContext.CreateSystemTenantAsync();
 
-        var fixture = new ExportEngineFixture(provider, tenantId, resolver);
+        var fixture = new ExportEngineFixture(provider, tenantId, resolver, auditTrail);
         await fixture.ImportModelAsync();
         return fixture;
     }
@@ -131,6 +187,8 @@ internal sealed class ExportEngineFixture
     public async Task ResetAsync()
     {
         Resolver.Table = RtDataPolicyTable.Empty;
+        ImportOptions.StrictMandatoryValidation = false;
+        AuditTrail.Clear();
         await SystemContext.ClearSystemTenantAsync();
         await ImportModelAsync();
     }
