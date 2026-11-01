@@ -31,6 +31,7 @@ public class StoredQueryAccessGuardTests
 
     private static readonly RtCkId<CkTypeId> AccountType = new("Test/Account");
     private static readonly RtCkId<CkTypeId> PlainType = new("Test/Plain");
+    private static readonly RtCkId<CkTypeId> BaseType = new("Test/Base");
     private static readonly RtSecurityContext Caller = RtSecurityContext.ForUser("user-1", ["Reader"]);
 
     private readonly ICkCacheService _cache = Cache();
@@ -64,6 +65,32 @@ public class StoredQueryAccessGuardTests
     {
         await Assert.That(() => StoredQueryAccessGuard.EnsureNotHidden(_cache, TenantId, OctoObjectId.GenerateNewId(),
             AccountType, [(path, StoredQueryAccessGuard.FieldFilterUsage)])).ThrowsNothing();
+    }
+
+    [Test]
+    public async Task ABaseTypeQuery_IsRefused_WhenADerivedTypeHidesTheAttribute()
+    {
+        // Review round 1 (PR #48): the query type is a base type; the repository returns derived entities too.
+        var cache = Cache(withBaseType: true);
+
+        await Assert.That(() => StoredQueryAccessGuard.EnsureNotHidden(cache, TenantId, OctoObjectId.GenerateNewId(),
+                BaseType, [("PasswordHash", StoredQueryAccessGuard.FieldFilterUsage)]))
+            .Throws<CommandExecutionFailedException>();
+        await Assert.That(() => StoredQueryAccessGuard.EnsureNotHidden(cache, TenantId, OctoObjectId.GenerateNewId(),
+            BaseType, [("Name", StoredQueryAccessGuard.FieldFilterUsage)])).ThrowsNothing();
+    }
+
+    [Test]
+    [Arguments("members.Test/Account[credentials.token=dummy-guess-0001]->name")]
+    [Arguments("members.Test/Account[passwordHash=dummy-guess-0001]suffix]->name")]
+    public async Task ASelectorKey_IsRefused_AndNoPartOfTheValueIsEchoed(string path)
+    {
+        var exception = await Assert.That(() => StoredQueryAccessGuard.EnsureNotHidden(_cache, TenantId,
+                OctoObjectId.GenerateNewId(), PlainType, [(path, StoredQueryAccessGuard.FieldFilterUsage)]))
+            .Throws<CommandExecutionFailedException>();
+
+        await Assert.That(exception!.Message).DoesNotContain("dummy-guess");
+        await Assert.That(exception.Message).DoesNotContain("suffix");
     }
 
     [Test]
@@ -181,14 +208,18 @@ public class StoredQueryAccessGuardTests
             definition);
     }
 
-    private static CkTypeGraph Type(string name, params CkTypeAttributeGraph[] attrs) => new(
+    private static CkTypeGraph Type(string name, params CkTypeAttributeGraph[] attrs) =>
+        Type(name, [], attrs);
+
+    private static CkTypeGraph Type(string name, IReadOnlyCollection<CkGraphTypeInheritance> derivedTypes,
+        params CkTypeAttributeGraph[] attrs) => new(
         new CkId<CkTypeId>($"{Model}/{name}"), isAbstract: false, isFinal: false, isCollectionRoot: false,
-        baseTypes: [], derivedFromCkTypeId: null, definingCollectionRootCkTypeId: null, derivedTypes: [],
+        baseTypes: [], derivedFromCkTypeId: null, definingCollectionRootCkTypeId: null, derivedTypes: derivedTypes,
         definedAttributes: [], allAttributes: attrs.ToDictionary(a => a.CkAttributeId, a => a), indexes: [],
         associations: new CkGraphDirectedAssociations([]), description: "test",
         enableChangeStreamPreAndPostImages: false, allMethods: null);
 
-    private static ICkCacheService Cache()
+    private static ICkCacheService Cache(bool withBaseType = false)
     {
         var recordId = new CkId<CkRecordId>($"{Model}/Credential");
         var credentialAttrs = new[] { Attr("Label", null), Attr("Token", CkAttributeAccessDto.Hidden) };
@@ -208,6 +239,16 @@ public class StoredQueryAccessGuardTests
         cache.TryGetRtCkType(TenantId, PlainType, out Arg.Any<CkTypeGraph?>())
             .Returns(call => { call[2] = plain; return true; });
         cache.GetCkTypes(TenantId).Returns(new List<CkTypeGraph> { account, plain });
+        if (withBaseType)
+        {
+            var baseGraph = Type("Base",
+                [new CkGraphTypeInheritance(account.CkTypeId, new CkId<CkTypeId>($"{Model}/Base"), 1)],
+                Attr("Name", null));
+            cache.GetRtCkType(TenantId, BaseType).Returns(baseGraph);
+            cache.TryGetRtCkType(TenantId, BaseType, out Arg.Any<CkTypeGraph?>())
+                .Returns(call => { call[2] = baseGraph; return true; });
+            cache.GetCkTypes(TenantId).Returns(new List<CkTypeGraph> { baseGraph, account, plain });
+        }
         cache.GetRtCkRecord(TenantId, Arg.Any<RtCkId<CkRecordId>>()).Returns(credential);
         return cache;
     }

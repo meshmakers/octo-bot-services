@@ -63,7 +63,10 @@ internal static partial class StoredQueryAccessGuard
     {
         foreach (Match match in EntitySelectorRegex().Matches(path))
         {
-            var hiddenKey = FindInTypes(cache, tenantId, allTypes, LastName(match.Groups[1].Value));
+            // The key may be a record path (Credentials.Token): check it as written and by its trailing attribute.
+            var key = match.Groups[1].Value.Trim();
+            var hiddenKey = FindInTypes(cache, tenantId, allTypes, key) ??
+                            FindInTypes(cache, tenantId, allTypes, LastName(key));
             if (hiddenKey != null)
             {
                 return hiddenKey;
@@ -110,6 +113,16 @@ internal static partial class StoredQueryAccessGuard
         return lastDot >= 0 ? trimmed[(lastDot + 1)..] : trimmed;
     }
 
-    /// <summary>The path with the values of its entity selectors removed (<c>[key=…]</c>), for error messages.</summary>
-    internal static string WithoutSelectorValues(string path) => EntitySelectorRegex().Replace(path, "[$1=…]");
+    /// <summary>
+    ///     The path with the values of its entity selectors removed (<c>[key=…]</c>), for error messages: everything from
+    ///     the first <c>=</c> inside a selector up to the last <c>]</c> of the path is replaced, so a value that itself
+    ///     contains <c>]</c> cannot leak a part of it.
+    /// </summary>
+    internal static string WithoutSelectorValues(string path)
+    {
+        var open = path.IndexOf('[');
+        var equals = open < 0 ? -1 : path.IndexOf('=', open);
+        var close = path.LastIndexOf(']');
+        return equals < 0 || close < equals ? path : path[..equals] + "=…" + path[close..];
+    }
 }
