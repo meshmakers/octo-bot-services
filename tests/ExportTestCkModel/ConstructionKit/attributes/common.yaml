@@ -4,6 +4,11 @@ attributes:
     description: Designation of an entity.
     valueType: String
 
+  # AB#8049 — assigned with access: Hidden on Country (stands in for System.Identity/User.PasswordHash).
+  - id: Secret
+    description: A value that is never readable, filterable or sortable outside a CK method.
+    valueType: String
+
   # AB#7446 — the ownership layout of System.Communication/DataPoint (identity members are seed-owned, live values are
   # runtime state), so the export/import round trip of a seed-owned RecordArray with mixed member ownership is
   # tested here, in the repository that owns the export commands. System.Communication itself cannot be referenced

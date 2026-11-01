@@ -1,4 +1,6 @@
 "$schema": "https://schemas.meshmakers.cloud/construction-kit-meta.schema.json"
+# ckLanguage 2: Country.Secret is access: Hidden (AB#8049, stored-query oracle test of the query export).
+ckLanguage: 2
 modelId: "ExportTest-1.0.0"
 dependencies:
   - System-[2.5,3.0)

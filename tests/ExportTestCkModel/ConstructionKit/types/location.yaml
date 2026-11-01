@@ -12,6 +12,11 @@ types:
 
   - typeId: Country
     derivedFromCkTypeId: ${this}/Location
+    attributes:
+    - id: ${this}/Secret
+      name: Secret
+      isOptional: true
+      access: Hidden
     associations:
     - id: ${System}/ParentChild
       targetCkTypeId: ${this}/Continent

@@ -66,6 +66,16 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
   data) with no repository session and no caller context, so it bypasses row-level data permissions. The protection is the gate:
   `TenantManagement` + tenant gate (AB#4497). Document it as "a dump contains all data of the tenant" to users. Pinned by
   `DumpWholeTenantByDesignTests`.
+- **Stored queries on Hidden attributes are refused (AB#8049).** `ExportRtModelByQueryByQueryCommand` checks the stored query's
+  `FieldFilter` and `Sorting` with `Commands/StoredQueryAccessGuard` before the query runs: a path that reaches a CK v2 `Hidden`
+  attribute (e.g. `System.Identity/User.PasswordHash`) fails the job with `ATTRIBUTE_NOT_QUERYABLE` (query, use, path with selector
+  values removed, hidden attribute; never a comparison value). The exported entities never carry Hidden values, but the set of
+  exported rows would answer a guess of the value. Rule = asset repository / mesh adapter: query type and derived types via the
+  engine's `ArchiveHiddenColumnGuard.FindHiddenAttribute`; navigation tails, entity-selector keys and unknown query types against
+  every type of the tenant. The check runs even though the asset repository refuses to save such a query, because a query can
+  arrive through `ImportRt` or a restore. Tests: `Jobs.Tests/Commands/StoredQueryAccessGuardTests` (unit) and
+  `Jobs.IntegrationTests/StoredQueryHiddenAttributeExportTests` (real engine; `tests/ExportTestCkModel` is `ckLanguage: 2` with the
+  Hidden attribute `Country.Secret`).
 - ImportRt: `InitiatedBySubjectId` (AB#6392) is enough for the lock protection - it is a per-type policy opt-in
   (`ProtectBlueprintLocked`), not a per-role classification - so no roles are passed. Note: the import session stays the
   system session by design of AB#6392 (write grants are not evaluated per caller there).

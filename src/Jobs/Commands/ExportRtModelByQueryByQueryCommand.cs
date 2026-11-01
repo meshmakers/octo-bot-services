@@ -50,9 +50,27 @@ internal class ExportRtModelByQueryByQueryCommand(
                 throw CommandExecutionFailedException.QueryNotFound(queryId);
             }
 
-            var queryOptions = RtEntityQueryOptions.Create();
+            var ckTypeIdString = query.GetAttributeStringValueOrDefault("QueryCkTypeId");
+            if (string.IsNullOrWhiteSpace(ckTypeIdString))
+            {
+                throw CommandExecutionFailedException.QueryCkTypeIdNotSet(queryId);
+            }
+
+            var ckTypeId = new RtCkId<CkTypeId>(ckTypeIdString);
 
             var sortingDtoList = query.GetRtRecordAttributeValuesOrDefault<RtSortOrderItemRecord>("Sorting");
+            var fieldFilterDtoList = query.GetRtRecordAttributeValuesOrDefault<RtFieldFilterRecord>("FieldFilter");
+
+            // AB#8049: a stored filter or sort order on a Hidden attribute is an oracle for its value (the set of exported
+            // rows answers the guess), so it is refused before the query runs. The cache must be loaded for the check.
+            await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
+            StoredQueryAccessGuard.EnsureNotHidden(ckCacheService, tenantId, queryId, ckTypeId,
+                (fieldFilterDtoList?.Select(f => ((string?)f.AttributePath, StoredQueryAccessGuard.FieldFilterUsage)) ?? [])
+                .Concat(sortingDtoList?.Select(s => ((string?)s.AttributePath, StoredQueryAccessGuard.SortOrderUsage)) ??
+                        []));
+
+            var queryOptions = RtEntityQueryOptions.Create();
+
             if (sortingDtoList != null)
             {
                 foreach (var sortDto in sortingDtoList)
@@ -61,7 +79,6 @@ internal class ExportRtModelByQueryByQueryCommand(
                 }
             }
 
-            var fieldFilterDtoList = query.GetRtRecordAttributeValuesOrDefault<RtFieldFilterRecord>("FieldFilter");
             if (fieldFilterDtoList != null)
             {
                 foreach (var fieldFilterDto in fieldFilterDtoList)
@@ -72,18 +89,7 @@ internal class ExportRtModelByQueryByQueryCommand(
                 }
             }
 
-            var ckTypeIdString = query.GetAttributeStringValueOrDefault("QueryCkTypeId");
-            if (string.IsNullOrWhiteSpace(ckTypeIdString))
-            {
-                throw CommandExecutionFailedException.QueryCkTypeIdNotSet(queryId);
-            }
-
-            var ckTypeId = new RtCkId<CkTypeId>(ckTypeIdString);
-
             var resultSet = await tenantRepository.GetRtEntitiesByTypeAsync(session, ckTypeId, queryOptions);
-
-            // Ensure the cache is loaded for the tenant
-            await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
 
             CheckAndThrowCancellation(cancellationToken);
 
