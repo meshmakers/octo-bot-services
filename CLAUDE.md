@@ -23,6 +23,21 @@ Rules:
   `Program.cs`; `TenantJobRoleWiringTests` pins this.
 - New tenant-wide data job = `TenantJobManagementPolicy` + a negative test per entry point.
 
+## CORS and cookies (AB#7270)
+
+- CORS = the shared known-origins policy of `AddOctoServiceInfrastructure()` (`app.UseCors()` without a policy): allowed
+  origins are the registered client origins of the addressed tenant (system routes and unknown tenants: system tenant),
+  never `*`, never credentials. `BotCorsConfiguration` only adds the tus response headers (`Upload-Offset`,
+  `Upload-Length`, `Tus-Resumable`, `Location`) and a 1 h preflight cache via `OctoCorsOptions`. A browser app that calls
+  bots must be a registered client origin. `CorsAndCookieWiringTests` pins this; the policy itself is tested in
+  octo-common-services (`KnownOriginsCorsPolicyTests`).
+- Session cookie of the OIDC login (`Octo-BotServices`): HttpOnly, Secure, `SameSite=Lax`. No cross-site flow needs
+  `None`: the identity callback is same-site and the SPAs use bearer headers.
+- `OctoIdentityAccessToken` (Studio opens `/ui/jobs?jwt_token=…`): set by `UseOctoCookieBasedAuthentication(
+  BotServiceConstants.HangfireDashboardBranchPath)` with HttpOnly, Secure, `SameSite=Strict`, `Path=/ui`; outside `/ui`
+  neither the query token nor the cookie becomes an Authorization header. After the update an old cookie with
+  `Path=/` stays in the browser until it expires; it is ignored outside `/ui`.
+
 ## Export jobs run as the caller (AB#6734)
 
 `ExportRtByQuery` / `ExportRtByDeepGraph` (REST on the asset repository -> bus command -> `ModelCommandsConsumer` ->
