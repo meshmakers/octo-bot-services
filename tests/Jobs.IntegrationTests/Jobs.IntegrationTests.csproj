@@ -23,4 +23,11 @@
         <ProjectReference Include="..\ExportTestCkModel\ExportTestCkModel.csproj" />
     </ItemGroup>
 
+    <!-- Credential guard tests (AB#7781): compiler output of the real System.Identity model (provenance: testData/ck-models/README.md). -->
+    <ItemGroup>
+        <None Include="testData\ck-models\*.yaml">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
 </Project>
