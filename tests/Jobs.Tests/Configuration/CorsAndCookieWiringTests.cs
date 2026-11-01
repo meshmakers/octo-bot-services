@@ -44,11 +44,18 @@ internal class CorsAndCookieWiringTests
         await Assert.That(options.ExposedHeaders.Count).IsEqualTo(4);
     }
 
+    /// <summary>
+    ///     Source check, not a behavioural test: the shared policy is internal to octo-common-services and needs the
+    ///     tenant store, so its request-level behaviour (allowed vs. unknown Origin, error responses, no credentials)
+    ///     is tested there with a TestServer (<c>KnownOriginsCorsPolicyTests</c>). Here only the wiring is pinned:
+    ///     the infrastructure that registers the policy, the policy-less <c>UseCors()</c> and no wildcard.
+    /// </summary>
     [Test]
-    public async Task Program_UsesTheSharedKnownOriginsPolicy_NotAWildcard()
+    public async Task Program_WiresTheSharedKnownOriginsPolicy_SourceCheck()
     {
         var program = await ReadProgramAsync();
 
+        await Assert.That(program).Contains("builder.Services.AddOctoServiceInfrastructure(");
         await Assert.That(program).Contains("app.UseCors();");
         await Assert.That(program).DoesNotContain("AllowAnyOrigin");
         await Assert.That(program).DoesNotContain("AllowCredentials");
