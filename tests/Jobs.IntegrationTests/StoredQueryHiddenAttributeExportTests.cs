@@ -6,6 +6,7 @@ using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v2;
 using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
+using Meshmakers.Octo.Runtime.Contracts.Repositories;
 using Meshmakers.Octo.Runtime.Contracts.RepositoryEntities;
 using Meshmakers.Octo.Runtime.Contracts.Serialization;
 using Meshmakers.Octo.Runtime.Contracts.TransportContainer;
@@ -42,12 +43,22 @@ public class StoredQueryHiddenAttributeExportTests
         continent.Name = "Continent-Europe";
         await repository.InsertOneRtEntityAsync(session, continent);
 
-        // The identity service writes such a value through the repository; simulate that write here.
+        // The identity service writes such a value through the repository; simulate that write here. A country needs its
+        // parent continent (inbound System/ParentChild, minimum multiplicity One).
         var country = await repository.CreateTransientRtEntityAsync<RtCountry>();
         country.RtId = OctoObjectId.GenerateNewId();
         country.Name = "Country-Austria";
         country.SetAttributeValue("Secret", AttributeValueTypesDto.String, DummySecret);
-        await repository.InsertOneRtEntityAsync(session, country);
+        var result = new OperationResult();
+        await repository.ApplyChangesAsync(session,
+            new List<IEntityUpdateInfo<RtEntity>> { EntityUpdateInfo<RtEntity>.CreateInsert(country) },
+            [
+                AssociationUpdateInfo.CreateInsert(
+                    new RtEntityId(ExportTestCkIds.RtCkCountryTypeId, country.RtId),
+                    new RtEntityId(ExportTestCkIds.RtCkContinentTypeId, continent.RtId),
+                    SystemCkIds.RtCkParentChildRoleId)
+            ], result);
+        await Assert.That(result.HasErrors).IsFalse();
         await session.CommitTransactionAsync();
         return new Seed(fixture, repository);
     }
