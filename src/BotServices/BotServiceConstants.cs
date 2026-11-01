@@ -23,6 +23,12 @@ internal static class BotServiceConstants
     public const string CookieName = "Octo-BotServices";
 
     /// <summary>
+    ///     Branch the Hangfire dashboard is mapped to (<c>/ui/jobs</c>); also the only path on which the
+    ///     <c>OctoIdentityAccessToken</c> cookie is set and honoured (AB#7270).
+    /// </summary>
+    public const string HangfireDashboardBranchPath = "/ui";
+
+    /// <summary>
     ///     Policy for authenticated users authorization
     /// </summary>
     public const string AuthenticatedUserPolicy = "AuthenticatedUserPolicy";

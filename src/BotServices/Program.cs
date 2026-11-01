@@ -26,6 +26,7 @@ using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Authorization;
 using Meshmakers.Octo.Services.Infrastructure.Configuration;
+using Meshmakers.Octo.Services.Infrastructure.Cors;
 using Meshmakers.Octo.Services.Infrastructure.Services;
 using Meshmakers.Octo.Services.ArtifactStorage;
 using Meshmakers.Octo.Services.Observability;
@@ -98,6 +99,10 @@ try
     builder.Services.AddScoped<IJobTenantAccessGuard, JobTenantAccessGuard>();
 
     builder.Services.AddCors();
+    // AB#7270: the CORS policy is the shared known-origins policy registered by AddOctoServiceInfrastructure()
+    // (allowed origins = registered client origins of the addressed tenant, never credentials); bots only adds
+    // the tus response headers the browser upload client reads.
+    builder.Services.Configure<OctoCorsOptions>(BotCorsConfiguration.Configure);
 
     // AB#5060: this service now serves a tenant-addressed surface as well
     // ({tenantId}/v1/jobs/dump-repository, restore-from-upload, export-archive-data,
@@ -200,7 +205,12 @@ try
             options.CookieManager = new ChunkingCookieManager();
             options.Cookie.Name = BotServiceConstants.CookieName;
             options.Cookie.HttpOnly = true;
-            options.Cookie.SameSite = SameSiteMode.None;
+            // AB#7270: Lax, not None. The session cookie of the interactive OIDC login is only needed on
+            // top-level navigations to this host (the Hangfire dashboard, the OIDC callback). Identity and bots
+            // share the cluster's site, so the form_post callback from the identity server is a same-site
+            // request; the SPAs call the API with bearer headers and never rely on this cookie. No cross-site
+            // flow needs SameSite=None, which would send the cookie on any third-party request.
+            options.Cookie.SameSite = SameSiteMode.Lax;
             options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
 
             // AB#5059: answer a forbidden request with 403 instead of the cookie handler's default
@@ -398,12 +408,13 @@ try
 
     app.UseRouting();
 
-    app.UseCors(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()
-        .WithExposedHeaders("Upload-Offset", "Upload-Length", "Tus-Resumable", "Location")
-        .SetPreflightMaxAge(TimeSpan.FromHours(1)));
+    // AB#7270: known origins only (shared ICorsPolicyProvider of AddOctoServiceInfrastructure()); an unknown
+    // Origin gets neither Access-Control-Allow-Origin nor Access-Control-Allow-Credentials.
+    app.UseCors();
 
-    // Conversion of request query jwt token to cookie for switch from dashboard to hangfire ui dashboard
-    app.UseOctoCookieBasedAuthentication();
+    // Conversion of request query jwt token to cookie for switch from dashboard to hangfire ui dashboard.
+    // AB#7270: limited to the dashboard branch; the cookie is HttpOnly, Secure, SameSite=Strict, Path=/ui.
+    app.UseOctoCookieBasedAuthentication(BotServiceConstants.HangfireDashboardBranchPath);
 
     app.UseAuthentication();
 
@@ -569,7 +580,7 @@ try
     // Other tenants and system-tenant callers without the role get 403.
     var dashboardSystemTenantId = app.Services.GetRequiredService<IOptions<OctoSystemConfiguration>>().Value
         .SystemTenantId;
-    app.Map("/ui", branchedApp =>
+    app.Map(BotServiceConstants.HangfireDashboardBranchPath, branchedApp =>
     {
         branchedApp.UseRouting();
         branchedApp.UseMiddleware<HangfireDashboardBearerAuthenticationMiddleware>();
