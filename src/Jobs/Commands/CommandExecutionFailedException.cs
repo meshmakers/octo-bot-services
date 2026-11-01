@@ -46,6 +46,18 @@ internal class CommandExecutionFailedException : Exception
         return new CommandExecutionFailedException($"Query '{queryId}‘ does not exist.");
     }
 
+    /// <summary>
+    ///     AB#8049: the stored query filters or sorts by a CK v2 Hidden attribute. Names the query, the use, the path and the
+    ///     hidden attribute; never a comparison value.
+    /// </summary>
+    public static Exception HiddenAttributeInStoredQuery(OctoObjectId queryId, string usage, string attributePath,
+        string hiddenAttribute)
+    {
+        return new CommandExecutionFailedException(
+            $"ATTRIBUTE_NOT_QUERYABLE: the {usage} '{attributePath}' of query '{queryId}' reaches the hidden attribute " +
+            $"'{hiddenAttribute}'. Hidden attributes cannot be filtered or sorted by; remove the {usage} from the query.");
+    }
+
     public static Exception QueryCkTypeIdNotSet(OctoObjectId queryId)
     {
         return new CommandExecutionFailedException($"Query '{queryId}‘ has no QueryCkTypeId attribute set.");
