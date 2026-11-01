@@ -89,8 +89,7 @@ public class StoredQueryAccessGuardTests
             }
         });
 
-        var exception = await Assert.That(async () => await Command().ExportAsync(TenantId,
-            OctoObjectId.GenerateNewId(), Caller, Path.GetTempFileName(), null)).Throws<CommandExecutionFailedException>();
+        var exception = await Assert.That(async () => await ExportAsync()).Throws<CommandExecutionFailedException>();
 
         await Assert.That(exception!.Message).Contains("field filter");
         await Assert.That(exception.Message).DoesNotContain(Guess);
@@ -111,8 +110,7 @@ public class StoredQueryAccessGuardTests
             }
         });
 
-        var exception = await Assert.That(async () => await Command().ExportAsync(TenantId,
-            OctoObjectId.GenerateNewId(), Caller, Path.GetTempFileName(), null)).Throws<CommandExecutionFailedException>();
+        var exception = await Assert.That(async () => await ExportAsync()).Throws<CommandExecutionFailedException>();
 
         await Assert.That(exception!.Message).Contains("sort order");
         await repository.DidNotReceiveWithAnyArgs()
@@ -132,13 +130,27 @@ public class StoredQueryAccessGuardTests
             }
         });
 
-        await Command().ExportAsync(TenantId, OctoObjectId.GenerateNewId(), Caller, Path.GetTempFileName(), null);
+        await ExportAsync();
 
         await repository.ReceivedWithAnyArgs(1)
             .GetRtEntitiesByTypeAsync(default!, default(RtCkId<CkTypeId>)!, default(RtEntityQueryOptions)!);
     }
 
     // ------------------------------------------------------------------------------------------------- helpers
+
+    /// <summary>Runs the export into a temp file and always deletes the file.</summary>
+    private async Task ExportAsync()
+    {
+        var file = Path.GetTempFileName();
+        try
+        {
+            await Command().ExportAsync(TenantId, OctoObjectId.GenerateNewId(), Caller, file, null);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
 
     private ExportRtModelByQueryByQueryCommand Command() =>
         new(Substitute.For<ILogger<ExportRtModelByQueryByQueryCommand>>(), _systemContext, _cache,
