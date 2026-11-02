@@ -317,8 +317,11 @@ public class IdentityCredentialGuardExportTests
         await AssertNoDummyValueInLogsAsync(seed, logStart);
     }
 
+    // Today the deep graph of a role does not reach the users that have the role (AssignedRole points from the user to the
+    // role), so the user itself is covered by the user-rooted test above. This one guards the role-rooted export should the
+    // traversal ever include the users: whatever it exports must not carry a credential.
     [Test]
-    public async Task ExportByDeepGraph_FromTheAssignedRole_ExportsTheRole_WithoutAnyCredential()
+    public async Task ExportByDeepGraph_FromTheAssignedRole_CarriesNoCredential()
     {
         var seed = await SeedAsync();
         var logStart = seed.Fixture.Logs.Count;
