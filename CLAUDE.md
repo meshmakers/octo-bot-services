@@ -76,6 +76,14 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
   arrive through `ImportRt` or a restore. Tests: `Jobs.Tests/Commands/StoredQueryAccessGuardTests` (unit) and
   `Jobs.IntegrationTests/StoredQueryHiddenAttributeExportTests` (real engine; `tests/ExportTestCkModel` is `ckLanguage: 2` with the
   Hidden attribute `Country.Secret`).
+- **Credential guard regression tests (AB#7781)**: `Jobs.IntegrationTests/IdentityCredentialGuardExportTests` runs both export commands
+  against the **real** System.Identity model (compiler output `testData/ck-models/ck-system.identity-2.30.0.yaml`, embedded by
+  `SystemIdentitySnapshotCkModel`, refresh in the README there) with a user whose `PasswordHash`, `SecurityStamp` and `UserTokens` hold
+  fixed dummy values: export by query and by deep graph (from the user; from its role, whose graph does not reach the user today) never contain them, a stored filter (equals for
+  the right and a wrong guess, like, regex, range; record path `UserTokens.Value`) or sort order on a credential is refused, and no log line
+  (`ExportEngineFixture.Logs`, Debug incl. the MongoDB command log, kept only while a test sets `Enabled`) carries a dummy value. The class
+  seeds once (re-seeds after another class's `ResetAsync`, `ResetGeneration`): a refused export leaves its session open (AB#8080) and a reset
+  then waits for MongoDB to expire the transaction.
 - ImportRt: `InitiatedBySubjectId` (AB#6392) is enough for the lock protection - it is a per-type policy opt-in
   (`ProtectBlueprintLocked`), not a per-role classification - so no roles are passed. Note: the import session stays the
   system session by design of AB#6392 (write grants are not evaluated per caller there).

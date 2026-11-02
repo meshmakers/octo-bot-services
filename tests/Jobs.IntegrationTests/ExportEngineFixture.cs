@@ -1,4 +1,5 @@
 using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.ConstructionKit.Contracts.ModelCatalogs;
 using Meshmakers.Octo.Runtime.Contracts.DataPermissions;
 using Meshmakers.Octo.Runtime.Contracts.Exchange;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
@@ -88,13 +89,20 @@ internal sealed class ExportEngineFixture
     private const string AdminPassword = "OctoAdmin1";
 
     private ExportEngineFixture(ServiceProvider provider, string tenantId, TestDataPermissionResolver resolver,
-        RecordingRtImportAuditTrail auditTrail)
+        RecordingRtImportAuditTrail auditTrail, CapturedLogs logs)
     {
+        Logs = logs;
         Provider = provider;
         TenantId = tenantId;
         Resolver = resolver;
         AuditTrail = auditTrail;
     }
+
+    /// <summary>Every log line of the engine at Debug and above (in memory, for credential checks).</summary>
+    public CapturedLogs Logs { get; }
+
+    /// <summary>Incremented by every <see cref="ResetAsync" />: a test class that seeds once checks it to notice a reset.</summary>
+    public int ResetGeneration { get; private set; }
 
     /// <summary>The import audit events recorded since the last <see cref="ResetAsync" />.</summary>
     public RecordingRtImportAuditTrail AuditTrail { get; }
@@ -149,7 +157,12 @@ internal sealed class ExportEngineFixture
         var services = new ServiceCollection();
         services.AddRuntimeEngine().AddMongoDbRuntimeRepository();
         services.AddCkModelExportTestV1();
-        services.AddLogging(b => b.ClearProviders().SetMinimumLevel(LogLevel.Warning));
+        // The real System.Identity model (credential guard tests); imported only by the tests that need it.
+        services.AddTransient<ICkEmbeddedModel, SystemIdentitySnapshotCkModel>();
+        // Captured in memory only (nothing reaches the console): Debug includes the MongoDB command log, which the
+        // credential guard tests check for credential values (AB#7781).
+        var logs = new CapturedLogs();
+        services.AddLogging(b => b.ClearProviders().SetMinimumLevel(LogLevel.Debug).AddProvider(logs));
         // Last registration wins over the TryAddSingleton in AddRuntimeEngine.
         services.AddSingleton<IDataPermissionResolver>(resolver);
         services.AddSingleton<IRtImportAuditTrail>(auditTrail);
@@ -168,7 +181,7 @@ internal sealed class ExportEngineFixture
         var systemContext = provider.GetRequiredService<ISystemContext>();
         await systemContext.CreateSystemTenantAsync();
 
-        var fixture = new ExportEngineFixture(provider, tenantId, resolver, auditTrail);
+        var fixture = new ExportEngineFixture(provider, tenantId, resolver, auditTrail, logs);
         await fixture.ImportModelAsync();
         return fixture;
     }
@@ -183,13 +196,92 @@ internal sealed class ExportEngineFixture
         }
     }
 
+    /// <summary>Imports the real System.Identity model (<see cref="SystemIdentitySnapshotCkModel" />) into the tenant.</summary>
+    public async Task ImportSystemIdentityAsync()
+    {
+        var operationResult = new OperationResult();
+        await SystemContext.ImportCkModelAsync(new CkModelId(SystemIdentitySnapshotCkModel.ModelFullName), operationResult);
+        if (operationResult.HasErrors)
+        {
+            throw new InvalidOperationException("Import of the System.Identity CK model failed: " + operationResult);
+        }
+    }
+
     /// <summary>Empties the tenant (and its policy table) so every test starts from the same state.</summary>
     public async Task ResetAsync()
     {
+        Logs.Enabled = false;
+        ResetGeneration++;
         Resolver.Table = RtDataPolicyTable.Empty;
         ImportOptions.StrictMandatoryValidation = false;
         AuditTrail.Clear();
         await SystemContext.ClearSystemTenantAsync();
         await ImportModelAsync();
+    }
+}
+
+/// <summary>
+///     In-memory log sink of the test engine; thread-safe. The engine logs at Debug throughout (the MongoDB command log is set up
+///     when a repository client is built, so it cannot be switched on later); lines are only kept while <see cref="Enabled" /> is
+///     set by a test, and <c>ResetAsync</c> clears the flag.
+/// </summary>
+internal sealed class CapturedLogs : ILoggerProvider
+{
+    private readonly List<string> _lines = [];
+    private volatile bool _enabled;
+
+    /// <summary>Whether lines are kept.</summary>
+    public bool Enabled
+    {
+        get => _enabled;
+        set => _enabled = value;
+    }
+
+    /// <summary>Number of lines captured so far.</summary>
+    public int Count
+    {
+        get
+        {
+            lock (_lines)
+            {
+                return _lines.Count;
+            }
+        }
+    }
+
+    /// <summary>The lines captured after <paramref name="start" />.</summary>
+    public IReadOnlyList<string> Since(int start)
+    {
+        lock (_lines)
+        {
+            return _lines.Skip(start).ToList();
+        }
+    }
+
+    public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class Logger(CapturedLogs owner, string category) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (!owner.Enabled)
+            {
+                return;
+            }
+
+            lock (owner._lines)
+            {
+                owner._lines.Add($"{logLevel} {category}: {formatter(state, exception)} {exception}");
+            }
+        }
     }
 }
