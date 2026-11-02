@@ -19,6 +19,8 @@ Runtime-model exports automatically embed the CK model dependencies required by 
 
 The export file is deterministic (AB#7471): the deep-graph export orders entities by CK type id and RtId, associations by role and target, and model dependencies by name; the query export orders by RtId unless the query defines its own sorting. Two exports of the same data are byte-identical and can be diffed.
 
+A failed export (for example a stored query that is refused, or a file that cannot be written) aborts its database transaction at once (AB#8080); it no longer holds the transaction open until MongoDB expires it after about 60 seconds, so a tenant reset or index build right after it does not wait.
+
 ### Tenant-routed job operations (AB#5060)
 
 The five job operations whose subject is **one tenant** — repository dump, restore from a tus upload,

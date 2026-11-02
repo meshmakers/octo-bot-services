@@ -88,6 +88,17 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
   now covers required record members: a file without `ExternalId` is still imported by default but produces one audit event per
   entity (`<ckAttributeId> at States[n]`, recorded by `RecordingRtImportAuditTrail` in `ExportEngineFixture`), and is rejected
   before anything is written with `Import:StrictMandatoryValidation` (tests switch `RtImportOptions` on the fixture; `ResetAsync` restores it).
+- **Every repository session is disposed (AB#8080).** Both export commands and `RepositoryFixupService` open their session with
+  `using var session = ...`. Disposing an engine session aborts a transaction that was not committed (the abort error is logged,
+  not thrown, so the original failure stays the job's error) and returns the server session. Do not add an explicit
+  `AbortTransactionAsync` in a `catch`: after a failed commit it throws and hides the cause. Before the fix a refused or failed
+  export left its transaction open until MongoDB expired it (`transactionLifetimeLimitSeconds`, default 60 s); a tenant reset,
+  drop or index build on that database waited for it, and repeated failing jobs piled up open transactions. Tests:
+  `Jobs.IntegrationTests/ExportSessionDisposalTests` (refused stored query twice, query and deep-graph export failing after their
+  reads, successful export: no open transaction in `$currentOp`, and a tenant reset right after completes within 30 s; without the
+  fix each reset waits about 90 s) and `Jobs.Tests/Services/RepositoryFixupServiceSessionTests` (failing and successful script run
+  dispose their session). Integration test classes may call `ExportEngineFixture.ResetAsync()` after a failing export again; seeding
+  once per class to avoid the wait is no longer needed.
 - Tests: `tests/Jobs.IntegrationTests` (`ExportPermissionTests`, needs Docker): the two real export commands against the real engine and a
   Testcontainers MongoDB with a restricted policy table and the tiny `tests/ExportTestCkModel` - denied type, owned-only, allowed caller,
   unrestricted tenant (same bytes for every caller), system context refused, for the query and the deep-graph export. Unit tests:

@@ -34,10 +34,14 @@ internal class ExportRtModelByDeepGraphCommand(
 
         var tenantRepository = await systemContext.FindTenantRepositoryAsync(tenantId);
 
-            // Ensure the cache is loaded for the tenant
+        // Ensure the cache is loaded for the tenant
         await tenantRepository.LoadCacheForTenantAsync(ckCacheService);
 
-        var session = await ExportCallerContext.OpenSessionAsync(tenantRepository, securityContext, tenantId, "deep graph");
+        // AB#8080: disposing the session aborts a transaction that was not committed (refused stored query, missing
+        // query, repository or file error) and returns the server session. Without it a failed export kept its
+        // transaction open until MongoDB expired it (transactionLifetimeLimitSeconds, default 60 s), and a tenant
+        // reset or index build on that database waited for it.
+        using var session = await ExportCallerContext.OpenSessionAsync(tenantRepository, securityContext, tenantId, "deep graph");
         try
         {
             session.StartTransaction();
