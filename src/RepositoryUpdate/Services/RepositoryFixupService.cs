@@ -60,7 +60,9 @@ public class RepositoryFixupService(
     private async Task ExecuteScriptAsync(RtFixup rtFixup, string databaseName, ITenantRepository tenantRepository,
         CancellationToken? cancellationToken = null)
     {
-        IOctoSession session = await tenantRepository.GetSessionAsync();
+        // AB#8080: dispose the session so a failed script run aborts its transaction instead of leaving it open until
+        // MongoDB expires it (default 60 s) - an open write transaction blocks DDL on the tenant database.
+        using var session = await tenantRepository.GetSessionAsync();
         session.StartTransaction();
         try
         {
