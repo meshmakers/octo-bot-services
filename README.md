@@ -418,6 +418,17 @@ hosting the middleware (Identity, Communication Controller, Asset-Repo, Bot, MCP
 section through the same helper, so one fleet-wide value reaches all of them. Semantics and the
 `Enforce` rollout rules are documented in `octo-common-services/CLAUDE.md`.
 
+### Running more than one replica: command consumers (AB#6910)
+
+The six bus commands of the service (`ImportCk`, `ImportCkBatch`, `ImportRt`, `ExportRtByQuery`,
+`ExportRtByDeepGraph`, `RemoveRecurringJobsByScheduleGroup`) are consumed by **every** replica as competing
+consumers (queues `…::shared`, registered in `src/BotServices/Consumers/BotCommandConsumers.cs`). With two or more
+replicas each command is processed exactly once by one of them, and the caller gets the answer as before. Senders
+need no change: the consumers serve the classic command address (`MigratesLegacyCommand = true`) once no old
+exclusive replica is alive, so a rolling update from an older build loses or duplicates nothing. Requires
+`Meshmakers.Octo.Common.DistributionEventHub` 3.5.65 or newer (AB#8368). Details: `CLAUDE.md`, "Command consumers run
+on every replica".
+
 ## Published packages
 
 The repository produces two NuGet packages (the service host project itself is `IsPackable=false` and ships as a container image):

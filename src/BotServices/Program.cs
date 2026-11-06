@@ -140,15 +140,9 @@ try
         {
             c.AddHangfireMessageScheduler();
 
-            c.AddCommandConsumer<ModelCommandsConsumer, ImportCkCommandRequest>(QueueNames.ImportCkCommand);
-            c.AddCommandConsumer<ModelCommandsConsumer, ImportCkBatchCommandRequest>(QueueNames.ImportCkBatchCommand);
-            c.AddCommandConsumer<ModelCommandsConsumer, ImportRtCommandRequest>(QueueNames.ImportRtCommand);
-            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByQueryCommandRequest>(
-                QueueNames.ExportRtByQueryCommand);
-            c.AddCommandConsumer<ModelCommandsConsumer, ExportRtByDeepGraphCommandRequest>(QueueNames
-                .ExportRtByDeepGraphCommand);
-            c.AddCommandConsumer<RecurringJobConsumer, RemoveRecurringJobsByScheduleGroupRequest>(QueueNames
-                .RemoveRecurringJobsByScheduleGroupCommand);
+            // AB#6910: the six command consumers are shared (competing consumers over all replicas, each command
+            // processed once); see BotCommandConsumers for why each one is safe and why MigratesLegacyCommand is set.
+            c.AddBotCommandConsumers();
             c.AddCommandClient<CreateIdentityDataCommandRequest>(QueueNames.CreateIdentityDataCommand);
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PosCreateTenant>();
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PosUpdateTenant>();
