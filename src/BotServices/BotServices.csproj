@@ -55,6 +55,8 @@
              every other configurator here. Without it the JWT bearer wiring of this host — including
              the AuthenticationType label a security gate depends on — has no test coverage at all. -->
         <InternalsVisibleTo Include="Meshmakers.Octo.Backend.Jobs.Tests" />
+        <!-- AB#6910: BotCommandConsumerReplicaTests start the real (internal) command consumer registration. -->
+        <InternalsVisibleTo Include="Meshmakers.Octo.Backend.Jobs.IntegrationTests" />
     </ItemGroup>
 
     <ItemGroup>

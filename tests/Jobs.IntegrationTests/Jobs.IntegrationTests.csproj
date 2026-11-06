@@ -15,6 +15,9 @@
     <ItemGroup>
         <PackageReference Include="TUnit" Version="1.65.68" />
         <PackageReference Include="Testcontainers.MongoDb" Version="4.14.0" />
+        <!-- AB#6910: two replicas of the real command consumer registration on a private RabbitMQ. -->
+        <PackageReference Include="Testcontainers.RabbitMq" Version="4.14.0" />
+        <PackageReference Include="NSubstitute" Version="6.2.0" />
     </ItemGroup>
 
     <ItemGroup>
