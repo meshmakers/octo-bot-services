@@ -157,6 +157,8 @@ internal sealed class ExportEngineFixture
         var services = new ServiceCollection();
         services.AddRuntimeEngine().AddMongoDbRuntimeRepository();
         services.AddCkModelExportTestV1();
+        // The service's own System.Bot model (AB#8593 persistence round trip); imported only by the tests that need it.
+        services.AddCkModelSystemBotV3();
         // The real System.Identity model (credential guard tests); imported only by the tests that need it.
         services.AddTransient<ICkEmbeddedModel, SystemIdentitySnapshotCkModel>();
         // Captured in memory only (nothing reaches the console): Debug includes the MongoDB command log, which the

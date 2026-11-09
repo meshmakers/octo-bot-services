@@ -433,7 +433,7 @@ on every replica".
 
 The repository produces two NuGet packages (the service host project itself is `IsPackable=false` and ships as a container image):
 
-- **Meshmakers.Octo.ConstructionKit.Models.System.Bot** - the construction kit model `System.Bot-3.1.1` (depending on `System-[2.0,3.0)`). It defines the entity types the bot service operates on:
+- **Meshmakers.Octo.ConstructionKit.Models.System.Bot** - the construction kit model `System.Bot-3.6.0` (`ckLanguage: 2` since 3.6.0, depending on `System-[2.5,3.0)`; changes in `src/SystemBotCkModel/ConstructionKit/CHANGELOG.md`). It defines the entity types the bot service operates on:
   - **Fixup** - a named, ordered, scriptable migration entity tracking application state (`IsApplied`, `AppliedAt`, `Output`, `Error`, `IsSuccess`).
   - **AttributeAggregateConfiguration** - configures autocomplete value aggregation for a target entity attribute (filter regex, result limit) via the `Configures` association.
 - **Meshmakers.Octo.Backend.Jobs** - the reusable Hangfire job and command implementations library consumed by the service.
