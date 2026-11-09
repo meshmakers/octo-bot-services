@@ -180,7 +180,7 @@ options and tests: octo-common-services `CLAUDE.md`, section "Tenant Setup - Fai
   Publishing follows the explicit release decision below (rollout story AB#8602).
 - Tests: `tests/Jobs.Tests/CkModels/SystemBotCkLanguage2Tests` (embedded model is 3.6.0 / ckLanguage 2 / minEngineVersion,
   `derivable: Any` on both types, no tightened attribute) and `Jobs.IntegrationTests/SystemBotCkLanguage2PersistenceTests`
-  (Docker: import into a tenant, re-import of the same version is a no-op, the CK cache rebuilt from MongoDB still has
+  (Docker: import into a tenant, re-import of the same version succeeds, the CK cache rebuilt from MongoDB still has
   `derivable: Any`; `ExportEngineFixture` registers the embedded System.Bot model for it).
 
 ## Publishing the system CK model: explicit release decision (AB#7433)

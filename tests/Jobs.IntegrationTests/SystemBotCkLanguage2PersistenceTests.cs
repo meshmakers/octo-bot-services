@@ -10,13 +10,13 @@ namespace Meshmakers.Octo.Backend.Jobs.IntegrationTests;
 ///     AB#8593: System.Bot 3.6.0 is the first ckLanguage 2 release. The CK cache of a tenant is rebuilt from the model
 ///     stored in MongoDB, not from the compiled file, so the explicit <c>derivable: Any</c> must survive the import and the
 ///     read-back; if it were lost, the cache would apply the ckLanguage 2 default <c>Model</c> and every model deriving from a
-///     System.Bot type would stop resolving. A second import of the same version (a service restart) must be a no-op.
+///     System.Bot type would stop resolving. A second import of the same version (a service restart) must succeed without errors.
 /// </summary>
 [NotInParallel]
 public class SystemBotCkLanguage2PersistenceTests
 {
     [Test]
-    public async Task ImportedSystemBot_KeepsDerivableAny_AndAReImportIsANoOp()
+    public async Task ImportedSystemBot_KeepsDerivableAny_AndAReImportSucceeds()
     {
         var fixture = await ExportEngineFixture.GetAsync();
         await fixture.ResetAsync();

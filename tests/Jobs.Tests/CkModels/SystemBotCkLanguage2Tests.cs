@@ -35,9 +35,11 @@ public class SystemBotCkLanguage2Tests
         await Assert.That(root.ModelId.ToString()).IsEqualTo("System.Bot-3.6.0");
         await Assert.That(root.CkLanguage).IsEqualTo(2);
         // A ckLanguage 2 model always carries a minEngineVersion, so an engine without CK v2 refuses it (message 126)
-        // instead of reading it as a classic model; the compiler stamps it, the sources never set it.
+        // instead of reading it as a classic model; the compiler stamps it, the sources never set it. Pinned exactly: a
+        // higher value means every service below it can no longer import System.Bot. A feature that raises it (e.g. a
+        // method with execution.mode, AB#8445) is a deliberate rollout decision and updates this assertion.
         await Assert.That(root.MinEngineVersion).IsNotNull();
-        await Assert.That(Version.Parse(root.MinEngineVersion!)).IsGreaterThanOrEqualTo(new Version(3, 5, 1));
+        await Assert.That(Version.Parse(root.MinEngineVersion!)).IsEqualTo(new Version(3, 5, 1));
     }
 
     /// <summary>
