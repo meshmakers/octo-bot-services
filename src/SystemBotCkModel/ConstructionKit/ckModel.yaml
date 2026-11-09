@@ -1,4 +1,13 @@
 $schema: https://schemas.meshmakers.cloud/construction-kit-meta.schema.json
-modelId: "System.Bot-3.5.0"
+# 3.6.0 (AB#8593, Feature AB#5697 F4.3, Epic AB#5584) is the FIRST ckLanguage 2 release of System.Bot,
+# a Minor against 3.5.0. Raising the language flips the `derivable` default of types and records from Any
+# to Model (a Major of its own, row T6 of docs/ck-semver-rules.md in octo-construction-kit-engine), so every
+# pre-existing type declares `derivable: Any` explicitly (System.Bot has no records). `visibility` and
+# attribute `access` keep their classic defaults (Public, ReadWrite). No access modifier is tightened in
+# this release, see CLAUDE.md "System.Bot on ckLanguage 2". The compiler stamps minEngineVersion and the
+# model is published under ck-models/v3/ only. New types (e.g. the job type of AB#8445) default to
+# `derivable: Model`; declare `derivable: Any` where another model should derive from them.
+modelId: "System.Bot-3.6.0"
+ckLanguage: 2
 dependencies:
   - System-[2.5,3.0)
