@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -50,6 +51,35 @@ public class ImportModelJobRtTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ImportStrategy>(), Arg.Any<CancellationToken?>(),
             Arg.Any<RtImportBlankingPolicy>(), Arg.Any<IReadOnlyCollection<RtImportBlankingConfirmation>?>());
         await _cacheService.Received(1).DeleteCacheStreamAsync("tenant-1", "key-1");
+    }
+
+    [Test]
+    [Arguments(RtPrincipalKind.Interactive)]
+    [Arguments(RtPrincipalKind.Client)]
+    public async Task ImportRtAsync_PassesThePrincipalKindOfTheCallerToTheEngine(RtPrincipalKind kind)
+    {
+        // AB#8705: the kind the asset repository derived from the token reaches the engine's caller context
+        await CreateJob().ImportRtAsync("tenant-1", ImportStrategy.Upsert, "key-1", "user-sub-1", kind, null);
+
+        await _importRtModelCommand.Received(1).ImportAsCallerAsync(_tenantRepository, Arg.Any<string>(),
+            Arg.Any<string>(), ImportStrategy.Upsert,
+            Arg.Is<RtImportCallerContext>(c =>
+                c.EnforceBlueprintLock && c.SubjectId == "user-sub-1" && c.PrincipalKind == kind),
+            Arg.Any<CancellationToken?>(), Arg.Any<RtImportBlankingPolicy>(),
+            Arg.Any<IReadOnlyCollection<RtImportBlankingConfirmation>?>());
+    }
+
+    [Test]
+    public async Task ImportRtAsync_JobEnqueuedBeforeThePrincipalKind_RunsAsUnknown()
+    {
+        // AB#8705: the overload without the kind (jobs enqueued before) is Unknown, never Interactive
+        await CreateJob().ImportRtAsync("tenant-1", ImportStrategy.Upsert, "key-1", "user-sub-1", null);
+
+        await _importRtModelCommand.Received(1).ImportAsCallerAsync(_tenantRepository, Arg.Any<string>(),
+            Arg.Any<string>(), ImportStrategy.Upsert,
+            Arg.Is<RtImportCallerContext>(c => c.PrincipalKind == RtPrincipalKind.Unknown),
+            Arg.Any<CancellationToken?>(), Arg.Any<RtImportBlankingPolicy>(),
+            Arg.Any<IReadOnlyCollection<RtImportBlankingConfirmation>?>());
     }
 
     [Test]
