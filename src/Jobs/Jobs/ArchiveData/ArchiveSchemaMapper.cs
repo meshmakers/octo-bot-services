@@ -18,8 +18,9 @@ public static class ArchiveSchemaMapper
 {
     /// <summary>
     ///     Projects the parts of <paramref name="snapshot"/> the export/import flow needs onto an
-    ///     <see cref="ArchiveSchemaDto"/>. Computed columns are left out (AB#8737). <c>kind</c> is <c>rollup</c> when the snapshot carries
+    ///     <see cref="ArchiveSchemaDto"/>. <c>kind</c> is <c>rollup</c> when the snapshot carries
     ///     rollup aggregations, <c>timeRange</c> when it is a time-range archive, otherwise <c>raw</c>.
+    ///     <para>Computed columns are left out (AB#8737): they follow the target archive on import.</para>
     /// </summary>
     public static ArchiveSchemaDto ToDto(ArchiveSnapshot snapshot)
     {
