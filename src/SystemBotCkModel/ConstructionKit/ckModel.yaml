@@ -7,7 +7,9 @@ $schema: https://schemas.meshmakers.cloud/construction-kit-meta.schema.json
 # this release, see CLAUDE.md "System.Bot on ckLanguage 2". The compiler stamps minEngineVersion and the
 # model is published under ck-models/v3/ only. New types (e.g. the job type of AB#8445) default to
 # `derivable: Model`; declare `derivable: Any` where another model should derive from them.
-modelId: "System.Bot-3.6.0"
+# 3.7.0 (AB#8445, Feature AB#5694 F3.6): new type TenantRepository with the static async method Dump-1 and its result
+# record RepositoryDumpResult - additions only, a Minor.
+modelId: "System.Bot-3.7.0"
 ckLanguage: 2
 dependencies:
   - System-[2.5,3.0)

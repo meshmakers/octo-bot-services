@@ -1,7 +1,9 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using Hangfire.Server;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
+using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
@@ -36,7 +38,8 @@ public partial class DumpRepositoryJob(
     IBackupFileStorageService backupFileStorage,
     IBotArtifactStorage? artifactStorage = null,
     IArchiveCopyStagingLocationFactory? stagingFactory = null,
-    TimeProvider? timeProvider = null) : IDumpRepositoryJob
+    TimeProvider? timeProvider = null,
+    IDumpOperationGate? operationGate = null) : IDumpRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -46,11 +49,58 @@ public partial class DumpRepositoryJob(
     private static readonly JsonSerializerOptions NdjsonJsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <inheritdoc />
-    public async Task<string?> Run(string tenantId, bool includeArchiveData,
+    public Task<string?> Run(string tenantId, bool includeArchiveData,
         IBotCancellationToken? cancellationToken)
+    {
+        return RunCoreAsync(tenantId, includeArchiveData, NullDumpProgressSink.Instance,
+            cancellationToken?.ShutdownToken ?? CancellationToken.None);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> RunForOperation(string tenantId, bool includeArchiveData, string operationId,
+        PerformContext? performContext, IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
 
+        // At most once (AB#8445, OD-5 of AB#6927): Hangfire requeues a job whose server stopped or died, AutomaticRetry
+        // does not cover that. A job that started before is therefore refused, and so is a job whose operation was ended
+        // in the meantime (the sweep ended it as lost) - the caller was told the outcome is unknown, a dump now would
+        // be a second, unrequested one.
+        if (performContext != null)
+        {
+            if (performContext.GetJobParameter<bool>(DumpJobParameters.Started))
+            {
+                logger.LogWarning(
+                    "Dump of tenant '{TenantId}' for method operation '{OperationId}' (job '{JobId}') was interrupted " +
+                    "and is not started again", tenantId, operationId, performContext.BackgroundJob.Id);
+                performContext.SetJobParameter(DumpJobParameters.Outcome, DumpJobParameters.InterruptedOutcome);
+                throw new JobFailedException(
+                    $"The dump of tenant '{tenantId}' was interrupted (the bot service stopped while it ran) and is not " +
+                    "started again: a dump started by a method call runs at most once.");
+            }
+
+            performContext.SetJobParameter(DumpJobParameters.Started, true);
+        }
+
+        if (operationGate != null && !await operationGate.IsOperationOpenAsync(tenantId, operationId, ct))
+        {
+            logger.LogWarning(
+                "Dump of tenant '{TenantId}' is not started: method operation '{OperationId}' is no longer open",
+                tenantId, operationId);
+            performContext?.SetJobParameter(DumpJobParameters.Outcome, DumpJobParameters.OperationClosedOutcome);
+            throw new JobFailedException(
+                $"The dump of tenant '{tenantId}' is not started: its method operation was already ended.");
+        }
+
+        var sink = performContext != null
+            ? new JobParameterDumpProgressSink(performContext, logger)
+            : (IDumpProgressSink)NullDumpProgressSink.Instance;
+        return await RunCoreAsync(tenantId, includeArchiveData, sink, ct);
+    }
+
+    private async Task<string?> RunCoreAsync(string tenantId, bool includeArchiveData, IDumpProgressSink progress,
+        CancellationToken ct)
+    {
         try
         {
             if (!await systemContext.IsSystemTenantExistingAsync())
@@ -79,6 +129,7 @@ public partial class DumpRepositoryJob(
             logger.LogInformation("Running dump repository command for '{TenantId}' to '{FilePath}'", tenantId,
                 mongoFilePath);
 
+            progress.Report(new DumpProgress(5, DumpStages.DumpingDatabase));
             var r = await systemContext.BackupTenantAsync(tenantId, mongoFilePath,
                 timeout: TimeSpan.FromHours(1));
 
@@ -96,11 +147,13 @@ public partial class DumpRepositoryJob(
                 // Default path — the mongodump blob IS the downloadable result, unchanged.
                 logger.LogInformation("Dump completed for tenant '{TenantId}' at '{FilePath}'", tenantId,
                     mongoFilePath);
+                progress.Report(new DumpProgress(80, DumpStages.StoringArtifact));
                 return await PublishAsync(tenantId, mongoFilePath, ct);
             }
 
             // 2a. includeArchiveData with a staging area: native copy, format 2, streamed into the artifact store.
-            var nativeResult = await TryDumpNativeAsync(tenantId, tenantContext, mongoFilePath, mongoFinishedAtUtc, ct);
+            var nativeResult = await TryDumpNativeAsync(tenantId, tenantContext, mongoFilePath, mongoFinishedAtUtc,
+                progress, ct);
             if (nativeResult != null)
             {
                 return nativeResult;
@@ -108,7 +161,8 @@ public partial class DumpRepositoryJob(
 
             // 2b. includeArchiveData — wrap the mongo blob + archive rows into an .octobak.zip and
             //    register that as the downloadable result. The intermediate mongo blob is deleted.
-            var archivePath = await BuildBackupArchiveAsync(tenantId, tenantContext, mongoFilePath, ct);
+            var archivePath = await BuildBackupArchiveAsync(tenantId, tenantContext, mongoFilePath, progress, ct);
+            progress.Report(new DumpProgress(90, DumpStages.StoringArtifact));
             return await PublishAsync(tenantId, archivePath, ct);
         }
         catch (OperationCanceledException)
@@ -129,7 +183,7 @@ public partial class DumpRepositoryJob(
     ///     embedded. Entries are streamed; no archive is buffered whole in memory.
     /// </summary>
     private async Task<string> BuildBackupArchiveAsync(string tenantId, ITenantContext tenantContext,
-        string mongoFilePath, CancellationToken ct)
+        string mongoFilePath, IDumpProgressSink progress, CancellationToken ct)
     {
         var zipFileName = BuildBackupArchiveFileName(tenantId);
         var zipFilePath = backupFileStorage.GetDumpFilePath(tenantId, zipFileName);
@@ -162,9 +216,11 @@ public partial class DumpRepositoryJob(
                 var provisionedTables = await LoadProvisionedTablesAsync(repository, snapshots, tenantId, ct);
                 var manifestArchives = new List<BackupManifestArchive>(snapshots.Count);
 
+                var archiveNumber = 0;
                 foreach (var snapshot in snapshots)
                 {
                     ct.ThrowIfCancellationRequested();
+                    progress.Report(ArchiveProgress(++archiveNumber, snapshots.Count));
                     var hasTable = provisionedTables.Contains(snapshot.RtId);
                     manifestArchives.Add(await WriteArchiveAsync(zip, repository, snapshot, hasTable, tenantId, ct));
                 }
@@ -360,6 +416,40 @@ public partial class DumpRepositoryJob(
         finally
         {
             await backupFileStorage.DeleteFileAsync(localPath);
+        }
+    }
+
+    /// <summary>
+    ///     Progress of the archive export: 50 % after mongodump, up to 90 % after the last archive. Parameters are the
+    ///     archive number and count, never an archive id or name.
+    /// </summary>
+    internal static DumpProgress ArchiveProgress(int archiveNumber, int archiveCount)
+    {
+        var percent = archiveCount <= 0 ? 50 : 50 + (int)(40L * (archiveNumber - 1) / archiveCount);
+        return new DumpProgress(percent, DumpStages.ExportingArchives, new Dictionary<string, string>
+        {
+            ["archive"] = archiveNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["archiveCount"] = archiveCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        });
+    }
+
+    /// <summary>
+    ///     Writes the progress as the job parameter <see cref="DumpJobParameters.Progress" /> (shared job storage, so the
+    ///     handler reads it on any replica). A storage problem is logged and never fails the dump.
+    /// </summary>
+    private sealed class JobParameterDumpProgressSink(PerformContext performContext, ILogger logger) : IDumpProgressSink
+    {
+        public void Report(DumpProgress progress)
+        {
+            try
+            {
+                performContext.SetJobParameter(DumpJobParameters.Progress, progress.ToJson());
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning("Progress of dump job '{JobId}' not stored ({ExceptionType})",
+                    performContext.BackgroundJob.Id, e.GetType().Name);
+            }
         }
     }
 

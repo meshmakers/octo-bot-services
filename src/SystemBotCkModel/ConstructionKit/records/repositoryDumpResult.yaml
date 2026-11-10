@@ -1,0 +1,10 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+# AB#8445 (3.7.0): result of the asynchronous repository dump (TenantRepository.Dump-1).
+records:
+- recordId: RepositoryDumpResult
+  description: "Result of a repository dump: the job that produced it and where the file is downloaded."
+  attributes:
+    - id: ${this}/RepositoryDump.JobId
+      name: JobId
+    - id: ${this}/RepositoryDump.DownloadPath
+      name: DownloadPath

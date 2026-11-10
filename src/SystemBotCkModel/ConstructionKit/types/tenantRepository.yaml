@@ -1,0 +1,25 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+# AB#8445 (3.7.0, Feature AB#5694 F3.6): host type of the repository methods of the bot service. It has no attributes
+# and no entities are needed; the static method Dump-1 backs up the tenant of the call. derivable stays Model (the
+# ckLanguage 2 default): no other model derives from it.
+types:
+- typeId: TenantRepository
+  derivedFromCkTypeId: ${System}/Entity
+  description: "The repository (database) of the tenant; hosts the backup methods of the bot service."
+  methods:
+    - methodId: Dump-1
+      kind: Static
+      description: "Starts a backup (dump) of the whole tenant repository and returns an operation handle. Progress and the download reference are read through runtime.operations. A dump contains all data of the tenant."
+      parameters:
+        - { name: includeArchiveData, valueType: Boolean, isOptional: true, description: "Also bundle the archive (stream data) rows of the tenant into an .octobak.zip container. Default false (MongoDB dump only)." }
+      result:
+        valueType: Record
+        valueCkRecordId: "${this}/RepositoryDumpResult"
+      errors:
+        - { code: DUMP_FAILED, description: "The dump job failed; the parameter jobId names the job, system/v1/jobs shows its error." }
+        - { code: DUMP_INTERRUPTED, description: "The dump job was interrupted (the bot service stopped while it ran) and is not started again." }
+      authorization:
+        roles: [ TenantManagement ]
+      execution:
+        handler: service
+        mode: async

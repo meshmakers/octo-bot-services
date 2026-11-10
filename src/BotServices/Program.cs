@@ -11,6 +11,8 @@ using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.HangfireSetup;
+using Meshmakers.Octo.Backend.BotServices.Methods;
+using Meshmakers.Octo.Services.Methods;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -147,7 +149,13 @@ try
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PosCreateTenant>();
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PosUpdateTenant>();
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PreDeleteTenant>();
+
+            // AB#8445: answers the method dispatchers' discovery with an immediate announcement of the handlers below.
+            c.AddCkMethodHandlerDiscovery();
         });
+
+    // AB#8445 (F3.6): CK method host - System.Bot/TenantRepository.Dump-1 (async, operation handle).
+    builder.Services.AddBotCkMethodHost();
 
     builder.Services.AddRuntimeEngine()
         .AddMongoDbRuntimeRepository()
