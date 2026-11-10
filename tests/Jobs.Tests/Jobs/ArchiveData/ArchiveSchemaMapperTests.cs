@@ -85,4 +85,22 @@ public class ArchiveSchemaMapperTests
         var mismatch = ArchiveSchemaMatcher.FindMismatch(dto, ArchiveSchemaMapper.ToDto(snapshot));
         await Assert.That(mismatch).IsNull();
     }
+
+    /// <summary>
+    ///     AB#8737: a computed column (no path, named by Name, derived by its Formula) is not part of the export
+    ///     metadata; before, it appeared as a column with an empty path.
+    /// </summary>
+    [Test]
+    public async Task ToDto_ComputedColumn_IsLeftOut()
+    {
+        var dto = ArchiveSchemaMapper.ToDto(Snapshot(columns: new[]
+        {
+            new CkArchiveColumnSpec("importedenergy", false, false),
+            new CkArchiveColumnSpec("exportedenergy", false, false),
+            new CkArchiveColumnSpec(string.Empty, false, false)
+                { Name = "net", Formula = "importedenergy - exportedenergy" }
+        }));
+
+        await Assert.That(dto.Columns.Select(c => c.Path)).IsEquivalentTo(new[] { "importedenergy", "exportedenergy" });
+    }
 }
