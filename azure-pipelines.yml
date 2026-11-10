@@ -26,15 +26,16 @@ parameters:
   - name: octoCommVersion
     type: string
     default: 'auto'
-  # Explicit release decision for the System CK model of this repo, System.Bot (AB#7433, same gate and name as AB#7343 in
-  # octo-construction-kit-engine). A merge to main must NOT publish a new version on its own: a new System* version breaks
-  # exact-pinned dependents on live tenants until they are re-pinned. Default false = a main build validates and compiles
-  # the model but publishes nothing. Set true (Run pipeline on main -> "Publish System CK models") to publish.
-  # r* tags (release train) publish as before.
+  # Publish the System CK model(s) of this repo (System.Bot) to the CK catalogs on a main build (AB#8718; the gate was
+  # introduced as default false by AB#7343/AB#7432/AB#7433). Default true since 2026-11-10: CK v2 range retention
+  # (AB#4696) and the completed one-time re-pin (AB#5688, AB#6708) remove the exact-pin breakage that motivated
+  # default false. ValidateVersion/ValidateCascade still run on every build and refuse a breaking change declared as
+  # minor; an already-published version is a no-op. Untick "Publish System CK models" on a manual run to build without
+  # publishing. r* tags (release train) publish as before.
   - name: publishSystemCkModels
     displayName: 'Publish System CK models to the CK catalogs (main)'
     type: boolean
-    default: false
+    default: true
 
 resources:
   # Chain link: exactly ONE upstream pipeline resource per repo. Pipeline

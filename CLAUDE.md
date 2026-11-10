@@ -220,22 +220,20 @@ method this service hosts. User documentation: README "Repository dump as an asy
 - **Methods** (`methods:` on a type, `execution.mode: async`) are now possible in this model; a new type or method is a Minor.
 - **Rollout.** `minEngineVersion` 3.5.1, published under `ck-models/v3/` only. The service embeds the model and imports it on
   tenant resolve; the embedded-import downgrade guard keeps a newer installed System.Bot when an older bot service starts.
-  Publishing follows the explicit release decision below (rollout story AB#8602).
+  Publishing follows the main-publish rule below (rollout story AB#8602).
 - Tests: `tests/Jobs.Tests/CkModels/SystemBotCkLanguage2Tests` (embedded model is 3.6.0 / ckLanguage 2 / minEngineVersion,
   `derivable: Any` on both types, no tightened attribute) and `Jobs.IntegrationTests/SystemBotCkLanguage2PersistenceTests`
   (Docker: import into a tenant, re-import of the same version succeeds, the CK cache rebuilt from MongoDB still has
   `derivable: Any`; `ExportEngineFixture` registers the embedded System.Bot model for it).
 
-## Publishing the system CK model: explicit release decision (AB#7433)
+## Publishing the system CK model: automatic from main (AB#7433, default true since AB#8718)
 
-A merge to `main` does **not** publish `System.Bot` to the CK catalogs. The pipeline parameter `publishSystemCkModels`
-(boolean, **default false**; same name and semantics as AB#7343 in `octo-construction-kit-engine`, AB#7432 in the
-communication controller) feeds `publishOnMain` of `validate-and-publish-ck-versions.yml` (`tpl-v1.8.0`). A main build still
-runs ValidateVersion, the schema compile and the cascade check, logs `CK publish on main is OFF (publishOnMain=false)` and
-publishes nothing. Reason: a new System* version breaks exact-pinned dependents on live tenants until they are re-pinned.
+A merge to `main` publishes `System.Bot` to the private CK catalog automatically (AB#8718, decision 2026-11-10). The pipeline
+parameter `publishSystemCkModels` (boolean, **default true**; gate introduced as default false by AB#7343/AB#7432/AB#7433) feeds
+`publishOnMain` of `validate-and-publish-ck-versions.yml` (`tpl-v1.8.0` and later; pinned: `tpl-v1.11.0`). ValidateVersion, the schema compile and the cascade check
+run on every build and refuse a breaking change declared as minor; an already-published version is a no-op. Default true because CK v2
+range retention (AB#4696) and the completed re-pin (AB#5688, AB#6708) removed the exact-pin breakage that motivated default false.
 
-**To publish explicitly** (needs the release decision of the platform owner): Azure DevOps -> pipeline `octo-bot-services-CI` ->
-*Run pipeline* -> branch `main` -> tick *Publish System CK models to the CK catalogs (main)*; CLI:
-`az pipelines run --id 94 --branch main --parameters publishSystemCkModels=true`. `r*` tags (release train) publish as
-before; `dev/*`/`test/*` builds never publish to the shared catalogs. A merge that bumps the model therefore leaves the version
-unpublished until that run; repos that restore it from the catalog must wait for it.
+**To build main without publishing:** Azure DevOps -> pipeline `octo-bot-services-CI` -> *Run pipeline* -> branch `main` -> untick
+*Publish System CK models to the CK catalogs (main)*; CLI: `az pipelines run --id 94 --branch main --parameters publishSystemCkModels=false`.
+`r*` tags (release train) publish as before; `dev/*`/`test/*` builds never publish to the shared catalogs.
