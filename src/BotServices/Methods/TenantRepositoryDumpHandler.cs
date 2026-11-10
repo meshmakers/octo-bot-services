@@ -52,6 +52,15 @@ public sealed class TenantRepositoryDumpHandler(
     /// <summary>Error and progress parameter naming the Hangfire job.</summary>
     public const string JobIdParameter = "jobId";
 
+    /// <summary>Error parameter with the reason of a <see cref="DumpFailed" /> that the caller can act on.</summary>
+    public const string ReasonParameter = "reason";
+
+    /// <summary>
+    ///     <see cref="ReasonParameter" />: the dump did not start because another method dump held the lock for longer than
+    ///     the lock timeout (10 min); try again later.
+    /// </summary>
+    public const string AnotherDumpRunningReason = "another-dump-running";
+
     /// <inheritdoc />
     public Task<CkMethodOutcome<TenantRepositoryDumpResult>> HandleAsync(
         CkMethodContext<TenantRepositoryDumpParameters> context, CancellationToken cancellationToken)
@@ -121,8 +130,17 @@ public sealed class TenantRepositoryDumpHandler(
                         DumpJobParameters.InterruptedOutcome or DumpJobParameters.OperationClosedOutcome;
                     logger.LogWarning("Dump job '{JobId}' of tenant '{TenantId}' ended without a dump ({Code})", jobId,
                         tenantId, interrupted ? DumpInterrupted : DumpFailed);
-                    return CkMethodOutcome<TenantRepositoryDumpResult>.Fail(
-                        interrupted ? DumpInterrupted : DumpFailed, (JobIdParameter, jobId));
+                    if (interrupted)
+                    {
+                        return CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpInterrupted, (JobIdParameter, jobId));
+                    }
+
+                    // Method dumps are serialized (DisableConcurrentExecution, 10 min to get the lock): a dump that waited
+                    // longer for another one fails before it starts. The caller can simply try again.
+                    return WaitedTooLongForTheLock(details)
+                        ? CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpFailed, (JobIdParameter, jobId),
+                            (ReasonParameter, AnotherDumpRunningReason))
+                        : CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpFailed, (JobIdParameter, jobId));
             }
         }
     }
@@ -140,6 +158,15 @@ public sealed class TenantRepositoryDumpHandler(
         var state = details.History.FirstOrDefault()?.StateName;
         return state is "Succeeded" or "Failed" or "Deleted" ? state : null;
     }
+
+    /// <summary>
+    ///     <c>true</c> when the job failed because it could not get the <c>DisableConcurrentExecution</c> lock in time (the
+    ///     failed state names <c>DistributedLockTimeoutException</c>); the job then never started.
+    /// </summary>
+    internal static bool WaitedTooLongForTheLock(JobDetailsDto details) =>
+        details.History.Any(h => h.StateName == "Failed" && h.Data != null &&
+                                 h.Data.TryGetValue("ExceptionType", out var type) &&
+                                 type?.Contains("DistributedLockTimeoutException", StringComparison.Ordinal) == true);
 
     /// <summary>The report of the job as operation progress; <c>null</c> when it is out of the allowed shape.</summary>
     internal static CkMethodOperationProgress? TryToOperationProgress(DumpProgress progress, string jobId)

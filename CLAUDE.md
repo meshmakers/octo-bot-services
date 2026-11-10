@@ -178,8 +178,10 @@ method this service hosts. User documentation: README "Repository dump as an asy
 - **Replicas**: the work and the job may run on different replicas (shared Hangfire storage, job parameters as the channel). If the
   replica of the work dies, the operation ends `handler-lost` while the job may still finish; the dump is then reachable through
   `system/v1/jobs` only (outcome unknown by design).
-- **`DisableConcurrentExecution`** locks per job method: method dumps are serialized among themselves, and a REST dump and a method
-  dump may run in parallel.
+- **`DisableConcurrentExecution(600)`** locks per job method: a REST dump and a method dump may run in parallel, and method dumps wait
+  for each other **at most 10 minutes** (same timeout as the REST `Run`). A method dump that waited longer fails before it starts
+  (`DistributedLockTimeoutException`, job deleted, nothing dumped); the handler answers `DUMP_FAILED` with `reason`
+  `another-dump-running`, and the caller tries again later. Raising the timeout would keep a Hangfire worker blocked for as long.
 - **Result JSON**: the generated `RtRecord` would serialize its attribute dictionary; `src/SystemBotCkModel/RtRepositoryDumpResultRecord.Json.cs`
   adds a System.Text.Json converter so the wire form is the bare `{"jobId","downloadPath"}` object (method wire contract, AB#8079).
 - **CK model**: 3.7.0 adds `TenantRepository` (`derivable: Model`), the record `RepositoryDumpResult` and two attributes - a Minor.

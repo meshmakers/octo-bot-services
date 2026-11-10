@@ -119,6 +119,32 @@ public class TenantRepositoryDumpHandlerTests
     }
 
     [Test]
+    public async Task Work_LockTimeout_IsDumpFailedWithReasonAnotherDumpRunning()
+    {
+        // A second method dump that waited longer than the DisableConcurrentExecution timeout fails before it starts.
+        _storage.FailedExceptionType = "Hangfire.Storage.DistributedLockTimeoutException";
+        _storage.States.Enqueue("Deleted");
+
+        var outcome = await CreateHandler().RunAsync(Tenant, false, "user-1", null, _progress, CancellationToken.None);
+
+        await Assert.That(outcome.Failure!.Code).IsEqualTo(TenantRepositoryDumpHandler.DumpFailed);
+        await Assert.That(outcome.Failure.Parameters["reason"]).IsEqualTo(TenantRepositoryDumpHandler.AnotherDumpRunningReason);
+        await Assert.That(outcome.Failure.Parameters["jobId"]).IsEqualTo(JobId);
+    }
+
+    [Test]
+    public async Task Work_OtherFailure_HasNoReason()
+    {
+        _storage.FailedExceptionType = "Meshmakers.Octo.Backend.Jobs.JobFailedException";
+        _storage.States.Enqueue("Deleted");
+
+        var outcome = await CreateHandler().RunAsync(Tenant, false, "user-1", null, _progress, CancellationToken.None);
+
+        await Assert.That(outcome.Failure!.Code).IsEqualTo(TenantRepositoryDumpHandler.DumpFailed);
+        await Assert.That(outcome.Failure.Parameters.ContainsKey("reason")).IsFalse();
+    }
+
+    [Test]
     public async Task Work_JobVanished_IsDumpFailed()
     {
         _storage.Vanished = true;
@@ -219,6 +245,7 @@ public class TenantRepositoryDumpHandlerTests
         public Queue<DumpProgress> ProgressSequence { get; } = new();
         public Dictionary<string, string> Written { get; } = new();
         public string? Outcome { get; set; }
+        public string? FailedExceptionType { get; set; }
         public bool Vanished { get; set; }
         public Action? OnRead { get; set; }
 
@@ -243,11 +270,21 @@ public class TenantRepositoryDumpHandlerTests
                 properties[DumpJobParameters.Outcome] = SerializationHelper.Serialize(Outcome, SerializationOption.User);
             }
 
-            return new JobDetailsDto
+            var history = new List<StateHistoryDto>
             {
-                Properties = properties,
-                History = [new StateHistoryDto { StateName = state, CreatedAt = DateTime.UtcNow, Data = new Dictionary<string, string>() }]
+                new() { StateName = state, CreatedAt = DateTime.UtcNow, Data = new Dictionary<string, string>() }
             };
+            if (FailedExceptionType != null)
+            {
+                // Hangfire's history is newest first: Deleted after the Failed state that names the exception.
+                history.Add(new StateHistoryDto
+                {
+                    StateName = "Failed", CreatedAt = DateTime.UtcNow,
+                    Data = new Dictionary<string, string> { ["ExceptionType"] = FailedExceptionType }
+                });
+            }
+
+            return new JobDetailsDto { Properties = properties, History = history };
         }
 
         public void SetJobParameter(string jobId, string name, string value) => Written[name] = value;

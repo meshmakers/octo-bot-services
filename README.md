@@ -441,6 +441,7 @@ with `runtime.operations(operationId: …)`:
 | `Running`, stage `QUEUED` / `DUMPING_DATABASE` / `EXPORTING_ARCHIVES` (`archive`, `archiveCount`) / `STORING_ARTIFACT` | the Hangfire job runs; every progress report carries the parameter `jobId` |
 | `Succeeded`, result `{ jobId, downloadPath }` | download the file with `GET {downloadPath}` (= `{tenantId}/v1/jobs/download?id=<jobId>`, the existing download route) |
 | `Failed`, `DUMP_FAILED` (`jobId`) | the dump job failed; `system/v1/jobs/{jobId}` shows its error |
+| `Failed`, `DUMP_FAILED` (`jobId`, `reason` `another-dump-running`) | another method dump held the lock for more than 10 minutes, nothing was dumped; try again later |
 | `Failed`, `DUMP_INTERRUPTED` (`jobId`) | the job had started and the bot service stopped; it is not started again |
 | `Failed`, `METHOD_OUTCOME_UNKNOWN` / `handler-lost` | the bot service that ran the operation stopped or died |
 
