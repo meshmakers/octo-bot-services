@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
+using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
@@ -26,7 +27,7 @@ public partial class DumpRepositoryJob
     ///     nothing was changed (the mongodump blob is still on disk for the format 1 path).
     /// </summary>
     private async Task<string?> TryDumpNativeAsync(string tenantId, ITenantContext tenantContext,
-        string mongoFilePath, DateTime mongoFinishedAtUtc, CancellationToken ct)
+        string mongoFilePath, DateTime mongoFinishedAtUtc, IDumpProgressSink progress, CancellationToken ct)
     {
         var repository = tenantContext.GetStreamDataRepository();
         var unavailable = NativeCopyUnavailableReason(repository);
@@ -60,9 +61,12 @@ public partial class DumpRepositoryJob
                 "staging run '{RunId}' ({Location})", provisioned.Count, snapshots.Count, tenantId, runId, location);
 
             var results = new Dictionary<OctoObjectId, ArchiveCopyDumpResult>();
-            foreach (var snapshot in snapshots.Where(s => provisioned.Contains(s.RtId)))
+            var toCopy = snapshots.Where(s => provisioned.Contains(s.RtId)).ToList();
+            var archiveNumber = 0;
+            foreach (var snapshot in toCopy)
             {
                 ct.ThrowIfCancellationRequested();
+                progress.Report(ArchiveProgress(++archiveNumber, toCopy.Count));
                 ArchiveCopyDumpResult result;
                 try
                 {
@@ -102,6 +106,7 @@ public partial class DumpRepositoryJob
             var manifest = await BuildNativeManifestAsync(tenantId, repository!, snapshots, results, staged,
                 mongoFinishedAtUtc, ct);
             var zipFileName = BuildBackupArchiveFileName(tenantId);
+            progress.Report(new DumpProgress(90, DumpStages.StoringArtifact));
             var stored = await artifactStorage.StoreFromWriterAsync(ArtifactCategories.TenantDumps, tenantId,
                 zipFileName,
                 (target, token) => OctobakContainerWriter.WriteAsync(target, mongoFilePath, artifactStorage, tenantId,

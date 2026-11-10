@@ -1,0 +1,9 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+# AB#8445 (3.7.0): members of the result record of TenantRepository.Dump-1.
+attributes:
+- id: RepositoryDump.JobId
+  valueType: String
+  description: "Id of the Hangfire job that produced the dump; system/v1/jobs and the download address it."
+- id: RepositoryDump.DownloadPath
+  valueType: String
+  description: "Relative path of the download of the dump file on the bot service, {tenantId}/v1/jobs/download?id={jobId}."

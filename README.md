@@ -429,13 +429,48 @@ exclusive replica is alive, so a rolling update from an older build loses or dup
 `Meshmakers.Octo.Common.DistributionEventHub` 3.5.65 or newer (AB#8368). Details: `CLAUDE.md`, "Command consumers run
 on every replica".
 
+### Repository dump as an asynchronous CK method (AB#8445)
+
+Besides `POST {tenantId}/v1/jobs/dump-repository` a tenant administrator can start the dump through the CK method
+`System.Bot/TenantRepository.Dump-1` (static, `execution.mode: async`, role `TenantManagement`), e.g. with the GraphQL
+mutation of the asset repository. The call returns an **operation handle** at once; state, progress and the result are read
+with `runtime.operations(operationId: …)`:
+
+| Operation | Meaning |
+| --- | --- |
+| `Running`, stage `QUEUED` / `DUMPING_DATABASE` / `EXPORTING_ARCHIVES` (`archive`, `archiveCount`) / `STORING_ARTIFACT` | the Hangfire job runs; every progress report carries the parameter `jobId` |
+| `Succeeded`, result `{ jobId, downloadPath }` | download the file with `GET {downloadPath}` (= `{tenantId}/v1/jobs/download?id=<jobId>`, the existing download route) |
+| `Failed`, `DUMP_FAILED` (`jobId`) | the dump job failed; `system/v1/jobs/{jobId}` shows its error |
+| `Failed`, `DUMP_INTERRUPTED` (`jobId`) | the job had started and the bot service stopped; it is not started again |
+| `Failed`, `METHOD_OUTCOME_UNKNOWN` / `handler-lost` | the bot service that ran the operation stopped or died |
+
+- The handler (`src/BotServices/Methods/TenantRepositoryDumpHandler.cs`) enqueues the **same** Hangfire job type
+  (`IDumpRepositoryJob.RunForOperation`, `AutomaticRetry(Attempts = 0)`), so `system/v1/jobs/{jobId}`, the delete and both download
+  routes answer for it exactly as for a REST dump (the tenant binding reads the `tenantId` argument). Old CLI versions
+  (`Dump -w`) keep using the REST route and `Run`, which is unchanged.
+- **At most once.** The job is enqueued inside the operation's work, after the operation record was written. Hangfire requeues
+  a job whose server stopped or died; `RunForOperation` therefore marks its first start (job parameter `OctoDumpStarted`) and refuses
+  a second one, and it refuses to start when its operation is no longer open (`IDumpOperationGate` on the operation store).
+- **Progress** is written by the job as the job parameter `OctoDumpProgress` and relayed by the handler (poll interval
+  `Methods:RepositoryDump:PollInterval`, default 2 s). mongodump runs as one process, so the progress is per stage and per archive,
+  not per collection.
+- **Authorization.** The method host validates the forwarded caller token (authority of this service, `Methods:Token:*`) and the
+  declared role `TenantManagement` before the handler runs; the token's tenant must equal the tenant of the call. Unlike the REST
+  route there is no parent-tenant administration: a parent administrator uses the REST route for a child tenant.
+- **Operation store.** `MethodOperations` in the system database (`AddCkMethodMongoOperationStore`), shared with the asset
+  repository that serves `runtime.operations`; records expire 7 days after completion.
+- **Rollout.** System.Bot 3.7.0 has `minEngineVersion` 3.5.67 (execution.mode): every service of an environment must run an engine
+  that reads `execution.mode` before the model is published there.
+- Tests: `tests/Jobs.Tests/Methods/TenantRepositoryDumpHandlerTests` and `tests/Jobs.Tests/Jobs/Operations/DumpRepositoryJobForOperationTests`.
+
 ## Published packages
 
 The repository produces two NuGet packages (the service host project itself is `IsPackable=false` and ships as a container image):
 
-- **Meshmakers.Octo.ConstructionKit.Models.System.Bot** - the construction kit model `System.Bot-3.6.0` (`ckLanguage: 2` since 3.6.0, depending on `System-[2.5,3.0)`; changes in `src/SystemBotCkModel/ConstructionKit/CHANGELOG.md`). It defines the entity types the bot service operates on:
+- **Meshmakers.Octo.ConstructionKit.Models.System.Bot** - the construction kit model `System.Bot-3.7.0` (`ckLanguage: 2` since 3.6.0, depending on `System-[2.5,3.0)`; changes in `src/SystemBotCkModel/ConstructionKit/CHANGELOG.md`). It defines the entity types the bot service operates on:
   - **Fixup** - a named, ordered, scriptable migration entity tracking application state (`IsApplied`, `AppliedAt`, `Output`, `Error`, `IsSuccess`).
   - **AttributeAggregateConfiguration** - configures autocomplete value aggregation for a target entity attribute (filter regex, result limit) via the `Configures` association.
+  - **TenantRepository** (3.7.0) - hosts the static async method `Dump-1` (repository dump with an operation handle, see "Repository dump as an asynchronous CK method"); result record `RepositoryDumpResult` (`JobId`, `DownloadPath`).
 - **Meshmakers.Octo.Backend.Jobs** - the reusable Hangfire job and command implementations library consumed by the service.
 
 ## Project structure

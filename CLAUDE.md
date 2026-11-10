@@ -155,6 +155,42 @@ giving up). `DefaultConfigurationCreatorService` takes the DI instance (`tenantS
 options and tests: octo-common-services `CLAUDE.md`, section "Tenant Setup - Failure Handling". Test here:
 `tests/Jobs.Tests/Services/TenantSetupRetryWiringTests.cs`. Tests use one isolated `TenantSetupRetryTracker` per test and share it across the creator instances of that test when exercising a retry.
 
+## Async repository dump as a CK method (AB#8445; System.Bot 3.7.0)
+
+`System.Bot/TenantRepository.Dump-1` (static, `execution.mode: async`, `handler: service`, roles `TenantManagement`) is the first CK
+method this service hosts. User documentation: README "Repository dump as an asynchronous CK method"; method runtime:
+`octo-common-services/docs/method-handler-sdk.md` section 11.
+
+- **Host**: `src/BotServices/Methods/BotMethodHost.cs` (`AddBotCkMethodHost`, called from `Program.cs`; `AddCkMethodHandlerDiscovery` on the
+  event hub). It registers the handler, the caller token validation (authority = `Bot:AuthorityUrl`), the MongoDB operation store
+  (system database, `MethodOperations`), the operation runtime (`AddCkMethodOperations`: runner, heartbeat, sweep) and
+  `IDumpOperationGate`. A new bot method = one handler class + one `Handle<>` line there.
+- **Handler** `TenantRepositoryDumpHandler`: `HandleAsync` only accepts (no side effect); the work enqueues
+  `IDumpRepositoryJob.RunForOperation` (same job type as REST, `AutomaticRetry(Attempts = 0)`, `OnAttemptsExceeded = Delete`),
+  records the starter (`JobStarterRecorder.Record(…, subject, clientId, …)` from the validated `CallerPrincipal`, never from
+  `CkMethodRequest.Caller`) and the job parameter `OctoMethodOperationId`, then polls the job (`IJobStorageAccessor`) and relays
+  `OctoDumpProgress` into the operation. Result `RtRepositoryDumpResultRecord { JobId, DownloadPath }`, errors `DUMP_FAILED` /
+  `DUMP_INTERRUPTED` (both with `jobId`). A `Deleted` job is a failed one (the job deletes itself after a failure).
+- **At most once (OD-5)**: Hangfire requeues a job whose server stopped (graceful: the shutdown token cancels it and it is requeued;
+  killed: after the invisibility timeout). `AutomaticRetry` does not cover that, so `RunForOperation` sets `OctoDumpStarted` at the first
+  start and fails a second start with `OctoDumpOutcome = interrupted`; it also refuses when the operation is no longer `Accepted` /
+  `Running` (`operation-closed`). The operation of a stopped host ends `METHOD_OUTCOME_UNKNOWN` / `handler-lost` (runtime of AB#8443).
+- **Replicas**: the work and the job may run on different replicas (shared Hangfire storage, job parameters as the channel). If the
+  replica of the work dies, the operation ends `handler-lost` while the job may still finish; the dump is then reachable through
+  `system/v1/jobs` only (outcome unknown by design).
+- **`DisableConcurrentExecution`** locks per job method: method dumps are serialized among themselves, and a REST dump and a method
+  dump may run in parallel.
+- **Result JSON**: the generated `RtRecord` would serialize its attribute dictionary; `src/SystemBotCkModel/RtRepositoryDumpResultRecord.Json.cs`
+  adds a System.Text.Json converter so the wire form is the bare `{"jobId","downloadPath"}` object (method wire contract, AB#8079).
+- **CK model**: 3.7.0 adds `TenantRepository` (`derivable: Model`), the record `RepositoryDumpResult` and two attributes - a Minor.
+  `minEngineVersion` rises from 3.5.1 to **3.5.67** (`execution.mode`, `ck-engine-version.md` of the engine): publish only where every
+  service runs that engine.
+- Tests: `Jobs.Tests/Methods/TenantRepositoryDumpHandlerTests` (accept without side effect, one enqueue with operation id and starter,
+  progress relay, result, declared errors, cancellation, wire form of the result), `Jobs.Tests/Jobs/Operations/DumpRepositoryJobForOperationTests`
+  (Attempts = 0, classic `Run` signature unchanged, progress, second start refused, closed operation refused),
+  `Jobs.Tests/CkModels/SystemBotCkLanguage2Tests` and `Jobs.IntegrationTests/SystemBotCkLanguage2PersistenceTests` (method survives the
+  round trip).
+
 ## System.Bot on ckLanguage 2 (AB#8593; System.Bot 3.6.0)
 
 `src/SystemBotCkModel` is `System.Bot-3.6.0`, the first `ckLanguage: 2` release, a **Minor** against 3.5.0 (dependency

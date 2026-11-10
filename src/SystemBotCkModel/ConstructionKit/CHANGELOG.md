@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.7.0 - 2026-11-10
+
+_Required bump level: minor._
+
+### Added
+
+- Type `TenantRepository` (derived from `System/Entity`, no attributes, `derivable: Model`) with the static method
+  `Dump-1` (`execution.mode: async`, `handler: service`, roles `TenantManagement`): starts a repository dump of the
+  tenant of the call and returns an operation handle (AB#8445, Feature AB#5694 F3.6). Optional parameter
+  `includeArchiveData` (Boolean); result record `RepositoryDumpResult` (`JobId`, `DownloadPath`); declared errors
+  `DUMP_FAILED` and `DUMP_INTERRUPTED`.
+- Record `RepositoryDumpResult` and the attributes `RepositoryDump.JobId` and `RepositoryDump.DownloadPath`.
+
+### Compatibility
+
+- Additions only: no element removed or changed, `ckLanguage` stays 2, dependency `System-[2.5,3.0)` unchanged.
+  Dependents (`System.Communication` 4.x, `System.Ai` 4.x, `Loxone` 5.x) resolve as before (range retention).
+
 ## 3.6.0 - 2026-11-09
 
 _Required bump level: minor._

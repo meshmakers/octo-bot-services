@@ -19,15 +19,24 @@ internal static class JobStarterRecorder
     public static void Record(IJobStorageAccessor jobStorage, ClaimsPrincipal user, string jobId, string tenantId,
         ILogger logger)
     {
+        Record(jobStorage, user.FindFirstValue("sub") ?? user.FindFirstValue(ClaimTypes.NameIdentifier),
+            user.FindFirstValue("client_id"), jobId, tenantId, logger);
+    }
+
+    /// <summary>
+    ///     Records the starter of a job that a CK method call enqueued (AB#8445): the subject and client id come from the
+    ///     validated caller principal of the method host, never from the request's unvalidated caller.
+    /// </summary>
+    public static void Record(IJobStorageAccessor jobStorage, string? subject, string? clientId, string jobId,
+        string tenantId, ILogger logger)
+    {
         try
         {
-            var subject = user.FindFirstValue("sub") ?? user.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!string.IsNullOrEmpty(subject))
             {
                 jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedBySubjectParameter, subject);
             }
 
-            var clientId = user.FindFirstValue("client_id");
             if (!string.IsNullOrEmpty(clientId))
             {
                 jobStorage.SetJobParameter(jobId, JobTenantBinding.StartedByClientIdParameter, clientId);

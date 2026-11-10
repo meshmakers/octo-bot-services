@@ -28,18 +28,20 @@ public class SystemBotCkLanguage2Tests
     }
 
     [Test]
-    public async Task EmbeddedModel_IsSystemBot_3_6_0_OnCkLanguage2_WithTheCkV2MinEngineVersion()
+    public async Task EmbeddedModel_IsSystemBot_3_7_0_OnCkLanguage2_WithTheCkV2MinEngineVersion()
     {
         var root = await LoadEmbeddedSystemBotAsync();
 
-        await Assert.That(root.ModelId.ToString()).IsEqualTo("System.Bot-3.6.0");
+        // 3.7.0 (AB#8445) adds TenantRepository.Dump-1; still ckLanguage 2 within 3.x.
+        await Assert.That(root.ModelId.ToString()).IsEqualTo("System.Bot-3.7.0");
         await Assert.That(root.CkLanguage).IsEqualTo(2);
         // A ckLanguage 2 model always carries a minEngineVersion, so an engine without CK v2 refuses it (message 126)
         // instead of reading it as a classic model; the compiler stamps it, the sources never set it. Pinned exactly: a
-        // higher value means every service below it can no longer import System.Bot. A feature that raises it (e.g. a
-        // method with execution.mode, AB#8445) is a deliberate rollout decision and updates this assertion.
+        // higher value means every service below it can no longer import System.Bot. 3.7.0 (AB#8445) raised it from
+        // 3.5.1 to 3.5.67: the async method declares execution.mode, which the compiler stamps with the engine version
+        // that reads the field (AB#6925/AB#6926). A further raise is again a deliberate rollout decision.
         await Assert.That(root.MinEngineVersion).IsNotNull();
-        await Assert.That(Version.Parse(root.MinEngineVersion!)).IsEqualTo(new Version(3, 5, 1));
+        await Assert.That(Version.Parse(root.MinEngineVersion!)).IsEqualTo(new Version(3, 5, 67));
     }
 
     /// <summary>
@@ -78,5 +80,29 @@ public class SystemBotCkLanguage2Tests
             .ToList();
 
         await Assert.That(tightened).IsEmpty();
+    }
+
+    /// <summary>
+    ///     AB#8445 (F3.6): <c>TenantRepository.Dump-1</c> is a static, asynchronous, service-handled method for tenant
+    ///     administrators (<c>TenantManagement</c>) with the result record <c>RepositoryDumpResult</c> and two declared
+    ///     errors. The new type keeps the ckLanguage 2 default <c>derivable: Model</c> (no model derives from it).
+    /// </summary>
+    [Test]
+    public async Task TenantRepository_DeclaresTheAsyncDumpMethod()
+    {
+        var root = await LoadEmbeddedSystemBotAsync();
+
+        var type = (root.Types ?? []).SingleOrDefault(t => t.TypeId.Name == "TenantRepository");
+        await Assert.That(type).IsNotNull();
+        await Assert.That(type!.Derivable ?? CkDerivableDto.Model).IsEqualTo(CkDerivableDto.Model);
+        var method = (type.Methods ?? []).SingleOrDefault(m => m.MethodId == "Dump-1");
+        await Assert.That(method).IsNotNull();
+        await Assert.That(method!.Kind).IsEqualTo(CkMethodKindDto.Static);
+        await Assert.That(method.Execution!.Mode).IsEqualTo("async");
+        await Assert.That(method.Authorization!.Roles!).IsEquivalentTo(new[] { "TenantManagement" });
+        await Assert.That(method.Result!.ValueType).IsEqualTo(AttributeValueTypesDto.Record);
+        await Assert.That((method.Errors ?? []).Select(e => e.Code).ToArray())
+            .IsEquivalentTo(new[] { "DUMP_FAILED", "DUMP_INTERRUPTED" });
+        await Assert.That((root.Records ?? []).Any(r => r.RecordId.Name == "RepositoryDumpResult")).IsTrue();
     }
 }

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Hangfire;
+using Hangfire.Server;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
@@ -26,4 +27,23 @@ public interface IDumpRepositoryJob
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
     Task<string?> Run(string tenantId, bool includeArchiveData, IBotCancellationToken? cancellationToken);
+
+    /// <summary>
+    ///     Dumps the repository of a tenant for the asynchronous method <c>System.Bot/TenantRepository.Dump-1</c> (AB#8445).
+    ///     Same dump as <see cref="Run" />; in addition the job reports its progress as the job parameter
+    ///     <c>OctoDumpProgress</c> and runs <b>at most once</b>: a second start of the same job (Hangfire requeues a job
+    ///     whose server stopped or died) and a start after the operation was ended (lost handler) are refused without
+    ///     dumping anything.
+    /// </summary>
+    /// <param name="tenantId">The corresponding tenant id</param>
+    /// <param name="includeArchiveData">See <see cref="Run" />.</param>
+    /// <param name="operationId">The operation id of the method call that enqueued the job.</param>
+    /// <param name="performContext">Injected by Hangfire; pass <c>null</c> when enqueuing.</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
+    /// <returns>The downloadable job result, as <see cref="Run" />.</returns>
+    [DisplayName("Dump repository of tenant '{0}' (method operation {2})")]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
+    Task<string?> RunForOperation(string tenantId, bool includeArchiveData, string operationId,
+        PerformContext? performContext, IBotCancellationToken? cancellationToken);
 }
