@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Runtime.Contracts;
 using Hangfire;
 using Meshmakers.Octo.Runtime.Contracts.Exchange;
 
@@ -71,4 +72,28 @@ public interface IImportModelJob
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
     Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key, string? initiatedBySubjectId,
         IBotCancellationToken? cancellationToken);
+
+    /// <summary>
+    ///     Imports a runtime model on behalf of the caller that started the import through the API, with the kind of
+    ///     that caller (AB#8705): whether a signed-in person (<see cref="RtPrincipalKind.Interactive" />) or a service
+    ///     client (<see cref="RtPrincipalKind.Client" />) started it. CK types with a <c>writeAccess</c> block (AB#8574)
+    ///     admit or refuse the import by this kind; <see cref="RtPrincipalKind.Unknown" /> is refused by them (fail
+    ///     closed) and ignored by every other type. The blueprint-lock protection applies as in the overload without the
+    ///     kind.
+    /// </summary>
+    /// <param name="tenantId">The corresponding tenant</param>
+    /// <param name="importStrategy">The import strategy to use</param>
+    /// <param name="key">The key definition in redis</param>
+    /// <param name="initiatedBySubjectId">Subject id of the caller; a missing one is still protected, never system</param>
+    /// <param name="initiatedByPrincipalKind">Kind of the caller, as derived by the producer from its token</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
+    /// <returns></returns>
+    /// <remarks>
+    ///     The overloads without the kind stay for jobs enqueued before AB#8705; they run with
+    ///     <see cref="RtPrincipalKind.Unknown" />.
+    /// </remarks>
+    [JobDisplayName("Importing Runtime Metadata to tenant '{0}'")]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+    Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key, string? initiatedBySubjectId,
+        RtPrincipalKind initiatedByPrincipalKind, IBotCancellationToken? cancellationToken);
 }

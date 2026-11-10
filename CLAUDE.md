@@ -87,6 +87,11 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
 - ImportRt: `InitiatedBySubjectId` (AB#6392) is enough for the lock protection - it is a per-type policy opt-in
   (`ProtectBlueprintLocked`), not a per-role classification - so no roles are passed. Note: the import session stays the
   system session by design of AB#6392 (write grants are not evaluated per caller there).
+- ImportRt principal kind (AB#8705): the consumer enqueues `ImportRtAsync(..., initiatedBySubjectId, initiatedByPrincipalKind, ...)`
+  with `ImportRtCommandRequest.InitiatedByPrincipalKind` (set by asset-repo from the token: Interactive / Client / Unknown); the job
+  passes it to `RtImportCallerContext.UserInitiated(subject, kind)`, where CK types with a `writeAccess` block (engine AB#8574) admit or
+  refuse the import (message 144). The overloads without the kind stay for jobs enqueued before (Hangfire resolves the stored signature)
+  and run with `Unknown`. Tests: `Jobs.Tests/Jobs/ImportModelJobRtTests`, `Jobs.Tests/Consumers/ModelCommandsConsumerImportCallerTests`.
 - Export/import round trip of record arrays (AB#7446): `Jobs.IntegrationTests/DataPointRoundTripTests` (needs Docker) exports an entity
   with a seed-owned RecordArray of `DataPointSample` (the ownership layout of `System.Communication/DataPoint`: `Name` and the
   required `ExternalId` seed-owned, `CurrentValue` / `LastUpdate` runtime state; `tests/ExportTestCkModel`, `Control`) by deep graph

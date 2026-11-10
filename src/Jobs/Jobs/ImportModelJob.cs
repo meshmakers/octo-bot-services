@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
@@ -144,8 +145,17 @@ public class ImportModelJob : IImportModelJob
     }
 
     /// <inheritdoc />
-    public async Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
+    public Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
         string? initiatedBySubjectId, IBotCancellationToken? cancellationToken)
+    {
+        // A job enqueued before AB#8705 carries no principal kind: Unknown, refused only by restricted types.
+        return ImportRtAsync(tenantId, importStrategy, key, initiatedBySubjectId, RtPrincipalKind.Unknown,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task ImportRtAsync(string tenantId, ImportStrategy importStrategy, string key,
+        string? initiatedBySubjectId, RtPrincipalKind initiatedByPrincipalKind, IBotCancellationToken? cancellationToken)
     {
         try
         {
@@ -156,9 +166,10 @@ public class ImportModelJob : IImportModelJob
 
             var tenantRepository = await _systemContext.FindTenantRepositoryAsync(tenantId);
             // AB#6392: the session of the import stays the system session; the caller context only adds the
-            // blueprint-lock protection of opted-in CK types.
+            // blueprint-lock protection of opted-in CK types and, AB#8705, the principal kind that types with a
+            // writeAccess block (AB#8574) check.
             await _importRtModelCommand.ImportAsCallerAsync(tenantRepository, tempFile.Item1, tempFile.Item2,
-                importStrategy, RtImportCallerContext.UserInitiated(initiatedBySubjectId),
+                importStrategy, RtImportCallerContext.UserInitiated(initiatedBySubjectId, initiatedByPrincipalKind),
                 cancellationToken?.ShutdownToken);
 
             var lockSummary = _importRtModelCommand.BlueprintLockSummary;

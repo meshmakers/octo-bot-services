@@ -34,7 +34,8 @@ internal class ModelCommandsConsumer(IBackgroundJobClient backgroundJobClient) :
     {
         var id = backgroundJobClient.Enqueue<IImportModelJob>(job =>
             job.ImportRtAsync(context.Message.TenantId, context.Message.ImportStrategy, context.Message.CacheFileKey,
-                context.Message.InitiatedBySubjectId, BotCancellationToken.Null));
+                context.Message.InitiatedBySubjectId, context.Message.InitiatedByPrincipalKind,
+                BotCancellationToken.Null));
         
         await context.RespondAsync(new JobCreatedResponse(id));
     }
