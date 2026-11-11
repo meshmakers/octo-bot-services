@@ -4,6 +4,7 @@ using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.BotServices.SystemApi.v1;
 using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.TenantLifecycle;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Methods.Operations;
 using Meshmakers.Octo.Services.RestDeprecation;
@@ -17,14 +18,21 @@ using TenantJobsController = Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Co
 namespace Meshmakers.Octo.Backend.Jobs.Tests.Consumers;
 
 /// <summary>
-///     AB#8447: a deleted tenant takes its method operation records with it (<c>PreDeleteTenant</c> purges the store), a
-///     purge failure never blocks the delete, and the job polling API <c>system/v1/jobs</c> is marked deprecated (wave
+///     AB#8447: a deleted tenant takes its method operation records with it (<c>PreDeleteTenant</c> purges the store when
+///     the tenant carries the Deleting tombstone), a restore or detach (same event, no tombstone) keeps them, a purge failure
+///     never blocks the delete, and the job polling API <c>system/v1/jobs</c> is marked deprecated (wave
 ///     <c>BotJobs1</c>) while the tenant job routes are not.
 /// </summary>
 public class TenantDeleteOperationPurgeTests
 {
     private readonly ICkMethodOperationTenantPurge _purge = Substitute.For<ICkMethodOperationTenantPurge>();
     private readonly RecordingJobCreator _jobCreator = new();
+    private readonly ITenantLifecycleStore _lifecycle = Substitute.For<ITenantLifecycleStore>();
+
+    public TenantDeleteOperationPurgeTests()
+    {
+        Lifecycle("gone", TenantLifecycleState.Deleting);
+    }
 
     [Test]
     public async Task PreDeleteTenant_RemovesTheRecurringJobsAndTheOperationRecords()
@@ -35,6 +43,50 @@ public class TenantDeleteOperationPurgeTests
 
         await Assert.That(_jobCreator.Deleted).IsEquivalentTo(new[] { "gone" });
         await _purge.Received(1).DeleteTenantAsync("gone", Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task PreDeleteTenant_TenantIdInOtherCasing_ReadsTheNormalizedLifecycleRecord()
+    {
+        await Consumer().ConsumeAsync(Context(new PreDeleteTenant("Gone", Guid.NewGuid(), DateTime.UtcNow)));
+
+        await _purge.Received(1).DeleteTenantAsync("Gone", Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    [Arguments(TenantLifecycleState.Active)]
+    [Arguments(TenantLifecycleState.Creating)]
+    [Arguments(TenantLifecycleState.Failed)]
+    public async Task PreDeleteTenant_WithoutDeletingTombstone_KeepsTheOperationRecords(TenantLifecycleState state)
+    {
+        // A restore drops and re-attaches the tenant (and a detach moves it): the same event, but the tenant stays. The
+        // running restore operation must keep its record (local E2E of AB#8447 lost it before this gate).
+        Lifecycle("restored", state);
+
+        await Consumer().ConsumeAsync(Context(new PreDeleteTenant("restored", Guid.NewGuid(), DateTime.UtcNow)));
+
+        await Assert.That(_jobCreator.Deleted).IsEquivalentTo(new[] { "restored" });
+        await _purge.DidNotReceiveWithAnyArgs().DeleteTenantAsync(default!, default);
+    }
+
+    [Test]
+    public async Task PreDeleteTenant_WithoutLifecycleRecord_KeepsTheOperationRecords()
+    {
+        await Consumer().ConsumeAsync(Context(new PreDeleteTenant("legacy", Guid.NewGuid(), DateTime.UtcNow)));
+
+        await _purge.DidNotReceiveWithAnyArgs().DeleteTenantAsync(default!, default);
+    }
+
+    [Test]
+    public async Task PreDeleteTenant_LifecycleLookupFails_KeepsTheRecordsAndDoesNotBlock()
+    {
+        _lifecycle.GetAsync("broken", Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("database down"));
+
+        await Consumer().ConsumeAsync(Context(new PreDeleteTenant("broken", Guid.NewGuid(), DateTime.UtcNow)));
+
+        await Assert.That(_jobCreator.Deleted).IsEquivalentTo(new[] { "broken" });
+        await _purge.DidNotReceiveWithAnyArgs().DeleteTenantAsync(default!, default);
     }
 
     [Test]
@@ -72,7 +124,11 @@ public class TenantDeleteOperationPurgeTests
 
     private TenantManagementConsumer Consumer() =>
         new(NullLogger<TenantManagementConsumer>.Instance, Options.Create(new OctoBotServicesOptions()), _jobCreator,
-            _purge);
+            _purge, _lifecycle);
+
+    private void Lifecycle(string tenantId, TenantLifecycleState state) =>
+        _lifecycle.GetAsync(tenantId, Arg.Any<CancellationToken>())
+            .Returns(new TenantLifecycleRecord { TenantId = tenantId, State = state });
 
     private static IDistributedContext<T> Context<T>(T message) where T : class
     {

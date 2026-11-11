@@ -3,6 +3,7 @@ using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.TenantLifecycle;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Methods.MongoDb;
 using Meshmakers.Octo.Services.Methods.Operations;
@@ -18,7 +19,8 @@ namespace Meshmakers.Octo.Backend.Jobs.IntegrationTests;
 /// <summary>
 ///     AB#8447 (F3.6), against a real MongoDB replica set: the operation record of a restore lives in the system database
 ///     (<c>MethodOperations</c>), so it stays readable while and after the tenant database is replaced (dropped and
-///     restored, which is what <c>mongorestore --drop</c> does to every collection); and a deleted tenant takes its
+///     restored, which is what <c>mongorestore --drop</c> does to every collection) — including the <c>PreDeleteTenant</c>
+///     the restore sends when it drops and re-attaches the tenant; and a deleted tenant (Deleting tombstone) takes its
 ///     records with it (<c>PreDeleteTenant</c> through the real <see cref="TenantManagementConsumer" /> and the real
 ///     MongoDB store), while another tenant keeps its own.
 /// </summary>
@@ -59,7 +61,17 @@ public class RestoreOperationRecordTests
         await store.CreateAsync(other);
         await store.MarkRunningAsync(tenantId, restore.OperationId, DateTime.UtcNow);
 
-        // The restore replaces the tenant database.
+        // The bot service's consumer, as every replica runs it; the lifecycle record tells a delete from a restore.
+        var lifecycle = Substitute.For<ITenantLifecycleStore>();
+        var lifecycleRecord = new TenantLifecycleRecord { TenantId = tenantId, State = TenantLifecycleState.Active };
+        lifecycle.GetAsync(tenantId, Arg.Any<CancellationToken>()).Returns(_ => lifecycleRecord);
+        var consumer = new TenantManagementConsumer(NullLogger<TenantManagementConsumer>.Instance,
+            Options.Create(new OctoBotServicesOptions()), new NoJobs(), store, lifecycle);
+        var context = Substitute.For<IDistributedContext<PreDeleteTenant>>();
+        context.Message.Returns(new PreDeleteTenant(tenantId, Guid.NewGuid(), DateTime.UtcNow));
+
+        // The restore drops the tenant (PreDeleteTenant, no tombstone) and replaces the tenant database.
+        await consumer.ConsumeAsync(context);
         await client.DropDatabaseAsync(tenantId);
         await tenantDatabase.GetCollection<BsonDocument>("RtEntities").InsertOneAsync(new BsonDocument("name", "after"));
 
@@ -76,11 +88,9 @@ public class RestoreOperationRecordTests
         await Assert.That((await store.GetAsync(tenantId, restore.OperationId))!.State)
             .IsEqualTo(CkMethodOperationState.Succeeded);
 
-        // The tenant is deleted: the bot service's consumer purges its records, the other tenant keeps its own.
-        var consumer = new TenantManagementConsumer(NullLogger<TenantManagementConsumer>.Instance,
-            Options.Create(new OctoBotServicesOptions()), new NoJobs(), store);
-        var context = Substitute.For<IDistributedContext<PreDeleteTenant>>();
-        context.Message.Returns(new PreDeleteTenant(tenantId, Guid.NewGuid(), DateTime.UtcNow));
+        // The tenant is deleted (the delete writes the Deleting tombstone first): the consumer purges its records, the
+        // other tenant keeps its own.
+        lifecycleRecord = new TenantLifecycleRecord { TenantId = tenantId, State = TenantLifecycleState.Deleting };
         await consumer.ConsumeAsync(context);
 
         await Assert.That(await store.GetAsync(tenantId, restore.OperationId)).IsNull();

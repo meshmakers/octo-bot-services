@@ -213,7 +213,10 @@ method this service hosts. User documentation: README "Repository dump as an asy
   (`SystemBotCkModel/RtJobResultRecords.Json.cs`, generic `RtRecordWireJsonConverter<T>`; the dump keeps its own converter).
 - Row-pump progress has **no percentage** (`DumpProgress.Percent = -1` → stored without percent).
 - Restore: the operation record is in the system database, never touched by the restore. Deleted tenant: `TenantManagementConsumer`
-  purges via `ICkMethodOperationTenantPurge` (common-services AB#8447), failures only logged.
+  purges via `ICkMethodOperationTenantPurge` (common-services AB#8447), failures only logged. **`PreDeleteTenant` is also sent by a
+  restore (`TenantBackupService` drops and re-attaches the tenant) and a detach** — purge only when `ITenantLifecycleStore` shows
+  `Deleting` (the delete endpoint marks it before the event); without that gate a method restore deleted its own record
+  (local E2E 2026-11-11).
 - `system/v1/jobs` (System API `JobsController`) carries `[OctoRestDeprecated(Wave = BotRestDeprecation.JobsWave1)]`; dates only from
   configuration. Keep the sunset unset until every job type has a handle.
 - CK model: 3.8.0 = additions only (Minor), `minEngineVersion` stays 3.5.67; enum `ArchiveImportMode` keys = REST enum keys (test).
