@@ -18,8 +18,9 @@ public interface IImportArchiveDataJob
     /// <param name="archiveRtId">Runtime id of the target <c>CkArchive</c> entity.</param>
     /// <param name="tusFileId">
     ///     The tus file id of the uploaded export ZIP (AB#8736: staged in the artifact store, so any replica runs the
-    ///     job). An upload received on the local disk before AB#8736 is still found by its id; a job enqueued before
-    ///     AB#8736 carries a path instead and fails with "not found" (that file lived on the replaced pod).
+    ///     job). An upload received on the local disk before AB#8736 is still found by its id. A job enqueued before
+    ///     AB#8736 carries the local path of the upload instead: it is imported when that file (inside the tenant's tus
+    ///     directory) is on the replica that runs it, and fails with "upload again" otherwise.
     /// </param>
     /// <param name="mode">Insert-only or upsert.</param>
     /// <param name="cancellationToken">A cancellation token to abort the job.</param>

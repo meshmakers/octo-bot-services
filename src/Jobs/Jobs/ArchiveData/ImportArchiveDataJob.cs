@@ -110,9 +110,11 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
                 localUploadPath = ResolveLocalUpload(tenantId, tusFileId);
                 if (localUploadPath == null || !File.Exists(localUploadPath))
                 {
-                    throw new JobFailedException(
-                        $"Uploaded archive data file not found for tus file ID '{tusFileId}', or the upload is not " +
-                        "complete.");
+                    throw new JobFailedException(Path.IsPathRooted(tusFileId)
+                        ? $"The job was queued before AB#8736 with the local upload path '{tusFileId}', and the file " +
+                          "is not on this replica (it was received by another pod). Upload the archive data file again."
+                        : $"Uploaded archive data file not found for tus file ID '{tusFileId}', or the upload is not " +
+                          "complete.");
                 }
 
                 uploadPath = localUploadPath;
@@ -244,10 +246,16 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
 
     /// <summary>
     ///     The path of an upload received on the local disk before AB#8736, or <c>null</c> when the id cannot name one
-    ///     (it must stay a single file name inside the tenant's tus directory).
+    ///     (it must stay a single file name inside the tenant's tus directory). A job queued before AB#8736 carries the
+    ///     full path the old producer resolved; it is accepted only when it is exactly the tus file of that tenant.
     /// </summary>
     private string? ResolveLocalUpload(string tenantId, string tusFileId)
     {
+        if (!string.IsNullOrWhiteSpace(tusFileId) && Path.IsPathRooted(tusFileId))
+        {
+            return ResolveLegacyQueuedPath(tenantId, tusFileId);
+        }
+
         if (string.IsNullOrWhiteSpace(tusFileId) || tusFileId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
             tusFileId.Contains(Path.DirectorySeparatorChar) || tusFileId.Contains(Path.AltDirectorySeparatorChar) ||
             tusFileId is "." or "..")
@@ -258,6 +266,25 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
         try
         {
             return _backupFileStorage.GetTusUploadFilePath(tenantId, tusFileId);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private string? ResolveLegacyQueuedPath(string tenantId, string queuedPath)
+    {
+        var fileName = Path.GetFileName(queuedPath);
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return null;
+        }
+
+        try
+        {
+            var expected = Path.GetFullPath(_backupFileStorage.GetTusUploadFilePath(tenantId, fileName));
+            return string.Equals(Path.GetFullPath(queuedPath), expected, StringComparison.Ordinal) ? expected : null;
         }
         catch (ArgumentException)
         {

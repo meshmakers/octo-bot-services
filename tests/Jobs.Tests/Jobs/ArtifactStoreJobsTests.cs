@@ -104,8 +104,8 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
         var replicaB = new SharedUploadStore(_env.CreateReplicaStorage("b"),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<SharedUploadStore>.Instance);
         var id = await replicaA.CreateAsync(Tenant, _dump.Length, null);
-        await replicaA.AppendAsync(Tenant, id, new MemoryStream(_dump[..(_dump.Length / 2)]));
-        await replicaB.AppendAsync(Tenant, id, new MemoryStream(_dump[(_dump.Length / 2)..]));
+        await replicaA.AppendAsync(Tenant, id, 0, new MemoryStream(_dump[..(_dump.Length / 2)]));
+        await replicaB.AppendAsync(Tenant, id, _dump.Length / 2, new MemoryStream(_dump[(_dump.Length / 2)..]));
         _files.GetTusUploadFilePath(Tenant, id).Returns(Path.Combine(_env.Directory, "no-local-upload"));
         var restores = CaptureRestores();
         var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,

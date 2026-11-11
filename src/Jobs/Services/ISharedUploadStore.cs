@@ -9,9 +9,11 @@ namespace Meshmakers.Octo.Backend.Jobs.Services;
 ///         An upload lives in the category <c>restore-staging</c> of its tenant, the area of the artifact store for
 ///         uploaded files (app-side retention <c>Bot:ArtifactRetentionHours</c>, lifecycle backstop one day):
 ///         <c>&lt;id&gt;.tus-info</c> (upload length and tus metadata, plain) and one object per received
-///         <c>PATCH</c> body, <c>&lt;id&gt;.tus-part.&lt;offset&gt;.&lt;length&gt;[.octoenc]</c> (encrypted when a key
-///         ring is configured). The offset of an upload is the end of the contiguous run of parts from byte 0, so it
-///         is the same on every replica and needs no lock.
+///         <c>PATCH</c> body, <c>&lt;id&gt;.tus-part.&lt;offset&gt;.&lt;length&gt;.&lt;attempt&gt;[.octoenc]</c> (encrypted
+///         when a key ring is configured; the attempt id is new for every request, so two requests never share a key).
+///         The offset of an upload is the end of the contiguous run of parts from byte 0, so it is the same on every
+///         replica and needs no lock. A part is stored at the offset its request was validated against; two requests
+///         for the same offset (a client retry) store overlapping parts with the same bytes, which count once.
 ///     </para>
 ///     <para>
 ///         A completed upload stays as it is until the consuming job (on any replica) reads it: the archive data import
@@ -44,14 +46,24 @@ public interface ISharedUploadStore
     Task<long> GetOffsetAsync(string tenantId, string uploadId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    ///     Appends the bytes of <paramref name="data" /> (one tus <c>PATCH</c> body) at the current offset and returns
-    ///     how many were stored. When the client drops the connection, the bytes received until then are kept (tus
-    ///     resumes from the offset).
+    ///     Appends the bytes of <paramref name="data" /> (one tus <c>PATCH</c> body) at <paramref name="offset" /> and
+    ///     returns how many were stored. When the client drops the connection (an exception, or an end of stream with
+    ///     <paramref name="cancellationToken" /> cancelled), the bytes received until then are kept (tus resumes from
+    ///     the offset).
     /// </summary>
+    /// <param name="tenantId">The tenant the upload belongs to.</param>
+    /// <param name="uploadId">The upload.</param>
+    /// <param name="offset">
+    ///     The offset of the request (<c>Upload-Offset</c>, validated against <see cref="GetOffsetAsync" />), not the
+    ///     offset at the time of the write: a concurrent request on another replica may have advanced it.
+    /// </param>
+    /// <param name="data">The request body.</param>
+    /// <param name="cancellationToken">The request token.</param>
     /// <exception cref="SharedUploadException">
-    ///     The upload does not exist, or <paramref name="data" /> holds more bytes than the upload has left.
+    ///     The upload does not exist, <paramref name="offset" /> is beyond the bytes received, or
+    ///     <paramref name="data" /> holds more bytes than the upload has left from <paramref name="offset" />.
     /// </exception>
-    Task<long> AppendAsync(string tenantId, string uploadId, Stream data,
+    Task<long> AppendAsync(string tenantId, string uploadId, long offset, Stream data,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -275,15 +275,19 @@ id, number of objects). Its objects are never part of the key-id retention check
 - **Archive data import uploads** (`archiveRtId`, AB#8736): `import-archive-data-from-upload` checks that the upload is
   complete and enqueues the job with the tus file id; `ImportArchiveDataJob` copies the plaintext of the parts into the
   scratch directory (the ZIP reader needs a seekable file) on whichever replica runs it, and deletes the upload, a staged
-  file of an earlier version and the scratch copy at the end, after a success as after a failure.
+  file of an earlier version and the scratch copy at the end, after a success as after a failure. A job queued before
+  AB#8736 carries the local path of the upload instead; it is imported when that file is on the replica that runs it
+  (inside the tenant's tus directory), and fails with "upload again" otherwise.
 - **Shared tus uploads (AB#8736)**: the bot runs with more than one replica and the ingress has no affinity, so the
   creation, the offset `HEAD`, every `PATCH` and the job start of one upload may each reach another replica. The tus
   endpoint therefore stores into the artifact store (`ArtifactTusStore` over `ISharedUploadStore`), not into the pod's
   disk (`TusDiskStore` before): `restore-staging/<tenant>/<id>.tus-info` (upload length and tus metadata) and one
-  object per received `PATCH` body, `<id>.tus-part.<offset>.<length>[.octoenc]`, written from a scratch copy of the
-  body (bounded by the client part size; the bytes of a dropped connection are kept, so the client resumes from the
-  offset). The offset is the end of the contiguous run of parts from byte 0, the same on every replica without a
-  lock; parts of two concurrent requests for the same offset hold the same bytes and are merged. The artifact store
+  object per received `PATCH` body, `<id>.tus-part.<offset>.<length>.<attempt>[.octoenc]`, written from a scratch copy
+  of the body (bounded by the client part size; the bytes of a dropped connection are kept, so the client resumes from
+  the offset). The offset is the end of the contiguous run of parts from byte 0, the same on every replica without a
+  lock. A part is stored at the `Upload-Offset` its request was validated against, never at an offset read later, and
+  under a key of its own (`<attempt>` is new per request, so a failed write never deletes another request's part);
+  parts of two concurrent requests for the same offset hold the same bytes and count once. The artifact store
   has no separate temporary area: in-flight parts live in `restore-staging` and are removed by the consuming job, or
   after `Bot:ArtifactRetentionHours` by the hourly cleanup (lifecycle backstop one day), so an upload must complete and
   be consumed within that time. Nothing is copied inside a request: the completion leaves the upload as it is (a

@@ -56,7 +56,7 @@ public static class TusUploadEndpoint
         // {tenantId} by the time it looks.
         return endpoints.MapTus(Route, httpContext => Task.FromResult(new DefaultTusConfiguration
         {
-            Store = new ArtifactTusStore(uploads, GetTusTenantId(httpContext)),
+            Store = new ArtifactTusStore(uploads, GetTusTenantId(httpContext), httpContext.Request),
             MaxAllowedUploadSizeInBytesLong = maxUploadSizeBytes,
             Events = new Events
             {

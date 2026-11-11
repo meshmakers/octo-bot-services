@@ -314,6 +314,82 @@ public class ImportArchiveDataJobTests
         }
     }
 
+    /// <summary>
+    ///     AB#8736 rollout: a job queued by an older replica carries the full local path of the upload. When that file is
+    ///     on the replica that runs the job (inside the tenant's tus directory), it is imported and deleted.
+    /// </summary>
+    [Test]
+    public async Task Run_LegacyQueuedPath_ImportsTheLocalFile()
+    {
+        var snapshot = Snapshot();
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot)), "{\"rtid\":\"61a\"}\n");
+        try
+        {
+            var job = CreateJob(snapshot);
+
+            await job.Run("tenant-1", ArchiveRtId, Path.Combine(Path.GetTempPath(), Path.GetFileName(path)),
+                ArchiveImportMode.InsertOnly, null);
+
+            await _repository.Received(1).ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                EngineArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
+            await _backupFileStorage.Received(1).DeleteFileAsync(Path.GetFullPath(path));
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    ///     A legacy queued path whose file lived on another pod fails with a message that says to upload again.
+    /// </summary>
+    [Test]
+    public async Task Run_LegacyQueuedPathNotOnThisReplica_FailsWithUploadAgain()
+    {
+        var job = CreateJob(Snapshot());
+        var queuedPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+
+        var thrown = await Assert.That(async () =>
+                await job.Run("tenant-1", ArchiveRtId, queuedPath, ArchiveImportMode.InsertOnly, null))
+            .Throws<JobFailedException>();
+
+        await Assert.That(thrown!.Message).Contains("queued before AB#8736");
+        await Assert.That(thrown.Message).Contains("Upload the archive data file again");
+        await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
+            Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+            Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    ///     A queued path outside the tenant's tus directory is never read, even when a file is there.
+    /// </summary>
+    [Test]
+    public async Task Run_LegacyQueuedPathOutsideTheTusDirectory_IsNotRead()
+    {
+        var snapshot = Snapshot();
+        var directory = Directory.CreateTempSubdirectory("bot-legacy-").FullName;
+        var path = Path.Combine(directory, "export.zip");
+        File.Move(WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot)), "{\"rtid\":\"61a\"}\n"), path);
+        try
+        {
+            var job = CreateJob(snapshot);
+
+            await Assert.That(async () =>
+                    await job.Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null))
+                .Throws<JobFailedException>();
+
+            await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());
+            await Assert.That(File.Exists(path)).IsTrue();
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     [Test]
     public async Task Run_MissingFile_Fails()
     {

@@ -72,12 +72,24 @@ public sealed class SharedUploadStore(IBotArtifactStorage storage, ILogger<Share
     }
 
     /// <inheritdoc />
-    public async Task<long> AppendAsync(string tenantId, string uploadId, Stream data,
+    public async Task<long> AppendAsync(string tenantId, string uploadId, long offset, Stream data,
         CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
         var upload = await GetAsync(tenantId, uploadId, cancellationToken)
                      ?? throw new SharedUploadException($"Upload '{uploadId}' does not exist.");
-        var offset = await GetOffsetAsync(tenantId, upload, cancellationToken);
+
+        // The part goes to the offset the request was validated against, never to a newly read one: another replica
+        // may have stored a request for the same offset meanwhile (a client retry), and a part at the advanced offset
+        // would hold the bytes of the wrong range. At the validated offset the two parts overlap and hold the same
+        // bytes of the file, which the chain takes once. An offset beyond the received run would leave a gap.
+        var current = await GetOffsetAsync(tenantId, upload, cancellationToken);
+        if (offset > current)
+        {
+            throw new SharedUploadException(
+                $"Offset {offset} is beyond the {current} bytes upload '{uploadId}' has received.");
+        }
+
         var remaining = upload.UploadLength - offset;
         if (remaining <= 0)
         {
@@ -112,6 +124,9 @@ public sealed class SharedUploadStore(IBotArtifactStorage storage, ILogger<Share
 
                     if (read == 0)
                     {
+                        // tusdotnet's guarded stream turns a dropped connection into an end of stream with the
+                        // request token cancelled, without an exception.
+                        disconnected = cancellationToken.IsCancellationRequested;
                         break;
                     }
 
@@ -137,8 +152,11 @@ public sealed class SharedUploadStore(IBotArtifactStorage storage, ILogger<Share
             }
 
             // After a dropped connection the request token is cancelled; storing the received bytes must not be.
-            await storage.StoreFileAsync(Category, tenantId, PartName(uploadId, offset, received), scratchPath,
-                ArtifactEncryption.IfConfigured, disconnected ? CancellationToken.None : cancellationToken);
+            // Every attempt writes its own part: a failed write deletes only its own key, never the part of a
+            // concurrent request for the same range.
+            await storage.StoreFileAsync(Category, tenantId, PartName(uploadId, offset, received, NewAttemptId()),
+                scratchPath, ArtifactEncryption.IfConfigured,
+                disconnected || cancellationToken.IsCancellationRequested ? CancellationToken.None : cancellationToken);
             return received;
         }
         finally
@@ -273,9 +291,24 @@ public sealed class SharedUploadStore(IBotArtifactStorage storage, ILogger<Share
         return uploadId is { Length: 32 } && uploadId.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
     }
 
-    internal static string PartName(string uploadId, long offset, long length)
+    /// <summary>
+    ///     The key of one stored part: <c>&lt;id&gt;.tus-part.&lt;offset&gt;.&lt;length&gt;.&lt;attempt&gt;</c>, the
+    ///     attempt a 32 hex digit id of its own per request, so that two requests for the same range never share a key.
+    /// </summary>
+    internal static string PartName(string uploadId, long offset, long length, string attemptId)
     {
-        return string.Create(CultureInfo.InvariantCulture, $"{uploadId}{PartMarker}{offset:D19}.{length:D19}");
+        if (!IsValidUploadId(attemptId))
+        {
+            throw new ArgumentException("The attempt id must be 32 lower-case hex digits.", nameof(attemptId));
+        }
+
+        return string.Create(CultureInfo.InvariantCulture,
+            $"{uploadId}{PartMarker}{offset:D19}.{length:D19}.{attemptId}");
+    }
+
+    internal static string NewAttemptId()
+    {
+        return Guid.NewGuid().ToString("N");
     }
 
     internal static bool TryParsePart(string uploadId, string fileName, out UploadPart part)
@@ -293,11 +326,11 @@ public sealed class SharedUploadStore(IBotArtifactStorage storage, ILogger<Share
             rest = rest[..^SecretFileFormat.FileExtension.Length];
         }
 
-        var numbers = rest.Split('.');
-        if (numbers.Length != 2 ||
-            !long.TryParse(numbers[0], NumberStyles.None, CultureInfo.InvariantCulture, out var offset) ||
-            !long.TryParse(numbers[1], NumberStyles.None, CultureInfo.InvariantCulture, out var length) ||
-            length <= 0)
+        var segments = rest.Split('.');
+        if (segments.Length != 3 ||
+            !long.TryParse(segments[0], NumberStyles.None, CultureInfo.InvariantCulture, out var offset) ||
+            !long.TryParse(segments[1], NumberStyles.None, CultureInfo.InvariantCulture, out var length) ||
+            length <= 0 || !IsValidUploadId(segments[2]))
         {
             return false;
         }
