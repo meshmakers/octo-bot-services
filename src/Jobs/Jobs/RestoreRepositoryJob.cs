@@ -60,8 +60,25 @@ public partial class RestoreRepositoryJob(
         string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext,
         IBotCancellationToken? cancellationToken)
     {
-        return RunCoreAsync(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData, performContext,
-            cancellationToken?.ShutdownToken ?? CancellationToken.None);
+        return Run(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData, false, performContext,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
+        string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership,
+        PerformContext? performContext, IBotCancellationToken? cancellationToken)
+    {
+        if (overrideForeignOwnership)
+        {
+            logger.LogWarning(
+                "Restore of tenant '{TenantId}' into database '{DatabaseName}' was requested with the ownership " +
+                "override (AB#8672): a database of another OctoMesh instance on this MongoDB server may be overwritten",
+                tenantId, databaseName);
+        }
+
+        return RunCoreAsync(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData,
+            overrideForeignOwnership, performContext, cancellationToken?.ShutdownToken ?? CancellationToken.None);
     }
 
     /// <inheritdoc />
@@ -73,7 +90,7 @@ public partial class RestoreRepositoryJob(
         _progress = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Generic,
             operationGate, tenantId, operationId, "restore", logger, ct);
         var result = await RunCoreAsync(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
-            performContext, ct);
+            false, performContext, ct);
         if (result != null)
         {
             OperationJobGuard.WriteResult(performContext, RestoreOperationSummary.From(result).ToJson(), logger);
@@ -83,9 +100,9 @@ public partial class RestoreRepositoryJob(
     }
 
     private async Task<RestoreRepositoryResult?> RunCoreAsync(string tenantId, string databaseName, string cacheKey,
-        string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext, CancellationToken ct)
+        string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership,
+        PerformContext? performContext, CancellationToken ct)
     {
-
         // cacheKey is used as the tus file ID (or legacy cache key). The tenant is part of the
         // address since AB#5060: uploads live under a per-tenant directory (and, since AB#5561, under the
         // tenant's restore-staging prefix of the artifact store), so a restore can only ever resolve a file
@@ -118,7 +135,7 @@ public partial class RestoreRepositoryJob(
                 // Format 2 is read as a stream from the store; anything else (a mongodump, format 1) is not handled
                 // here and takes the unchanged path below.
                 var nativeFromStore = await TryRestoreNativeAsync(tenantId, databaseName, oldDatabaseName,
-                    restoreArchiveData,
+                    restoreArchiveData, overrideForeignOwnership,
                     () => artifactStorage!.OpenPlainReadAsync(ArtifactCategories.RestoreStaging, tenantId,
                         stagedFileName, ct), ct);
                 if (nativeFromStore != null)
@@ -173,7 +190,7 @@ public partial class RestoreRepositoryJob(
             {
                 // A local upload (no staging in the store): format 2 is read from the file as a stream as well.
                 var nativeFromFile = await TryRestoreNativeAsync(tenantId, databaseName, oldDatabaseName,
-                    restoreArchiveData,
+                    restoreArchiveData, overrideForeignOwnership,
                     () => Task.FromResult<Stream?>(new FileStream(filePath, FileMode.Open, FileAccess.Read,
                         FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan)), ct);
                 if (nativeFromFile != null)
@@ -198,12 +215,13 @@ public partial class RestoreRepositoryJob(
                         "legacy mongodump (no manifest.json); restoring Mongo only.", tenantId);
                 }
 
-                await RestoreMongoAsync(tenantId, databaseName, filePath, oldDatabaseName, ct);
+                await RestoreMongoAsync(tenantId, databaseName, filePath, oldDatabaseName, overrideForeignOwnership,
+                    ct);
             }
             else
             {
                 octoBakResult = await RestoreOctoBakAsync(tenantId, databaseName, oldDatabaseName, filePath, manifest,
-                    restoreArchiveData, ct);
+                    restoreArchiveData, overrideForeignOwnership, ct);
             }
 
             return new RestoreRepositoryResult
@@ -306,7 +324,7 @@ public partial class RestoreRepositoryJob(
     /// </summary>
     private async Task<RestoreRepositoryResult> RestoreOctoBakAsync(string tenantId, string databaseName,
         string? oldDatabaseName, string filePath, BackupManifest manifest, bool restoreArchiveData,
-        CancellationToken ct)
+        bool overrideForeignOwnership, CancellationToken ct)
     {
         logger.LogInformation(
             "Detected .octobak backup for tenant '{TenantId}' (formatVersion {Version}, {ArchiveCount} archive(s))",
@@ -346,7 +364,8 @@ public partial class RestoreRepositoryJob(
                 await entryStream.CopyToAsync(tempStream, ct);
             }
 
-            await RestoreMongoAsync(tenantId, databaseName, mongoTempPath, oldDatabaseName, ct);
+            await RestoreMongoAsync(tenantId, databaseName, mongoTempPath, oldDatabaseName, overrideForeignOwnership,
+                ct);
         }
         finally
         {
@@ -366,13 +385,13 @@ public partial class RestoreRepositoryJob(
     }
 
     private async Task RestoreMongoAsync(string tenantId, string databaseName, string blobPath,
-        string? oldDatabaseName, CancellationToken ct)
+        string? oldDatabaseName, bool overrideForeignOwnership, CancellationToken ct)
     {
         logger.LogInformation("Running restore command for '{TenantId}' from file '{FilePath}'", tenantId, blobPath);
         _progress.Report(new DumpProgress(20, RestoreStages.RestoringDatabase));
 
         var r = await systemContext.RestoreTenantAsync(tenantId, databaseName, blobPath, oldDatabaseName,
-            true, true, TimeSpan.FromHours(1), ct);
+            true, true, TimeSpan.FromHours(1), ct, overrideForeignOwnership);
 
         if (!r.Success)
         {

@@ -36,7 +36,8 @@ public partial class RestoreRepositoryJob
     ///     caller takes the unchanged path.
     /// </summary>
     private async Task<RestoreRepositoryResult?> TryRestoreNativeAsync(string tenantId, string databaseName,
-        string? oldDatabaseName, bool restoreArchiveData, Func<Task<Stream?>> open, CancellationToken ct)
+        string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership, Func<Task<Stream?>> open,
+        CancellationToken ct)
     {
         if (artifactStorage == null)
         {
@@ -64,7 +65,8 @@ public partial class RestoreRepositoryJob
                 return null;
             }
 
-            return await RestoreNativeAsync(tenantId, databaseName, oldDatabaseName, restoreArchiveData, pass, ct);
+            return await RestoreNativeAsync(tenantId, databaseName, oldDatabaseName, restoreArchiveData,
+                overrideForeignOwnership, pass, ct);
         }
         finally
         {
@@ -179,7 +181,8 @@ public partial class RestoreRepositoryJob
     }
 
     private async Task<RestoreRepositoryResult> RestoreNativeAsync(string tenantId, string databaseName,
-        string? oldDatabaseName, bool restoreArchiveData, ContainerPass pass, CancellationToken ct)
+        string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership, ContainerPass pass,
+        CancellationToken ct)
     {
         var manifest = pass.Manifest!;
         logger.LogInformation(
@@ -228,7 +231,8 @@ public partial class RestoreRepositoryJob
             await EnsureBackupFitsStorageAsync(tenantId, pass, ct);
         }
 
-        await RestoreMongoAsync(tenantId, databaseName, pass.MongoScratch, oldDatabaseName, ct);
+        await RestoreMongoAsync(tenantId, databaseName, pass.MongoScratch, oldDatabaseName, overrideForeignOwnership,
+            ct);
         artifactStorage!.DeleteScratchFile(pass.MongoScratch);
         pass.MongoScratch = null;
 

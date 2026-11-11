@@ -130,7 +130,7 @@ public abstract class JobsControllerBase : ControllerBase
     ///     Enqueues the repository restore of <paramref name="tenantId" /> from a completed tus upload.
     /// </summary>
     protected async Task<IActionResult> EnqueueRestoreFromUploadAsync(string tusFileId, string tenantId,
-        string databaseName, string? oldDatabaseName, bool restoreArchiveData)
+        string databaseName, string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership = false)
     {
         try
         {
@@ -142,8 +142,8 @@ public abstract class JobsControllerBase : ControllerBase
             }
 
             var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, null,
-                    BotCancellationToken.Null));
+                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+                    overrideForeignOwnership, null, BotCancellationToken.Null));
 
             RecordStarter(id, tenantId);
             return Ok(new JobResponseDto(id));

@@ -42,7 +42,7 @@ public class RestoreRepositoryArchiveDataTests
         _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), "file-1").Returns(filePath);
         _systemContext.RestoreTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                 Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(),
-                Arg.Any<CancellationToken>())
+                Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new CommandResult { Success = true });
     }
 
@@ -121,7 +121,7 @@ public class RestoreRepositoryArchiveDataTests
             await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
             // Mongo restored exactly once from the extracted blob.
             await _systemContext.Received(1).RestoreTenantAsync(Arg.Is("tenant-1"), Arg.Is("db-1"), Arg.Any<string>(),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
             // Clean sequence: drop -> activate -> disable -> import(InsertOnly); no re-enable (was Disabled).
             await _repository.Received(1).DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
             await _lifecycle.Received(1).ActivateAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
@@ -180,7 +180,7 @@ public class RestoreRepositoryArchiveDataTests
             await CreateJob().Run("tenant-1", "db-1", "file-1", null, false, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync(Arg.Is("tenant-1"), Arg.Is("db-1"), Arg.Any<string>(),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
             // Flag off: archives are left untouched.
             await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Any<OctoObjectId>());
             await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
@@ -276,7 +276,7 @@ public class RestoreRepositoryArchiveDataTests
             await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync(Arg.Is("tenant-1"), Arg.Is("db-1"), Arg.Is(path),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
             await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
                 Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
                 Arg.Any<EngineArchiveImportMode>(), Arg.Any<CancellationToken>());

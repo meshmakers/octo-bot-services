@@ -31,7 +31,7 @@ public class RestoreRepositoryJobTests
         await _systemContext.DidNotReceive().RestoreTenantAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
-            Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
     }
 
     [Test]
@@ -90,7 +90,7 @@ public class RestoreRepositoryJobTests
             _systemContext.RestoreTenantAsync(
                     Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                     Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
                 .Returns(commandResult);
 
             var job = CreateJob();
@@ -119,7 +119,7 @@ public class RestoreRepositoryJobTests
             _systemContext.RestoreTenantAsync(
                     Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                     Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
                 .Returns(commandResult);
 
             var job = CreateJob();
@@ -150,7 +150,7 @@ public class RestoreRepositoryJobTests
             _systemContext.RestoreTenantAsync(
                     Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                     Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
                 .Returns(commandResult);
 
             var job = CreateJob();
@@ -190,7 +190,7 @@ public class RestoreRepositoryJobTests
             _systemContext.RestoreTenantAsync(
                     Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                     Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
                 .Returns(new CommandResult { Success = true });
 
             var coordinator = Substitute.For<ISecretSweepCoordinator>();
@@ -236,7 +236,7 @@ public class RestoreRepositoryJobTests
             _systemContext.RestoreTenantAsync(
                     Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                     Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
                 .Returns(new CommandResult { Success = false, ExitCode = 1 });
             var coordinator = Substitute.For<ISecretSweepCoordinator>();
             var job = new RestoreRepositoryJob(_logger, _systemContext, _backupFileStorage, coordinator);
@@ -245,6 +245,64 @@ public class RestoreRepositoryJobTests
                 .Throws<JobFailedException>();
 
             await coordinator.DidNotReceiveWithAnyArgs().RunAfterRestoreAsync(default!, default, default);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Test]
+    public async Task Run_WithOwnershipOverride_PassesTheOverrideToTheEngineRestore()
+    {
+        // AB#8672: the administrator's deliberate override must reach the engine's ownership guard.
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(tempFile, "backup content");
+            _systemContext.IsSystemTenantExistingAsync().Returns(true);
+            _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns(tempFile);
+            _systemContext.RestoreTenantAsync(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
+                    Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>(), Arg.Any<bool>())
+                .Returns(new CommandResult { Success = true });
+
+            var job = CreateJob();
+
+            await job.Run("tenant-1", "db-1", "abc123", null, false, true, null, null);
+
+            await _systemContext.Received(1).RestoreTenantAsync("tenant-1", "db-1", tempFile, null, true, true,
+                TimeSpan.FromHours(1), Arg.Any<CancellationToken?>(), true);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Test]
+    public async Task Run_WithoutOverrideArgument_RestoresWithTheOwnershipGuardActive()
+    {
+        // The overload without the flag serves restore jobs enqueued before AB#8672; it never overrides.
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(tempFile, "backup content");
+            _systemContext.IsSystemTenantExistingAsync().Returns(true);
+            _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns(tempFile);
+            _systemContext.RestoreTenantAsync(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
+                    Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>(), Arg.Any<bool>())
+                .Returns(new CommandResult { Success = true });
+
+            var job = CreateJob();
+
+            await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
+
+            await _systemContext.Received(1).RestoreTenantAsync("tenant-1", "db-1", tempFile, null, true, true,
+                TimeSpan.FromHours(1), Arg.Any<CancellationToken?>(), false);
         }
         finally
         {

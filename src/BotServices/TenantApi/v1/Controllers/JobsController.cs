@@ -132,6 +132,7 @@ public class JobsController : JobsControllerBase
     /// <param name="databaseName">The name of the database to restore.</param>
     /// <param name="oldDatabaseName">Optional parameter. To be used, when the new db name does not match the original one.</param>
     /// <param name="restoreArchiveData">When <c>true</c> and the uploaded artifact is an <c>.octobak.zip</c> carrying archive data, the tenant's CrateDB archives are also restored (concept AB#4231). Default <c>false</c> (Mongo only).</param>
+    /// <param name="overrideForeignOwnership">Deliberate administrator override (AB#8672): when <c>true</c>, the restore overwrites a tenant database that belongs to another OctoMesh instance on the same MongoDB server instead of refusing it. The override is logged as a warning naming the owner. Another instance's system database is never overwritten. Default <c>false</c>.</param>
     // POST: {tenantId}/v1/jobs/restore-from-upload
     [HttpPost]
     [Route("restore-from-upload")]
@@ -144,9 +145,11 @@ public class JobsController : JobsControllerBase
         [Required] string tusFileId,
         [Required] string databaseName,
         string? oldDatabaseName = null,
-        [FromQuery] bool restoreArchiveData = false)
+        [FromQuery] bool restoreArchiveData = false,
+        [FromQuery] bool overrideForeignOwnership = false)
     {
-        return EnqueueRestoreFromUploadAsync(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData);
+        return EnqueueRestoreFromUploadAsync(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData,
+            overrideForeignOwnership);
     }
 
     /// <summary>
