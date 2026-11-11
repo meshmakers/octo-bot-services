@@ -299,9 +299,11 @@ public partial class RestoreRepositoryJob
             await repository.SetRestoreReconcilePendingAsync(true, ct);
         }
 
+        var archiveNumber = 0;
         foreach (var entry in ordered)
         {
             ct.ThrowIfCancellationRequested();
+            _progress.Report(ArchiveProgress(++archiveNumber, ordered.Count));
             if (stopReason != null)
             {
                 results.Add(ArchiveRestoreResult.Skipped(entry.Schema.RtId, $"not attempted: {stopReason}"));

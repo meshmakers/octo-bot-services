@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Hangfire.Server;
+using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
@@ -31,6 +33,7 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
     private readonly IBackupFileStorageService _backupFileStorage;
     private readonly IBotArtifactStorage _artifactStorage;
     private readonly ISharedUploadStore _sharedUploads;
+    private readonly IDumpOperationGate? _operationGate;
 
     /// <summary>
     ///     Constructor.
@@ -40,13 +43,18 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
     /// <param name="backupFileStorage">Local tus directory (uploads received before AB#8736).</param>
     /// <param name="artifactStorage">The artifact store (staged files and the scratch directory, AB#8736).</param>
     /// <param name="sharedUploads">The tus uploads in the artifact store (AB#8736).</param>
+    /// <param name="operationGate">
+    ///     The gate on the method operation store (AB#8447); <c>null</c> where no method host is registered.
+    /// </param>
     public ImportArchiveDataJob(
         ILogger<ImportArchiveDataJob> logger,
         ISystemContext systemContext,
         IBackupFileStorageService backupFileStorage,
         IBotArtifactStorage artifactStorage,
-        ISharedUploadStore sharedUploads)
+        ISharedUploadStore sharedUploads,
+        IDumpOperationGate? operationGate = null)
     {
+        _operationGate = operationGate;
         _logger = logger;
         _systemContext = systemContext;
         _backupFileStorage = backupFileStorage;
@@ -55,16 +63,36 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
     }
 
     /// <inheritdoc />
-    public async Task Run(string tenantId, string archiveRtId, string tusFileId,
+    public Task Run(string tenantId, string archiveRtId, string tusFileId,
         ArchiveImportMode mode, IBotCancellationToken? cancellationToken)
     {
+        return RunCoreAsync(tenantId, archiveRtId, tusFileId, mode, NullDumpProgressSink.Instance,
+            cancellationToken?.ShutdownToken ?? CancellationToken.None);
+    }
+
+    /// <inheritdoc />
+    public async Task RunForOperation(string tenantId, string archiveRtId, string tusFileId, ArchiveImportMode mode,
+        string operationId, PerformContext? performContext, IBotCancellationToken? cancellationToken)
+    {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        var progress = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Generic,
+            _operationGate, tenantId, operationId, "archive data import", _logger, ct);
+        var rows = await RunCoreAsync(tenantId, archiveRtId, tusFileId, mode, progress, ct);
+        OperationJobGuard.WriteResult(performContext, new ArchiveDataOperationSummary(rows).ToJson(), _logger);
+    }
+
+    private async Task<long> RunCoreAsync(string tenantId, string archiveRtId, string tusFileId,
+        ArchiveImportMode mode, IDumpProgressSink progress, CancellationToken ct)
+    {
         string? stagedFileName = null;
         string? scratchPath = null;
         string? localUploadPath = null;
 
+        long rowCount = 0;
         try
         {
+            progress.Report(new DumpProgress(-1, ArchiveDataStages.Validating));
+
             // AB#8736: the upload is in the artifact store, so this replica need not be the one that received it. The
             // ZIP reader needs a seekable file: the plaintext goes to the scratch directory. Order: a staged file
             // (restore-staging/<tenant>/<id>[.octoenc]), the parts of a complete tus upload, a file received on the
@@ -209,21 +237,31 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
                 ? EngineArchiveImportMode.Upsert
                 : EngineArchiveImportMode.InsertOnly;
 
+            progress.Report(ArchiveDataStages.Rows(ArchiveDataStages.ImportingRows, 0));
             await using (var dataStream = dataEntry.Open())
             {
                 await repository.ImportRowsAsync(archiveObjectId,
-                    NdjsonRowReader.ReadRowsAsync(dataStream, onRow: null, ct), engineMode, ct);
+                    NdjsonRowReader.ReadRowsAsync(dataStream, () =>
+                    {
+                        if (++rowCount % ArchiveDataStages.ReportEveryRows == 0)
+                        {
+                            progress.Report(ArchiveDataStages.Rows(ArchiveDataStages.ImportingRows, rowCount));
+                        }
+                    }, ct), engineMode, ct);
             }
 
             // 5. §7.2 — for rollups, freeze the imported window so the orchestrator does not
             //    re-aggregate over the imported buckets after the archive is re-enabled.
             if (isRollup)
             {
+                progress.Report(new DumpProgress(-1, ArchiveDataStages.FreezingRollupWindow));
                 await FreezeImportedRollupWindowAsync(tenantContext, tenantId, archiveObjectId, metadata);
             }
 
-            _logger.LogInformation("Archive data import completed for '{ArchiveRtId}' of tenant '{TenantId}'",
-                archiveRtId, tenantId);
+            _logger.LogInformation(
+                "Archive data import completed for '{ArchiveRtId}' of tenant '{TenantId}' ({RowCount} rows read)",
+                archiveRtId, tenantId, rowCount);
+            return rowCount;
         }
         catch (OperationCanceledException)
         {

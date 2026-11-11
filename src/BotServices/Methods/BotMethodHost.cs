@@ -9,9 +9,9 @@ using Microsoft.Extensions.Options;
 namespace Meshmakers.Octo.Backend.BotServices.Methods;
 
 /// <summary>
-///     The one place that hosts CK methods in the bot service (AB#8445). A later story (restore, archive export, AB#8447)
-///     adds a handler class and one line to <see cref="AddBotCkMethodHost" />; host, caller token validation and the
-///     operation runtime are set up here.
+///     The one place that hosts CK methods in the bot service (AB#8445: dump; AB#8447: restore, archive data export and
+///     import). A new method adds a handler class and one line to <see cref="AddBotCkMethodHost" />; host, caller token
+///     validation and the operation runtime are set up here.
 /// </summary>
 internal static class BotMethodHost
 {
@@ -27,8 +27,11 @@ internal static class BotMethodHost
     /// </summary>
     public static IServiceCollection AddBotCkMethodHost(this IServiceCollection services)
     {
-        services.AddCkMethodHandlers(ServiceName,
-            m => m.Handle<TenantRepositoryDumpHandler>(SystemBotCkIds.TenantRepositoryDumpMethodId));
+        services.AddCkMethodHandlers(ServiceName, m => m
+            .Handle<TenantRepositoryDumpHandler>(SystemBotCkIds.TenantRepositoryDumpMethodId)
+            .Handle<TenantRepositoryRestoreHandler>(SystemBotCkIds.TenantRepositoryRestoreMethodId)
+            .Handle<TenantRepositoryExportArchiveDataHandler>(SystemBotCkIds.TenantRepositoryExportArchiveDataMethodId)
+            .Handle<TenantRepositoryImportArchiveDataHandler>(SystemBotCkIds.TenantRepositoryImportArchiveDataMethodId));
 
         // The bus is internal but not authenticated per message: the host validates the forwarded access token with the
         // authority of this service's HTTP API (issuer, signature, expiry, tenant, scope), then the declared roles.
@@ -71,6 +74,11 @@ internal static class BotMethodHost
             .BindConfiguration(RepositoryDumpMethodOptions.SectionName)
             .Validate(o => o.PollInterval >= TimeSpan.FromMilliseconds(100),
                 $"{RepositoryDumpMethodOptions.SectionName}:PollInterval must be at least 100 ms")
+            .ValidateOnStart();
+        services.AddOptions<BotJobMethodOptions>()
+            .BindConfiguration(BotJobMethodOptions.SectionName)
+            .Validate(o => o.PollInterval >= TimeSpan.FromMilliseconds(100),
+                $"{BotJobMethodOptions.SectionName}:PollInterval must be at least 100 ms")
             .ValidateOnStart();
         return services;
     }

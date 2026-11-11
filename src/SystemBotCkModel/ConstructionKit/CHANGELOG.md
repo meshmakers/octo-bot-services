@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.8.0 - 2026-11-11
+
+_Required bump level: minor._
+
+### Added
+
+- `TenantRepository` gets three static methods (`execution.mode: async`, `handler: service`, roles `TenantManagement`;
+  AB#8447, Feature AB#5694 F3.6), each returning an operation handle:
+  - `Restore-1` (`tusFileId`, `databaseName`, optional `oldDatabaseName`, optional `restoreArchiveData`), result record
+    `RepositoryRestoreResult`, declared errors `UPLOAD_NOT_FOUND`, `RESTORE_FAILED`, `RESTORE_INTERRUPTED`;
+  - `ExportArchiveData-1` (`archiveRtId`, optional `fromUtc` / `toUtc`), result record `ArchiveDataExportResult`, declared
+    errors `ARCHIVE_EXPORT_FAILED`, `ARCHIVE_EXPORT_INTERRUPTED`;
+  - `ImportArchiveData-1` (`tusFileId`, `archiveRtId`, optional `mode`), result record `ArchiveDataImportResult`, declared
+    errors `UPLOAD_NOT_FOUND`, `ARCHIVE_IMPORT_FAILED`, `ARCHIVE_IMPORT_INTERRUPTED`.
+- Records `RepositoryRestoreResult`, `ArchiveDataExportResult`, `ArchiveDataImportResult`; attributes
+  `RepositoryRestore.ArchiveCount`, `RepositoryRestore.FailedArchiveCount`, `RepositoryRestore.SecretsToReEnterCount`,
+  `ArchiveData.RowCount`; enum `ArchiveImportMode` (`InsertOnly` = 0, `Upsert` = 1).
+
+### Compatibility
+
+- Additions only: no element removed or changed, `ckLanguage` stays 2, dependency `System-[2.5,3.0)` unchanged,
+  `minEngineVersion` unchanged (3.5.67, `execution.mode` was introduced by 3.7.0). Dependents (`System.Communication` 4.x,
+  `System.Ai` 4.x, `Loxone` 5.x) resolve as before (range retention).
+
 ## 3.7.0 - 2026-11-10
 
 _Required bump level: minor._

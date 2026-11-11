@@ -1,5 +1,4 @@
 using Hangfire;
-using Hangfire.Common;
 using Hangfire.Storage.Monitoring;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
@@ -50,7 +49,7 @@ public sealed class TenantRepositoryDumpHandler(
     public const string DumpInterrupted = "DUMP_INTERRUPTED";
 
     /// <summary>Error and progress parameter naming the Hangfire job.</summary>
-    public const string JobIdParameter = "jobId";
+    public const string JobIdParameter = JobOperationRelay.JobIdParameter;
 
     /// <summary>Error parameter with the reason of a <see cref="DumpFailed" /> that the caller can act on.</summary>
     public const string ReasonParameter = "reason";
@@ -83,65 +82,40 @@ public sealed class TenantRepositoryDumpHandler(
         var jobId = backgroundJobClient.Enqueue<IDumpRepositoryJob>(job =>
             job.RunForOperation(tenantId, includeArchiveData, operationId, null, BotCancellationToken.Null));
 
-        JobStarterRecorder.Record(jobStorage, subjectId, clientId, jobId, tenantId, logger);
-        TrySetJobParameter(jobId, DumpJobParameters.OperationId, operationId);
+        var relay = new JobOperationRelay(jobStorage, timeProvider, logger);
+        relay.RecordStart(jobId, tenantId, operationId, OperationJobParameterNames.Dump, subjectId, clientId);
         logger.LogInformation(
             "Repository dump of tenant '{TenantId}' enqueued as job '{JobId}' for method operation '{OperationId}'",
             tenantId, jobId, operationId);
 
-        var last = new DumpProgress(0, DumpStages.Queued);
-        await progress.ReportAsync(ToOperationProgress(last, jobId), ct);
-
-        while (true)
+        var end = await relay.FollowAsync(jobId, tenantId, OperationJobParameterNames.Dump, DumpStages.Queued,
+            options.Value.PollInterval, progress, ct);
+        switch (end.Kind)
         {
-            await Task.Delay(options.Value.PollInterval, timeProvider, ct);
-
-            var details = jobStorage.GetJobDetails(jobId);
-            if (details == null)
-            {
-                logger.LogWarning("Dump job '{JobId}' of tenant '{TenantId}' no longer exists", jobId, tenantId);
-                return CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpFailed, (JobIdParameter, jobId));
-            }
-
-            var reported = DumpProgress.FromJson(ReadParameter(details, DumpJobParameters.Progress));
-            if (reported != null && !SameProgress(reported, last))
-            {
-                last = reported;
-                if (TryToOperationProgress(reported, jobId) is { } operationProgress)
+            case JobOperationEndKind.Succeeded:
+                return CkMethodOutcome<TenantRepositoryDumpResult>.Ok(new TenantRepositoryDumpResult
                 {
-                    await progress.ReportAsync(operationProgress, ct);
-                }
-            }
-
-            switch (FinalState(details))
-            {
-                case "Succeeded":
-                    return CkMethodOutcome<TenantRepositoryDumpResult>.Ok(new TenantRepositoryDumpResult
+                    Value = new RtRepositoryDumpResultRecord
                     {
-                        Value = new RtRepositoryDumpResultRecord
-                        {
-                            JobId = jobId,
-                            DownloadPath = DownloadPath(tenantId, jobId)
-                        }
-                    });
-                case "Failed":
-                case "Deleted":
-                    var interrupted = ReadParameter(details, DumpJobParameters.Outcome) is
-                        DumpJobParameters.InterruptedOutcome or DumpJobParameters.OperationClosedOutcome;
-                    logger.LogWarning("Dump job '{JobId}' of tenant '{TenantId}' ended without a dump ({Code})", jobId,
-                        tenantId, interrupted ? DumpInterrupted : DumpFailed);
-                    if (interrupted)
-                    {
-                        return CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpInterrupted, (JobIdParameter, jobId));
+                        JobId = jobId,
+                        DownloadPath = DownloadPath(tenantId, jobId)
                     }
-
-                    // Method dumps are serialized (DisableConcurrentExecution, 10 min to get the lock): a dump that waited
-                    // longer for another one fails before it starts. The caller can simply try again.
-                    return WaitedTooLongForTheLock(details)
-                        ? CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpFailed, (JobIdParameter, jobId),
-                            (ReasonParameter, AnotherDumpRunningReason))
-                        : CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpFailed, (JobIdParameter, jobId));
-            }
+                });
+            case JobOperationEndKind.Interrupted:
+                logger.LogWarning("Dump job '{JobId}' of tenant '{TenantId}' ended without a dump ({Code})", jobId,
+                    tenantId, DumpInterrupted);
+                return CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpInterrupted, (JobIdParameter, jobId));
+            case JobOperationEndKind.LockTimeout:
+                // Method dumps are serialized (DisableConcurrentExecution, 10 min to get the lock): a dump that waited
+                // longer for another one fails before it starts. The caller can simply try again.
+                logger.LogWarning("Dump job '{JobId}' of tenant '{TenantId}' ended without a dump ({Code})", jobId,
+                    tenantId, DumpFailed);
+                return CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpFailed, (JobIdParameter, jobId),
+                    (ReasonParameter, AnotherDumpRunningReason));
+            default:
+                logger.LogWarning("Dump job '{JobId}' of tenant '{TenantId}' ended without a dump ({Code})", jobId,
+                    tenantId, DumpFailed);
+                return CkMethodOutcome<TenantRepositoryDumpResult>.Fail(DumpFailed, (JobIdParameter, jobId));
         }
     }
 
@@ -149,92 +123,24 @@ public sealed class TenantRepositoryDumpHandler(
     public static string DownloadPath(string tenantId, string jobId) =>
         $"{tenantId}/v1/jobs/download?id={Uri.EscapeDataString(jobId)}";
 
-    /// <summary>
-    ///     <c>Succeeded</c>, <c>Failed</c> or <c>Deleted</c> once the job ended, else <c>null</c>. The dump job deletes
-    ///     itself after a failure (<c>OnAttemptsExceeded = Delete</c>), so <c>Deleted</c> is a failure too.
-    /// </summary>
-    internal static string? FinalState(JobDetailsDto details)
-    {
-        var state = details.History.FirstOrDefault()?.StateName;
-        return state is "Succeeded" or "Failed" or "Deleted" ? state : null;
-    }
+    /// <summary>See <see cref="JobOperationRelay.FinalState" />.</summary>
+    internal static string? FinalState(JobDetailsDto details) => JobOperationRelay.FinalState(details);
 
-    /// <summary>
-    ///     <c>true</c> when the job failed because it could not get the <c>DisableConcurrentExecution</c> lock in time (the
-    ///     failed state names <c>DistributedLockTimeoutException</c>); the job then never started.
-    /// </summary>
+    /// <summary>See <see cref="JobOperationRelay.WaitedTooLongForTheLock" />.</summary>
     internal static bool WaitedTooLongForTheLock(JobDetailsDto details) =>
-        details.History.Any(h => h.StateName == "Failed" && h.Data != null &&
-                                 h.Data.TryGetValue("ExceptionType", out var type) &&
-                                 type?.Contains("DistributedLockTimeoutException", StringComparison.Ordinal) == true);
+        JobOperationRelay.WaitedTooLongForTheLock(details);
 
-    /// <summary>The report of the job as operation progress; <c>null</c> when it is out of the allowed shape.</summary>
-    internal static CkMethodOperationProgress? TryToOperationProgress(DumpProgress progress, string jobId)
-    {
-        try
-        {
-            return ToOperationProgress(progress, jobId);
-        }
-        catch (ArgumentException)
-        {
-            return null;
-        }
-    }
+    /// <summary>See <see cref="JobOperationRelay.TryToOperationProgress" />.</summary>
+    internal static CkMethodOperationProgress? TryToOperationProgress(DumpProgress progress, string jobId) =>
+        JobOperationRelay.TryToOperationProgress(progress, jobId);
 
-    internal static CkMethodOperationProgress ToOperationProgress(DumpProgress progress, string jobId)
-    {
-        var parameters = new Dictionary<string, string> { [JobIdParameter] = jobId };
-        foreach (var (name, value) in progress.Parameters ?? new Dictionary<string, string>())
-        {
-            if (parameters.Count >= CkMethodOperationProgress.MaxParameters)
-            {
-                break;
-            }
+    /// <summary>See <see cref="JobOperationRelay.ToOperationProgress" />.</summary>
+    internal static CkMethodOperationProgress ToOperationProgress(DumpProgress progress, string jobId) =>
+        JobOperationRelay.ToOperationProgress(progress, jobId);
 
-            parameters.TryAdd(name, value);
-        }
-
-        return CkMethodOperationProgress.Create(Math.Clamp(progress.Percent, 0, 100), progress.StageCode,
-            parameters.Select(p => (p.Key, p.Value)).ToArray());
-    }
-
-    private static bool SameProgress(DumpProgress a, DumpProgress b) =>
-        a.Percent == b.Percent && a.StageCode == b.StageCode &&
-        (a.Parameters ?? new Dictionary<string, string>()).OrderBy(p => p.Key)
-        .SequenceEqual((b.Parameters ?? new Dictionary<string, string>()).OrderBy(p => p.Key));
-
-    /// <summary>
-    ///     Reads a job parameter written by the job (<c>PerformContext.SetJobParameter</c>, Hangfire's JSON convention) or
-    ///     by this service (plain string).
-    /// </summary>
-    internal static string? ReadParameter(JobDetailsDto details, string name)
-    {
-        if (details.Properties == null || !details.Properties.TryGetValue(name, out var raw) || raw == null)
-        {
-            return null;
-        }
-
-        try
-        {
-            return raw.StartsWith('"') ? SerializationHelper.Deserialize<string>(raw) : raw;
-        }
-        catch (Exception)
-        {
-            return raw;
-        }
-    }
-
-    private void TrySetJobParameter(string jobId, string name, string value)
-    {
-        try
-        {
-            jobStorage.SetJobParameter(jobId, name, value);
-        }
-        catch (Exception e)
-        {
-            logger.LogWarning(e, "Could not record parameter '{Name}' of dump job '{JobId}'", name, jobId);
-        }
-    }
+    /// <summary>See <see cref="JobOperationRelay.ReadParameter" />.</summary>
+    internal static string? ReadParameter(JobDetailsDto details, string name) =>
+        JobOperationRelay.ReadParameter(details, name);
 }
 
 /// <summary>Options of the dump method (section <c>Methods:RepositoryDump</c>, env <c>OCTO_Methods__RepositoryDump__*</c>).</summary>

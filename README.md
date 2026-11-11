@@ -482,9 +482,49 @@ with `runtime.operations(operationId: …)`:
   route there is no parent-tenant administration: a parent administrator uses the REST route for a child tenant.
 - **Operation store.** `MethodOperations` in the system database (`AddCkMethodMongoOperationStore`), shared with the asset
   repository that serves `runtime.operations`; records expire 7 days after completion.
-- **Rollout.** System.Bot 3.7.0 has `minEngineVersion` 3.5.67 (execution.mode): every service of an environment must run an engine
+- **Rollout.** System.Bot 3.7.0 (and 3.8.0) has `minEngineVersion` 3.5.67 (execution.mode): every service of an environment must run an engine
   that reads `execution.mode` before the model is published there.
 - Tests: `tests/Jobs.Tests/Methods/TenantRepositoryDumpHandlerTests` and `tests/Jobs.Tests/Jobs/Operations/DumpRepositoryJobForOperationTests`.
+
+### Restore and archive data export/import as asynchronous CK methods (AB#8447)
+
+System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the same handle, rules and operation store as
+`Dump-1` (static, `execution.mode: async`, role `TenantManagement`):
+
+| Method | Parameters | Result (`Succeeded`) | Declared errors |
+| --- | --- | --- | --- |
+| `Restore-1` | `tusFileId`, `databaseName`, `oldDatabaseName?`, `restoreArchiveData?` | `{ jobId, archiveCount, failedArchiveCount, secretsToReEnterCount }` | `UPLOAD_NOT_FOUND` (`reason` `not-found` / `incomplete` / `empty`), `RESTORE_FAILED`, `RESTORE_INTERRUPTED` |
+| `ExportArchiveData-1` | `archiveRtId`, `fromUtc?`, `toUtc?` | `{ jobId, downloadPath, rowCount }` | `ARCHIVE_EXPORT_FAILED`, `ARCHIVE_EXPORT_INTERRUPTED` |
+| `ImportArchiveData-1` | `tusFileId`, `archiveRtId`, `mode?` (`InsertOnly` / `Upsert`) | `{ jobId, rowCount }` | `UPLOAD_NOT_FOUND`, `ARCHIVE_IMPORT_FAILED`, `ARCHIVE_IMPORT_INTERRUPTED` |
+
+- **Synchronous checks.** `UPLOAD_NOT_FOUND` and `METHOD_VALIDATION_FAILED` (empty `tusFileId` / `databaseName`, malformed
+  `archiveRtId`, `toUtc` not after `fromUtc`) are answered at once, no operation is recorded. The upload is checked like the REST
+  routes do (`Services/StagedUploadCheck`, shared): a staged file, a complete tus upload, or a file received before AB#8736; an upload of
+  another tenant is "not found". Upload first through `{tenantId}/v1/tus-upload`.
+- **Same jobs, at most once.** The work enqueues the job type the REST route enqueues (`IRestoreRepositoryJob`, `IExportArchiveDataJob`,
+  `IImportArchiveDataJob`, method `RunForOperation`, `AutomaticRetry(Attempts = 0)`). `OperationJobGuard` (`src/Jobs/Jobs/Operations`)
+  marks the first start (`OctoOperationStarted`), refuses a requeued job (`*_INTERRUPTED`) and a job whose operation was ended
+  (`IDumpOperationGate`). `system/v1/jobs/{jobId}` and the downloads answer for these jobs exactly as for the REST jobs.
+- **Progress** (job parameter `OctoOperationProgress`, relayed by `Methods/JobOperationRelay`, poll interval
+  `Methods:BotJobs:PollInterval`, default 2 s): restore `QUEUED` → `PREPARING_UPLOAD` 5 % → `RESTORING_DATABASE` 20 % →
+  `RESTORING_ARCHIVES` 50–85 % (`archive`, `archiveCount`) → `SWEEPING_SECRETS` 90 %; export `EXPORTING_ROWS` and import
+  `VALIDATING` / `IMPORTING_ROWS` / `FREEZING_ROLLUP_WINDOW` report `rows` (every 10,000) **without a percentage** (the total is
+  known only at the end). Every report carries `jobId`. The job writes a count summary (`OctoOperationResult`) that becomes the result.
+- **Failures** carry `jobId`; `reason` `another-job-running` = the job waited more than 10 min for its
+  `DisableConcurrentExecution` lock and never started; `reason` `job-missing` = the job vanished from the job storage. The job's error
+  (schema mismatch, archive not disabled, unknown archive, mongorestore failure) is read through `system/v1/jobs/{jobId}`.
+- **Restore and the operation record.** The restore replaces the tenant *database*; the record is in the system database and stays
+  readable during and after it (`Jobs.IntegrationTests/RestoreOperationRecordTests`). A REST restore and a method restore of the same
+  tenant use different job methods and are not serialized against each other (the same holds for the dump).
+- **Deleted tenant.** `TenantManagementConsumer` (`PreDeleteTenant`) removes the tenant's operation records through
+  `ICkMethodOperationTenantPurge` (octo-common-services); a failure is logged and does not block the delete.
+- **`system/v1/jobs` is deprecated** (`[OctoRestDeprecated(Wave = "BotJobs1")]` on the System API `JobsController`, link to the
+  backup/restore documentation): calls are counted in `octo.rest.deprecated.calls` and OpenAPI marks the endpoints deprecated; the
+  `Deprecation` / `Sunset` headers appear only when `RestDeprecation:Waves:BotJobs1:Since|Sunset` are configured. Do not set a sunset
+  while other job types (ImportRt, ImportCk, RT exports, fixup run, secret sweep) still report only through it.
+- Tests: `tests/Jobs.Tests/Methods/TenantRepositoryJobMethodHandlerTests`, `tests/Jobs.Tests/Jobs/Operations/JobsForOperationTests`,
+  `tests/Jobs.Tests/Consumers/TenantDeleteOperationPurgeTests`, `tests/Jobs.Tests/CkModels/SystemBotCkLanguage2Tests`,
+  `tests/Jobs.IntegrationTests/RestoreOperationRecordTests`, `SystemBotCkLanguage2PersistenceTests`.
 
 ## Published packages
 

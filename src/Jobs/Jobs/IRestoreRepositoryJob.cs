@@ -35,4 +35,27 @@ public interface IRestoreRepositoryJob
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
     Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey, string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext, IBotCancellationToken? cancellationToken);
+
+    /// <summary>
+    ///     Restores the repository of a tenant for the asynchronous method <c>System.Bot/TenantRepository.Restore-1</c>
+    ///     (AB#8447). Same restore as <see cref="Run" />; in addition the job reports its progress as the job parameter
+    ///     <c>OctoOperationProgress</c>, writes a count summary as <c>OctoOperationResult</c>, and runs <b>at most once</b>:
+    ///     a second start of the same job (Hangfire requeues a job whose server stopped or died) and a start after the
+    ///     operation was ended (lost handler) are refused without touching the tenant database.
+    /// </summary>
+    /// <param name="tenantId">The corresponding tenant id</param>
+    /// <param name="databaseName">The name of the database to restore</param>
+    /// <param name="tusFileId">The tus file id of the uploaded backup</param>
+    /// <param name="oldDatabaseName">See <see cref="Run" />.</param>
+    /// <param name="restoreArchiveData">See <see cref="Run" />.</param>
+    /// <param name="operationId">The operation id of the method call that enqueued the job.</param>
+    /// <param name="performContext">Injected by Hangfire; pass <c>null</c> when enqueuing.</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
+    /// <returns>The restore result, as <see cref="Run" />.</returns>
+    [DisplayName("Restore repository '{1}' using tenant '{0}' (method operation {5})")]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
+    Task<RestoreRepositoryResult?> RunForOperation(string tenantId, string databaseName, string tusFileId,
+        string? oldDatabaseName, bool restoreArchiveData, string operationId, PerformContext? performContext,
+        IBotCancellationToken? cancellationToken);
 }

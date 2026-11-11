@@ -1,0 +1,31 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+# AB#8447 (3.8.0, Feature AB#5694 F3.6): results of the asynchronous restore and archive data methods of TenantRepository.
+# Each names the Hangfire job that did the work (system/v1/jobs and the download address it).
+records:
+- recordId: RepositoryRestoreResult
+  description: "Result of a repository restore: the job that restored the tenant, the archives of the backup and the secrets to re-enter."
+  attributes:
+    - id: ${this}/RepositoryDump.JobId
+      name: JobId
+    - id: ${this}/RepositoryRestore.ArchiveCount
+      name: ArchiveCount
+    - id: ${this}/RepositoryRestore.FailedArchiveCount
+      name: FailedArchiveCount
+    - id: ${this}/RepositoryRestore.SecretsToReEnterCount
+      name: SecretsToReEnterCount
+- recordId: ArchiveDataExportResult
+  description: "Result of an archive data export: the job that produced the export file and where it is downloaded."
+  attributes:
+    - id: ${this}/RepositoryDump.JobId
+      name: JobId
+    - id: ${this}/RepositoryDump.DownloadPath
+      name: DownloadPath
+    - id: ${this}/ArchiveData.RowCount
+      name: RowCount
+- recordId: ArchiveDataImportResult
+  description: "Result of an archive data import: the job that imported the rows and how many rows it read from the file."
+  attributes:
+    - id: ${this}/RepositoryDump.JobId
+      name: JobId
+    - id: ${this}/ArchiveData.RowCount
+      name: RowCount

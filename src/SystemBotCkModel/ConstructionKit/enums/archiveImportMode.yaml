@@ -1,0 +1,13 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+# AB#8447 (3.8.0, Feature AB#5694 F3.6): how TenantRepository.ImportArchiveData-1 writes rows whose key exists already.
+# The keys equal the REST enum ArchiveImportMode (import-archive-data-from-upload?mode=0|1).
+enums:
+  - enumId: ArchiveImportMode
+    description: "How an archive data import writes rows whose key exists in the target archive already."
+    values:
+      - key: 0
+        name: InsertOnly
+        description: "Only new rows are inserted; an existing row is kept."
+      - key: 1
+        name: Upsert
+        description: "New rows are inserted and existing rows are overwritten."

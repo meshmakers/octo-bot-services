@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Hangfire;
+using Hangfire.Server;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
@@ -29,4 +30,23 @@ public interface IImportArchiveDataJob
     [DisableConcurrentExecution(60 * 10)]
     Task Run(string tenantId, string archiveRtId, string tusFileId,
         ArchiveImportMode mode, IBotCancellationToken? cancellationToken);
+
+    /// <summary>
+    ///     Imports archive data for the asynchronous method <c>System.Bot/TenantRepository.ImportArchiveData-1</c>
+    ///     (AB#8447). Same import as <see cref="Run" />; in addition the job reports the rows read as the job parameter
+    ///     <c>OctoOperationProgress</c>, writes the row count as <c>OctoOperationResult</c> and runs <b>at most once</b>
+    ///     (a requeued job and a job whose operation was ended are refused).
+    /// </summary>
+    /// <param name="tenantId">The tenant that owns the target archive.</param>
+    /// <param name="archiveRtId">Runtime id of the target <c>CkArchive</c> entity.</param>
+    /// <param name="tusFileId">The tus file id of the uploaded export ZIP.</param>
+    /// <param name="mode">Insert-only or upsert.</param>
+    /// <param name="operationId">The operation id of the method call that enqueued the job.</param>
+    /// <param name="performContext">Injected by Hangfire; pass <c>null</c> when enqueuing.</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job.</param>
+    [DisplayName("Import archive data '{1}' of tenant '{0}' (method operation {4})")]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [DisableConcurrentExecution(60 * 10)]
+    Task RunForOperation(string tenantId, string archiveRtId, string tusFileId, ArchiveImportMode mode,
+        string operationId, PerformContext? performContext, IBotCancellationToken? cancellationToken);
 }
