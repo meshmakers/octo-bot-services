@@ -78,8 +78,9 @@ Three parts, because a route rename alone would have promised an ownership the s
   produces route values) and carrying `[AllowParentTenantAdministration]`, the same marker the
   consuming restore / import routes carry. Without it the upload would refuse the exact parent
   administrator the restore then accepts.
-- **Storage** — uploads live under a per-tenant directory
-  (`BackupFileStorageService.GetTusUploadDirectory`). This is the actual binding: a restore for one
+- **Storage** — uploads live under a per-tenant key prefix of the artifact store
+  (`restore-staging/<tenant>/…`, see "Shared tus uploads" below; before AB#8736 a per-tenant directory,
+  `BackupFileStorageService.GetTusUploadDirectory`). This is the actual binding: a restore for one
   tenant cannot resolve a file staged by another even when handed its id, and there is no separate
   ownership check to remember or forget. "No such upload" and "belongs to another tenant" both
   answer 404, so the endpoint is not an oracle for which tus ids exist elsewhere.
@@ -249,7 +250,7 @@ artifact store (`Meshmakers.Octo.Services.ArtifactStorage`, `IArtifactStore`; pr
 | --- | --- | --- | --- | --- |
 | `presweep` | writing secret sweeps | always (no key ring → no writing sweep) | `Bot:SecretSweep:BackupRetentionDays` (7 d) | 8 d |
 | `tenant-dumps` | `DumpRepositoryJob` | when a key ring is configured, else plain | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
-| `restore-staging` | tus restore uploads (metadata `databaseName`) on completion | when a key ring is configured, else plain | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
+| `restore-staging` | tus uploads (restore and archive data import) until their job consumes them, and the staged file a restore assembles from one (AB#8736) | when a key ring is configured, else plain (the `.tus-info` description is always plain) | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
 | `copy-staging` | native archive dump and restore (format 2, CrateDB `COPY TO` / `COPY FROM`; AB#5967) | never (the CrateDB nodes have to read the files) | `Bot:ArtifactRetentionHours` (24 h) | 1 d |
 
 `copy-staging` keys are nested: `<instancePrefix>/copy-staging/<tenant>/<runId>/<archiveRtId>/data/<slice>/<file>.json.gz` (and
@@ -265,12 +266,29 @@ id, number of objects). Its objects are never part of the key-id retention check
   `application/gzip`, `Content-Length` = plaintext length). A decryption failure in the middle aborts the
   response, so a client never gets a short file that looks complete. Only the job's own tenant and only the
   `tenant-dumps` category are served; an expired dump answers `404`.
-- **Restore uploads**: when a tus upload with `databaseName` completes, it is moved into
-  `restore-staging/<tenant>/<tusFileId>[.octoenc]` and the local tus files are deleted. `restore-from-upload`
-  validates and `RestoreRepositoryJob` reads it from the store (plain or `.octoenc`, and an uploaded
-  `.octoenc` file of this environment is unwrapped as well), decrypting into the scratch directory; the staged
-  artifact is consumed by the restore. If staging fails, or the upload predates AB#5561, the local tus file is
-  used as before. Archive data import uploads (`archiveRtId`) stay on the local disk.
+- **Restore uploads**: `restore-from-upload` checks that the tus upload is complete (without copying it) and
+  `RestoreRepositoryJob` assembles it into `restore-staging/<tenant>/<tusFileId>[.octoenc]`, deletes its parts (see
+  "Shared tus uploads") and reads the staged file (plain or `.octoenc`, and an uploaded `.octoenc` file of this
+  environment is unwrapped as well), decrypting into the scratch directory; the staged artifact and the upload are
+  consumed by the restore. A file staged by an earlier version, or received on the local disk before AB#8736, is still
+  used from there.
+- **Archive data import uploads** (`archiveRtId`, AB#8736): `import-archive-data-from-upload` checks that the upload is
+  complete and enqueues the job with the tus file id; `ImportArchiveDataJob` copies the plaintext of the parts into the
+  scratch directory (the ZIP reader needs a seekable file) on whichever replica runs it, and deletes the upload, a staged
+  file of an earlier version and the scratch copy at the end, after a success as after a failure.
+- **Shared tus uploads (AB#8736)**: the bot runs with more than one replica and the ingress has no affinity, so the
+  creation, the offset `HEAD`, every `PATCH` and the job start of one upload may each reach another replica. The tus
+  endpoint therefore stores into the artifact store (`ArtifactTusStore` over `ISharedUploadStore`), not into the pod's
+  disk (`TusDiskStore` before): `restore-staging/<tenant>/<id>.tus-info` (upload length and tus metadata) and one
+  object per received `PATCH` body, `<id>.tus-part.<offset>.<length>[.octoenc]`, written from a scratch copy of the
+  body (bounded by the client part size; the bytes of a dropped connection are kept, so the client resumes from the
+  offset). The offset is the end of the contiguous run of parts from byte 0, the same on every replica without a
+  lock; parts of two concurrent requests for the same offset hold the same bytes and are merged. The artifact store
+  has no separate temporary area: in-flight parts live in `restore-staging` and are removed by the consuming job, or
+  after `Bot:ArtifactRetentionHours` by the hourly cleanup (lifecycle backstop one day), so an upload must complete and
+  be consumed within that time. Nothing is copied inside a request: the completion leaves the upload as it is (a
+  retried `HEAD` after a lost final response still answers the full offset), and the job start only checks it. tus extensions offered: creation and termination (no deferred length, checksum,
+  concatenation or expiration; neither Studio nor the SDK uses them).
 - **Scratch**: mongodump writes to and decryption reads from `Bot:ScratchPath`
   (default `<temp>/octo-bot/scratch`, owner-only; the chart mounts a scratch volume at `/tmp`). Scratch
   files are deleted right after use and by the hourly cleanup after `Bot:FileRetentionHours`.

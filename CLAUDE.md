@@ -237,3 +237,12 @@ range retention (AB#4696) and the completed re-pin (AB#5688, AB#6708) removed th
 **To build main without publishing:** Azure DevOps -> pipeline `octo-bot-services-CI` -> *Run pipeline* -> branch `main` -> untick
 *Publish System CK models to the CK catalogs (main)*; CLI: `az pipelines run --id 94 --branch main --parameters publishSystemCkModels=false`.
 `r*` tags (release train) publish as before; `dev/*`/`test/*` builds never publish to the shared catalogs.
+
+## tus uploads are shared by all replicas (AB#8736)
+
+The bot runs with more than one replica behind an ingress without affinity. Never store upload state on the pod's disk or
+in process memory: the tus endpoint (`TusUploadEndpoint.MapBotTusUpload`) stores into the artifact store
+(`ArtifactTusStore` → `ISharedUploadStore`, category `restore-staging`), and the consuming jobs read it from there by tus
+file id (never a local path). Never copy a whole upload inside a request (the ingress times out, and two concurrent
+assemblies remove each other's result): the job start only checks, the job reads (import) or assembles (restore). Test: `Jobs.Tests/Api/SharedUploadReplicaTests` (two hosts over one store: create on A, HEAD and PATCH on B, job
+start on A, job on a third), `Jobs.Tests/Services/SharedUploadStoreTests`. Details: README "Shared tus uploads".

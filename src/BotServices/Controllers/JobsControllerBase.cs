@@ -70,6 +70,7 @@ public abstract class JobsControllerBase : ControllerBase
     private readonly IDistributedCacheService _distributedCache;
     private readonly IJobStorageAccessor _jobStorage;
     private readonly ILogger<JobsControllerBase> _logger;
+    private readonly ISharedUploadStore _sharedUploads;
     private readonly IJobTenantAccessGuard _tenantAccessGuard;
 
     /// <summary>
@@ -81,6 +82,7 @@ public abstract class JobsControllerBase : ControllerBase
     /// <param name="tenantAccessGuard">Authorizes a job instance against its tenant (AB#5070).</param>
     /// <param name="distributedCache">Backing store of the legacy GridFS artifact fallback.</param>
     /// <param name="artifactStorage">Artifact store of tenant dumps and staged restore uploads (AB#5561).</param>
+    /// <param name="sharedUploads">The tus uploads in the artifact store (AB#8736).</param>
     /// <param name="logger">Logger.</param>
     protected JobsControllerBase(IBackgroundJobClient backgroundJobClient,
         IBackupFileStorageService backupFileStorage,
@@ -88,9 +90,11 @@ public abstract class JobsControllerBase : ControllerBase
         IJobTenantAccessGuard tenantAccessGuard,
         IDistributedCacheService distributedCache,
         IBotArtifactStorage artifactStorage,
+        ISharedUploadStore sharedUploads,
         ILogger<JobsControllerBase> logger)
     {
         _artifactStorage = artifactStorage;
+        _sharedUploads = sharedUploads;
         _backgroundJobClient = backgroundJobClient;
         _backupFileStorage = backupFileStorage;
         _jobStorage = jobStorage;
@@ -131,7 +135,7 @@ public abstract class JobsControllerBase : ControllerBase
         try
         {
             // Verify the upload is staged (artifact store, AB#5561; or on disk for a legacy upload) and has content
-            var uploadCheck = await ValidateRestoreUploadAsync(tenantId, tusFileId);
+            var uploadCheck = await ValidateStagedUploadAsync(tenantId, tusFileId);
             if (uploadCheck != null)
             {
                 return uploadCheck;
@@ -194,19 +198,23 @@ public abstract class JobsControllerBase : ControllerBase
     ///     Enqueues the archive data import into <paramref name="archiveRtId" /> of
     ///     <paramref name="tenantId" /> from a completed tus upload.
     /// </summary>
-    protected IActionResult EnqueueImportArchiveDataFromUpload(string tusFileId, string tenantId, string archiveRtId,
-        ArchiveImportMode mode)
+    /// <remarks>
+    ///     AB#8736: the job receives the tus file id, not a path on this replica's disk, and reads the staged upload
+    ///     from the artifact store on whichever replica runs it.
+    /// </remarks>
+    protected async Task<IActionResult> EnqueueImportArchiveDataFromUploadAsync(string tusFileId, string tenantId,
+        string archiveRtId, ArchiveImportMode mode)
     {
         try
         {
-            var uploadCheck = ValidateTusUpload(tenantId, tusFileId, out var filePath);
+            var uploadCheck = await ValidateStagedUploadAsync(tenantId, tusFileId);
             if (uploadCheck != null)
             {
                 return uploadCheck;
             }
 
             var id = _backgroundJobClient.Enqueue<IImportArchiveDataJob>(job =>
-                job.Run(tenantId, archiveRtId, filePath, mode, BotCancellationToken.Null));
+                job.Run(tenantId, archiveRtId, tusFileId, mode, BotCancellationToken.Null));
 
             RecordStarter(id, tenantId);
             return Ok(new JobResponseDto(id));
@@ -596,30 +604,37 @@ public abstract class JobsControllerBase : ControllerBase
     }
 
     /// <summary>
-    ///     Verifies that the restore upload is staged for this tenant and not empty: in the artifact store
-    ///     (<c>restore-staging/&lt;tenant&gt;/&lt;id&gt;</c>, AB#5561), else on the local disk (see
-    ///     <see cref="ValidateTusUpload" />). The store key carries the tenant like the local directory does, so a
-    ///     foreign id answers 404 either way.
+    ///     Verifies that the upload is usable for this tenant and not empty, without copying it (AB#8736: the job does
+    ///     that, on whichever replica runs it): a staged file in the artifact store
+    ///     (<c>restore-staging/&lt;tenant&gt;/&lt;id&gt;</c>, AB#5561), else a complete tus upload in the shared store,
+    ///     else a file on the local disk received before AB#8736 (see <see cref="ValidateTusUpload" />). The store key
+    ///     carries the tenant like the local directory does, so a foreign id answers 404 either way.
     /// </summary>
-    private async Task<IActionResult?> ValidateRestoreUploadAsync(string tenantId, string tusFileId)
+    private async Task<IActionResult?> ValidateStagedUploadAsync(string tenantId, string tusFileId)
     {
-        (string FileName, long Size)? staged;
-        try
+        var ct = HttpContext.RequestAborted;
+        var staged = await _sharedUploads.FindStagedAsync(tenantId, tusFileId, ct);
+        long size;
+        if (staged != null)
         {
-            staged = await _artifactStorage.FindRestoreStagingAsync(tenantId, tusFileId, HttpContext.RequestAborted);
+            size = staged.Value.Size;
         }
-        catch (ArgumentException)
+        else if (await _sharedUploads.GetAsync(tenantId, tusFileId, ct) is { } upload)
         {
-            staged = null;
-        }
+            if (!await _sharedUploads.IsCompleteAsync(tenantId, tusFileId, ct))
+            {
+                return BadRequest(new InternalServerErrorDto(
+                    $"The upload for tus file ID '{tusFileId}' is not complete. Finish the upload first."));
+            }
 
-        if (staged == null)
+            size = upload.UploadLength;
+        }
+        else
         {
-            // An upload staged on the local disk (before AB#5561, or when staging into the store failed).
             return ValidateTusUpload(tenantId, tusFileId, out _);
         }
 
-        return staged.Value.Size == 0
+        return size == 0
             ? BadRequest(new InternalServerErrorDto(
                 $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."))
             : null;

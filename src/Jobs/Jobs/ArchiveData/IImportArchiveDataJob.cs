@@ -16,12 +16,16 @@ public interface IImportArchiveDataJob
     /// </summary>
     /// <param name="tenantId">The tenant that owns the target archive.</param>
     /// <param name="archiveRtId">Runtime id of the target <c>CkArchive</c> entity.</param>
-    /// <param name="uploadedTusFilePath">Path of the uploaded export ZIP on disk (a TUS file ID resolves to it).</param>
+    /// <param name="tusFileId">
+    ///     The tus file id of the uploaded export ZIP (AB#8736: staged in the artifact store, so any replica runs the
+    ///     job). An upload received on the local disk before AB#8736 is still found by its id; a job enqueued before
+    ///     AB#8736 carries a path instead and fails with "not found" (that file lived on the replaced pod).
+    /// </param>
     /// <param name="mode">Insert-only or upsert.</param>
     /// <param name="cancellationToken">A cancellation token to abort the job.</param>
     [DisplayName("Import archive data '{1}' of tenant '{0}'")]
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)]
-    Task Run(string tenantId, string archiveRtId, string uploadedTusFilePath,
+    Task Run(string tenantId, string archiveRtId, string tusFileId,
         ArchiveImportMode mode, IBotCancellationToken? cancellationToken);
 }

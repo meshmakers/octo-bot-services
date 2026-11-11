@@ -96,6 +96,32 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task Restore_FromASharedTusUpload_ReceivedByTwoReplicas_IsAssembledByTheJob_AndConsumed()
+    {
+        // AB#8736: the upload reached two other replicas; the job assembles it into the staged file and restores it.
+        var replicaA = new SharedUploadStore(_env.CreateReplicaStorage("a"),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SharedUploadStore>.Instance);
+        var replicaB = new SharedUploadStore(_env.CreateReplicaStorage("b"),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SharedUploadStore>.Instance);
+        var id = await replicaA.CreateAsync(Tenant, _dump.Length, null);
+        await replicaA.AppendAsync(Tenant, id, new MemoryStream(_dump[..(_dump.Length / 2)]));
+        await replicaB.AppendAsync(Tenant, id, new MemoryStream(_dump[(_dump.Length / 2)..]));
+        _files.GetTusUploadFilePath(Tenant, id).Returns(Path.Combine(_env.Directory, "no-local-upload"));
+        var restores = CaptureRestores();
+        var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,
+            null, _env.Storage,
+            sharedUploads: new SharedUploadStore(_env.Storage,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<SharedUploadStore>.Instance));
+
+        await job.Run(Tenant, "db-1", id, null, false, null, null);
+
+        await Assert.That(restores.Single().Content.SequenceEqual(_dump)).IsTrue();
+        await Assert.That(await _env.Storage.FindRestoreStagingAsync(Tenant, id)).IsNull();
+        await Assert.That(await replicaA.GetAsync(Tenant, id)).IsNull();
+        await Assert.That(Directory.EnumerateFiles(_env.ScratchDirectory).Any()).IsFalse();
+    }
+
+    [Test]
     public async Task Restore_WithoutStagedArtifact_FallsBackToTheLocalUpload()
     {
         var local = _env.WriteFile("tus02", _dump);

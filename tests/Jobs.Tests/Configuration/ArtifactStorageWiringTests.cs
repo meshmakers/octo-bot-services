@@ -97,4 +97,28 @@ public class ArtifactStorageWiringTests : IDisposable
             }, dumps))
             .Throws<InvalidOperationException>();
     }
+
+    [Test]
+    public async Task SharedUploadStore_IsRegistered_OverTheArtifactStore()
+    {
+        // AB#8736: the tus endpoint and the jobs resolve the shared upload store; it writes where the artifact store
+        // of this instance writes.
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ArtifactStorage:FileSystem:RootPath"] = Path.Combine(_directory, "artifacts")
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(ArtifactTestEnvironment.CreateProtector(
+            new Dictionary<string, byte[]> { ["k1"] = RandomNumberGenerator.GetBytes(32) }, "k1"));
+        services.AddOctoBotArtifactStorage(configuration, Path.Combine(_directory, "scratch"));
+        await using var provider = services.BuildServiceProvider();
+
+        var uploads = provider.GetRequiredService<ISharedUploadStore>();
+        var id = await uploads.CreateAsync("t1", 3, null);
+
+        var info = await provider.GetRequiredService<IBotArtifactStorage>()
+            .GetInfoAsync(ArtifactCategories.RestoreStaging, "t1", id + ".tus-info");
+        await Assert.That(info).IsNotNull();
+    }
 }

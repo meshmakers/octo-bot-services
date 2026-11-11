@@ -140,9 +140,16 @@ internal class TenantJobRoleWiringTests
         await Assert.That(code).DoesNotContain("UserTokenEnforcement");
         await Assert.That(code).DoesNotContain("ServiceTokenEnforcement");
         await Assert.That(code).Contains("BotServiceConstants.TenantJobManagementPolicy");
-        await Assert.That(code).Contains("TusUploadAuthorization.MayUpload(");
         await Assert.That(code).Contains("HangfireDashboardAccessMiddleware>(dashboardSystemTenantId)");
         await Assert.That(code).Contains("new HangfireDashboardAuthorizationFilter(dashboardSystemTenantId)");
+
+        // AB#8736: the tus endpoint is mapped by TusUploadEndpoint (shared with the replica tests), which carries the
+        // tus rule.
+        await Assert.That(code).Contains("app.MapBotTusUpload(");
+        var tusEndpoint = await File.ReadAllTextAsync(Path.Combine(RepositoryRoot(), "src", "BotServices",
+            "TusUploadEndpoint.cs"));
+        await Assert.That(Regex.Replace(tusEndpoint, @"//.*?$", string.Empty, RegexOptions.Multiline))
+            .Contains("TusUploadAuthorization.MayUpload(");
     }
 
     // tus upload
