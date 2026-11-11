@@ -144,6 +144,7 @@ try
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PosCreateTenant>();
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PosUpdateTenant>();
             c.AddBroadcastEventConsumer<TenantManagementConsumer, PreDeleteTenant>();
+            c.AddBroadcastEventConsumer<TenantManagementConsumer, PosDeleteTenant>();
 
             // AB#8445: answers the method dispatchers' discovery with an immediate announcement of the handlers below.
             c.AddCkMethodHandlerDiscovery();

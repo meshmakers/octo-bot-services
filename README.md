@@ -516,11 +516,13 @@ System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the s
 - **Restore and the operation record.** The restore replaces the tenant *database*; the record is in the system database and stays
   readable during and after it (`Jobs.IntegrationTests/RestoreOperationRecordTests`). A REST restore and a method restore of the same
   tenant use different job methods and are not serialized against each other (the same holds for the dump).
-- **Deleted tenant.** `TenantManagementConsumer` (`PreDeleteTenant`) removes the tenant's operation records through
-  `ICkMethodOperationTenantPurge` (octo-common-services); a failure is logged and does not block the delete. A restore (it
-  drops and re-attaches the tenant) and a detach send the same event; the purge therefore runs only when the tenant's
-  lifecycle record carries the `Deleting` tombstone the tenant delete writes first. A tenant without a lifecycle record keeps
-  its records until they expire.
+- **Deleted tenant.** `TenantManagementConsumer` (`PosDeleteTenant`, sent after the database drop, so a delete that fails
+  earlier keeps them) removes the tenant's operation records through `ICkMethodOperationTenantPurge` (octo-common-services); a
+  failure is logged and does not block the delete. A restore (it drops and re-attaches the tenant) and a detach send the same
+  event; the purge therefore runs only when the tenant's lifecycle record carries the `Deleting` tombstone the tenant delete
+  writes first. A tenant without a lifecycle record, or a failed purge, leaves the records to expire with the retention.
+- **Upload ids** must name one file: `BackupFileStorageService.GetTusUploadFilePath` refuses separators, `.`/`..` and paths
+  that leave the tenant's upload directory, so the upload check answers `UPLOAD_NOT_FOUND` for them.
 - **`system/v1/jobs` is deprecated** (`[OctoRestDeprecated(Wave = "BotJobs1")]` on the System API `JobsController`, link to the
   backup/restore documentation): calls are counted in `octo.rest.deprecated.calls` and OpenAPI marks the endpoints deprecated; the
   `Deprecation` / `Sunset` headers appear only when `RestDeprecation:Waves:BotJobs1:Since|Sunset` are configured. Do not set a sunset

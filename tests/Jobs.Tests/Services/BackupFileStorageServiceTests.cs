@@ -70,6 +70,38 @@ public class BackupFileStorageServiceTests
     /// <summary>
     ///     The same guard protects the dump path, which builds a per-tenant directory the same way.
     /// </summary>
+    /// <summary>
+    ///     AB#8447 review: the upload id is caller-supplied (REST body, CK method parameter, queued job argument) and
+    ///     must name one file in the tenant's own directory — never another tenant's upload or a path out of the root.
+    /// </summary>
+    [Test]
+    [Arguments("..")]
+    [Arguments(".")]
+    [Arguments("")]
+    [Arguments("   ")]
+    [Arguments("../other-tenant/abc123")]
+    [Arguments("../other-tenant/abc123.tus-info")]
+    [Arguments("..\\other-tenant\\abc123")]
+    [Arguments("sub/abc123")]
+    [Arguments("/etc/passwd")]
+    public async Task GetTusUploadFilePath_RefusesAnUploadIdThatIsNotASingleFileName(string tusFileId)
+    {
+        var service = CreateService();
+
+        await Assert.That(() => service.GetTusUploadFilePath("tenant-1", tusFileId)).Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task GetTusUploadFilePath_KeepsAPlainUploadIdWithDots()
+    {
+        var service = CreateService();
+
+        var result = service.GetTusUploadFilePath("tenant-1", "abc123.tus-info");
+
+        await Assert.That(result).IsEqualTo(
+            Path.Combine(Path.GetFullPath(TusStoragePath), "tenant-1", "abc123.tus-info"));
+    }
+
     [Test]
     public async Task GetDumpFilePath_RefusesATraversingTenantId()
     {

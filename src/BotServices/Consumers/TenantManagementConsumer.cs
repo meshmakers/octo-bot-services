@@ -14,16 +14,19 @@ namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 ///    reads an operation of the old one. A restore is not a delete and keeps the records.
 /// </summary>
 /// <remarks>
-///     <c>PreDeleteTenant</c> is not only sent for a delete: a restore drops and re-attaches the tenant
-///     (<c>TenantBackupService.RestoreTenantAsync</c>) and a detach sends it as well. The purge therefore runs only when the
-///     tenant lifecycle record carries the <see cref="TenantLifecycleState.Deleting" /> tombstone, which the tenant delete
-///     writes before it sends the event. Otherwise a restore started as a method would delete its own operation record
-///     while it runs (found in the local end-to-end check of AB#8447).
+///     The purge runs on <c>PosDeleteTenant</c>, which the tenant delete sends after the database is dropped, so a delete
+///     that fails earlier keeps the records. The event is not only sent for a delete: a restore drops and re-attaches the
+///     tenant (<c>TenantBackupService.RestoreTenantAsync</c>) and a detach sends it as well. The purge therefore runs only
+///     when the tenant lifecycle record carries the <see cref="TenantLifecycleState.Deleting" /> tombstone, which the tenant
+///     delete writes before it starts. Otherwise a restore started as a method would delete its own operation record while
+///     it runs (found in the local end-to-end check of AB#8447). A tenant without a lifecycle record, or a failed purge,
+///     leaves the records to expire with the store retention.
 /// </remarks>
 // ReSharper disable once ClassNeverInstantiated.Global
 internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
     IDistributedConsumer<PosCreateTenant>,
-    IDistributedConsumer<PreDeleteTenant>
+    IDistributedConsumer<PreDeleteTenant>,
+    IDistributedConsumer<PosDeleteTenant>
 {
     private readonly ILogger<TenantManagementConsumer> _logger;
     private readonly IOptions<OctoBotServicesOptions> _options;
@@ -71,11 +74,16 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
         return Task.CompletedTask;
     }
 
-    public async Task ConsumeAsync(IDistributedContext<PreDeleteTenant> context)
+    public Task ConsumeAsync(IDistributedContext<PreDeleteTenant> context)
+    {
+        _jobCreatorService.DeleteJobs(_options.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix,
+            context.Message.TenantId);
+        return Task.CompletedTask;
+    }
+
+    public async Task ConsumeAsync(IDistributedContext<PosDeleteTenant> context)
     {
         var tenantId = context.Message.TenantId;
-        _jobCreatorService.DeleteJobs(_options.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix,
-            tenantId);
 
         // Every replica receives the broadcast; the purge is idempotent. A failure must not block the tenant delete:
         // the records then expire with their retention (open ones are ended by the sweep first).

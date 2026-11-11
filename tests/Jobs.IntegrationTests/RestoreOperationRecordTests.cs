@@ -19,9 +19,9 @@ namespace Meshmakers.Octo.Backend.Jobs.IntegrationTests;
 /// <summary>
 ///     AB#8447 (F3.6), against a real MongoDB replica set: the operation record of a restore lives in the system database
 ///     (<c>MethodOperations</c>), so it stays readable while and after the tenant database is replaced (dropped and
-///     restored, which is what <c>mongorestore --drop</c> does to every collection) — including the <c>PreDeleteTenant</c>
+///     restored, which is what <c>mongorestore --drop</c> does to every collection) — including the <c>PosDeleteTenant</c>
 ///     the restore sends when it drops and re-attaches the tenant; and a deleted tenant (Deleting tombstone) takes its
-///     records with it (<c>PreDeleteTenant</c> through the real <see cref="TenantManagementConsumer" /> and the real
+///     records with it (<c>PosDeleteTenant</c> through the real <see cref="TenantManagementConsumer" /> and the real
 ///     MongoDB store), while another tenant keeps its own.
 /// </summary>
 [NotInParallel]
@@ -67,10 +67,10 @@ public class RestoreOperationRecordTests
         lifecycle.GetAsync(tenantId, Arg.Any<CancellationToken>()).Returns(_ => lifecycleRecord);
         var consumer = new TenantManagementConsumer(NullLogger<TenantManagementConsumer>.Instance,
             Options.Create(new OctoBotServicesOptions()), new NoJobs(), store, lifecycle);
-        var context = Substitute.For<IDistributedContext<PreDeleteTenant>>();
-        context.Message.Returns(new PreDeleteTenant(tenantId, Guid.NewGuid(), DateTime.UtcNow));
+        var context = Substitute.For<IDistributedContext<PosDeleteTenant>>();
+        context.Message.Returns(new PosDeleteTenant(tenantId, Guid.NewGuid(), DateTime.UtcNow));
 
-        // The restore drops the tenant (PreDeleteTenant, no tombstone) and replaces the tenant database.
+        // The restore drops the tenant (PosDeleteTenant after the drop, no tombstone) and replaces the tenant database.
         await consumer.ConsumeAsync(context);
         await client.DropDatabaseAsync(tenantId);
         await tenantDatabase.GetCollection<BsonDocument>("RtEntities").InsertOneAsync(new BsonDocument("name", "after"));
