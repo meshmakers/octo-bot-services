@@ -73,8 +73,11 @@ public static class ArchiveSchemaMatcher
         IReadOnlyList<ArchiveColumnDto>? targetColumns,
         string targetName)
     {
-        var source = sourceColumns ?? Array.Empty<ArchiveColumnDto>();
-        var target = targetColumns ?? Array.Empty<ArchiveColumnDto>();
+        // AB#8737: computed columns are not part of the comparison. An export taken before AB#8737 lists each of
+        // them as a column with an empty path (two of them were reported as a duplicate column ''); they are
+        // left out on both sides, because the import evaluates computed columns again with the target's formulas.
+        var source = (sourceColumns ?? Array.Empty<ArchiveColumnDto>()).Where(HasPath).ToList();
+        var target = (targetColumns ?? Array.Empty<ArchiveColumnDto>()).Where(HasPath).ToList();
 
         var sourceByPath = new Dictionary<string, ArchiveColumnDto>(StringComparer.Ordinal);
         foreach (var column in source)
@@ -140,6 +143,11 @@ public static class ArchiveSchemaMatcher
         }
 
         return null;
+    }
+
+    private static bool HasPath(ArchiveColumnDto column)
+    {
+        return !string.IsNullOrEmpty(column.Path);
     }
 
     private static string? FindRollupMismatch(

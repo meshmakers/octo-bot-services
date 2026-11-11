@@ -20,6 +20,7 @@ public static class ArchiveSchemaMapper
     ///     Projects the parts of <paramref name="snapshot"/> the export/import flow needs onto an
     ///     <see cref="ArchiveSchemaDto"/>. <c>kind</c> is <c>rollup</c> when the snapshot carries
     ///     rollup aggregations, <c>timeRange</c> when it is a time-range archive, otherwise <c>raw</c>.
+    ///     <para>Computed columns are left out (AB#8737): they follow the target archive on import.</para>
     /// </summary>
     public static ArchiveSchemaDto ToDto(ArchiveSnapshot snapshot)
     {
@@ -29,7 +30,11 @@ public static class ArchiveSchemaMapper
             : snapshot.IsTimeRange ? "timeRange"
             : "raw";
 
+        // AB#8737: a computed column has no path (it is named by Name and derived by its Formula), and the
+        // engine's import evaluates it again from the stored columns. The metadata lists only the stored columns;
+        // before, a computed column appeared as a column with an empty path.
         var columns = snapshot.Columns
+            .Where(c => !c.IsComputed)
             .Select(c => new ArchiveColumnDto(c.Path, c.Indexed, c.Required))
             .ToList();
 

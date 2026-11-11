@@ -239,4 +239,24 @@ public class ArchiveSchemaMatcherTests
 
         await Assert.That(result).IsNull();
     }
+
+    /// <summary>
+    ///     AB#8737: an export taken before AB#8737 lists every computed column with an empty path. Those entries are
+    ///     not compared, also when there are two of them (before: "declares column '' more than once").
+    /// </summary>
+    [Test]
+    public async Task FindMismatch_PathlessComputedColumnsOfAnOlderExport_AreIgnored()
+    {
+        var source = Raw(columns: new[]
+        {
+            new ArchiveColumnDto("voltage", true, false),
+            new ArchiveColumnDto("current", false, false),
+            new ArchiveColumnDto(string.Empty, false, false),
+            new ArchiveColumnDto(string.Empty, false, false)
+        });
+
+        var result = ArchiveSchemaMatcher.FindMismatch(source, Raw());
+
+        await Assert.That(result).IsNull();
+    }
 }

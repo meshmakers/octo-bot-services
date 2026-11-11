@@ -124,6 +124,60 @@ public class ImportArchiveDataJobTests
         }
     }
 
+    private static CkArchiveColumnSpec[] NetColumns(string formula) =>
+    [
+        new("importedenergy", false, false),
+        new("exportedenergy", false, false),
+        new(string.Empty, false, false) { Name = "net", Formula = formula }
+    ];
+
+    /// <summary>
+    ///     AB#8737: an export of an archive with a computed column imports into the same definition; the rows go to
+    ///     the engine, which evaluates the computed column again.
+    /// </summary>
+    [Test]
+    public async Task Run_ArchiveWithComputedColumn_ImportsItsOwnExport()
+    {
+        var snapshot = Snapshot(columns: NetColumns("importedenergy - exportedenergy"));
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(snapshot)), "{\"rtid\":\"61a\"}\n");
+        try
+        {
+            await CreateJob(snapshot).Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null);
+
+            await _repository.Received(1).ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                EngineArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    ///     AB#8737 decision: computed columns follow the target archive. A source whose computed column has another
+    ///     formula (or none at all) imports; the engine evaluates the target's formula.
+    /// </summary>
+    [Test]
+    public async Task Run_ComputedColumnsDiffer_ImportsWithTheTargetsFormula()
+    {
+        var source = Snapshot(columns: NetColumns("exportedenergy - importedenergy"));
+        var target = Snapshot(columns: NetColumns("importedenergy - exportedenergy"));
+        var path = WriteZip(Metadata(ArchiveSchemaMapper.ToDto(source)), "{\"rtid\":\"61a\"}\n");
+        try
+        {
+            await CreateJob(target).Run("tenant-1", ArchiveRtId, path, ArchiveImportMode.InsertOnly, null);
+
+            await _repository.Received(1).ImportRowsAsync(Arg.Any<OctoObjectId>(),
+                Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                EngineArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     [Test]
     public async Task Run_SchemaMismatch_FailsWithFieldLevelMessageAndDeletesFile()
     {
