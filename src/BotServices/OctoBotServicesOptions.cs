@@ -77,7 +77,8 @@ public class OctoBotServicesOptions
     public LogLevelDto MinLogLevel { get; set; }
 
     /// <summary>
-    /// Gets or sets the storage path for tus resumable uploads.
+    /// Gets or sets the local directory of tus uploads received before AB#8736. New uploads are stored in the artifact
+    /// store (shared by all replicas); this directory is still read for older uploads and emptied by the hourly cleanup.
     /// </summary>
     public string TusStoragePath { get; set; } = Path.Combine(Path.GetTempPath(), "octo-bot", "tus-uploads");
 

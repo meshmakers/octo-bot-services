@@ -95,13 +95,14 @@ public class JobsController : JobsControllerBase
     /// <param name="tenantAccessGuard">Authorizes a job instance against its tenant (AB#5070).</param>
     /// <param name="distributedCache">Backing store of the legacy GridFS artifact fallback.</param>
     /// <param name="artifactStorage">Artifact store of tenant dumps and staged restore uploads (AB#5561).</param>
+    /// <param name="sharedUploads">The tus uploads in the artifact store (AB#8736).</param>
     /// <param name="logger">Logger.</param>
     public JobsController(IBackgroundJobClient backgroundJobClient, IBackupFileStorageService backupFileStorage,
         IJobStorageAccessor jobStorage, IJobTenantAccessGuard tenantAccessGuard,
         IDistributedCacheService distributedCache, IBotArtifactStorage artifactStorage,
-        ILogger<JobsControllerBase> logger)
+        ISharedUploadStore sharedUploads, ILogger<JobsControllerBase> logger)
         : base(backgroundJobClient, backupFileStorage, jobStorage, tenantAccessGuard, distributedCache,
-            artifactStorage, logger)
+            artifactStorage, sharedUploads, logger)
     {
     }
 
@@ -199,7 +200,7 @@ public class JobsController : JobsControllerBase
 
     /// <summary>
     ///     Imports archive data rows into the given archive from a tus resumable upload (AB#4230). The
-    ///     export ZIP must have been uploaded via the tus endpoint at <c>/system/v1/tus-upload</c> first.
+    ///     export ZIP must have been uploaded via the tus endpoint at <c>{tenantId}/v1/tus-upload</c> first.
     ///     Schema-match validation runs inside the job; on mismatch the job ends Failed with a
     ///     field-level reason surfaced through <c>system/v1/jobs/{id}</c>.
     /// </summary>
@@ -214,13 +215,13 @@ public class JobsController : JobsControllerBase
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult ImportArchiveDataFromUpload(
+    public Task<IActionResult> ImportArchiveDataFromUpload(
         [FromRoute] [Required] string tenantId,
         [Required] string tusFileId,
         [Required] string archiveRtId,
         [FromQuery] ArchiveImportMode mode = ArchiveImportMode.InsertOnly)
     {
-        return EnqueueImportArchiveDataFromUpload(tusFileId, tenantId, archiveRtId, mode);
+        return EnqueueImportArchiveDataFromUploadAsync(tusFileId, tenantId, archiveRtId, mode);
     }
 
     /// <summary>

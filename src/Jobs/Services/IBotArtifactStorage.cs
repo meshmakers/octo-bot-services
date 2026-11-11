@@ -195,6 +195,28 @@ public interface IBotArtifactStorage
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    ///     Lists the artifacts of <paramref name="tenantId" /> in <paramref name="category" /> whose stored file name
+    ///     starts with <paramref name="fileNamePrefix" /> (AB#8736: the parts of a shared tus upload).
+    /// </summary>
+    /// <param name="category">One of <see cref="ArtifactCategories" /> with flat keys.</param>
+    /// <param name="tenantId">The tenant.</param>
+    /// <param name="fileNamePrefix">Plain prefix of the stored file name (may be a partial segment).</param>
+    /// <param name="cancellationToken">Cancellation.</param>
+    IAsyncEnumerable<StoredArtifactEntry> ListAsync(string category, string tenantId, string fileNamePrefix,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Opens a stored artifact for reading, driven by its stored name only: a name ending with <c>.octoenc</c> is
+    ///     decrypted on the fly (same guarantees as <see cref="OpenPlainReadAsync" />), any other name is returned byte
+    ///     for byte. Unlike <see cref="OpenPlainReadAsync" /> the content is never sniffed, so a plain artifact that
+    ///     happens to start with the <c>OCTOENC1</c> magic (an uploaded encrypted dump) is not touched. The caller
+    ///     disposes the stream.
+    /// </summary>
+    /// <returns><c>null</c> when the artifact does not exist.</returns>
+    Task<Stream?> OpenStoredReadAsync(string category, string tenantId, string fileName,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     ///     Lists the objects of one run in the copy staging area
     ///     (<c>&lt;category copy-staging&gt;/&lt;tenantId&gt;/&lt;runId&gt;/…</c>), the paths relative to the run folder.
     /// </summary>
@@ -229,6 +251,14 @@ public interface IBotArtifactStorage
     Task<IReadOnlyList<ArtifactNestedKeyParts>> DeleteOlderThanNestedAsync(string category, TimeSpan maxAge,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+///     An artifact found by <see cref="IBotArtifactStorage.ListAsync" />.
+/// </summary>
+/// <param name="FileName">The stored file name (with <c>.octoenc</c> when encrypted).</param>
+/// <param name="Size">Stored size in bytes (ciphertext size when encrypted).</param>
+/// <param name="CreatedAt">When the artifact was written.</param>
+public sealed record StoredArtifactEntry(string FileName, long Size, DateTimeOffset CreatedAt);
 
 /// <summary>
 ///     An object of a run in the copy staging area.

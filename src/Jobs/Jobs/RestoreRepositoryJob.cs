@@ -27,7 +27,8 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// values of an unknown key id become "not set" and are reported for re-entry, older plaintext is encrypted.
 /// AB#5561: the staged upload is read from the artifact store (<c>restore-staging/&lt;tenant&gt;/&lt;uploadId&gt;</c>,
 /// plain or <c>.octoenc</c>) into the local scratch directory, decrypted when needed; an upload staged on the local
-/// disk before AB#5561 (or when staging into the store failed) is still restored from there.
+/// disk before AB#5561 (or when staging into the store failed) is still restored from there. AB#8736: a tus upload in the
+/// shared store (any replica received it) is assembled into the staged file by the job itself.
 /// AB#5967: a format 2 container (the files of the native archive copy) is read as a stream - the mongodump blob goes to the
 /// scratch directory, the archive files are copied byte for byte into the <c>copy-staging</c> area and loaded by the data store
 /// itself (<c>COPY FROM</c>); see <c>RestoreRepositoryJob.Native.cs</c>. After the archives, the rollups are validated and
@@ -41,7 +42,8 @@ public partial class RestoreRepositoryJob(
     IBotArtifactStorage? artifactStorage = null,
     IArchiveCopyStagingLocationFactory? stagingFactory = null,
     TimeProvider? timeProvider = null,
-    IStreamDataRepositoryFactory? streamDataFactory = null) : IRestoreRepositoryJob
+    IStreamDataRepositoryFactory? streamDataFactory = null,
+    ISharedUploadStore? sharedUploads = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -68,9 +70,13 @@ public partial class RestoreRepositoryJob(
                 return null;
             }
 
-            var staged = artifactStorage == null
-                ? null
-                : await artifactStorage.FindRestoreStagingAsync(tenantId, cacheKey, ct);
+            // AB#8736: a tus upload in the shared store is assembled into its staged file here, in the job, on
+            // whichever replica runs it (never inside the upload request).
+            var staged = sharedUploads != null
+                ? await sharedUploads.EnsureStagedAsync(tenantId, cacheKey, ct)
+                : artifactStorage == null
+                    ? null
+                    : await artifactStorage.FindRestoreStagingAsync(tenantId, cacheKey, ct);
             if (staged != null)
             {
                 stagedFileName = staged.Value.FileName;
@@ -189,6 +195,30 @@ public partial class RestoreRepositoryJob(
             {
                 await DeleteStagedUploadAsync(tenantId, stagedFileName);
             }
+
+            await DeleteSharedUploadAsync(tenantId, cacheKey);
+        }
+    }
+
+    /// <summary>
+    ///     The tus upload in the shared store (AB#8736) is consumed by the restore attempt too, also when it was never
+    ///     completed; the retention removes it otherwise.
+    /// </summary>
+    private async Task DeleteSharedUploadAsync(string tenantId, string uploadId)
+    {
+        if (sharedUploads == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await sharedUploads.DeleteAsync(tenantId, uploadId);
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Could not delete the parts of upload '{UploadId}' of tenant '{TenantId}'", uploadId,
+                tenantId);
         }
     }
 

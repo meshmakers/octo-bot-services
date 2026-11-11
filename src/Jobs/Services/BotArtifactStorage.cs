@@ -552,6 +552,32 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     }
 
     /// <inheritdoc />
+    public async IAsyncEnumerable<StoredArtifactEntry> ListAsync(string category, string tenantId,
+        string fileNamePrefix, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var tenantPrefix = _keys.TenantPrefix(category, tenantId);
+        var prefix = tenantPrefix + fileNamePrefix;
+        ArtifactKey.ValidatePrefix(prefix, nameof(fileNamePrefix));
+        await foreach (var info in GetStore(category).ListAsync(prefix, cancellationToken))
+        {
+            var fileName = info.Key[tenantPrefix.Length..];
+            if (ArtifactKey.IsValidSegment(fileName))
+            {
+                yield return new StoredArtifactEntry(fileName, info.Size, info.CreatedAt);
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<Stream?> OpenStoredReadAsync(string category, string tenantId, string fileName,
+        CancellationToken cancellationToken = default)
+    {
+        return fileName.EndsWith(SecretFileFormat.FileExtension, StringComparison.Ordinal)
+            ? OpenPlainReadAsync(category, tenantId, fileName, cancellationToken)
+            : GetStore(category).OpenReadAsync(_keys.Build(category, tenantId, fileName), cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async IAsyncEnumerable<StagingObject> ListStagingAsync(string tenantId, string runId,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {

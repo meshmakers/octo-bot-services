@@ -29,40 +29,102 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
     private readonly ILogger<ImportArchiveDataJob> _logger;
     private readonly ISystemContext _systemContext;
     private readonly IBackupFileStorageService _backupFileStorage;
+    private readonly IBotArtifactStorage _artifactStorage;
+    private readonly ISharedUploadStore _sharedUploads;
 
     /// <summary>
     ///     Constructor.
     /// </summary>
+    /// <param name="logger">Logger.</param>
+    /// <param name="systemContext">Access to the tenant contexts.</param>
+    /// <param name="backupFileStorage">Local tus directory (uploads received before AB#8736).</param>
+    /// <param name="artifactStorage">The artifact store (staged files and the scratch directory, AB#8736).</param>
+    /// <param name="sharedUploads">The tus uploads in the artifact store (AB#8736).</param>
     public ImportArchiveDataJob(
         ILogger<ImportArchiveDataJob> logger,
         ISystemContext systemContext,
-        IBackupFileStorageService backupFileStorage)
+        IBackupFileStorageService backupFileStorage,
+        IBotArtifactStorage artifactStorage,
+        ISharedUploadStore sharedUploads)
     {
         _logger = logger;
         _systemContext = systemContext;
         _backupFileStorage = backupFileStorage;
+        _artifactStorage = artifactStorage;
+        _sharedUploads = sharedUploads;
     }
 
     /// <inheritdoc />
-    public async Task Run(string tenantId, string archiveRtId, string uploadedTusFilePath,
+    public async Task Run(string tenantId, string archiveRtId, string tusFileId,
         ArchiveImportMode mode, IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        string? stagedFileName = null;
+        string? scratchPath = null;
+        string? localUploadPath = null;
 
         try
         {
-            if (!File.Exists(uploadedTusFilePath))
+            // AB#8736: the upload is in the artifact store, so this replica need not be the one that received it. The
+            // ZIP reader needs a seekable file: the plaintext goes to the scratch directory. Order: a staged file
+            // (restore-staging/<tenant>/<id>[.octoenc]), the parts of a complete tus upload, a file received on the
+            // local disk before AB#8736.
+            string uploadPath;
+            var staged = await _sharedUploads.FindStagedAsync(tenantId, tusFileId, ct);
+            if (staged != null)
             {
-                throw new JobFailedException(
-                    $"Uploaded archive data file not found at '{uploadedTusFilePath}'. " +
-                    "The upload may not have completed successfully.");
+                stagedFileName = staged.Value.FileName;
+                scratchPath = _artifactStorage.CreateScratchFilePath(".archive-import.zip");
+                _logger.LogInformation(
+                    "Reading staged upload '{FileName}' of tenant '{TenantId}' from the artifact store",
+                    stagedFileName, tenantId);
+                if (!await _artifactStorage.TryWritePlainToFileAsync(SharedUploadStore.Category, tenantId,
+                        stagedFileName, scratchPath, ct))
+                {
+                    throw new JobFailedException(
+                        $"The staged upload for tus file ID '{tusFileId}' disappeared from the artifact store " +
+                        "(expired?). Upload the archive data file again.");
+                }
+
+                uploadPath = scratchPath;
+            }
+            else if (await _sharedUploads.IsCompleteAsync(tenantId, tusFileId, ct))
+            {
+                scratchPath = _artifactStorage.CreateScratchFilePath(".archive-import.zip");
+                _logger.LogInformation(
+                    "Reading upload '{UploadId}' of tenant '{TenantId}' from the artifact store", tusFileId, tenantId);
+                await using (var scratch = OwnerOnlyFiles.CreateNew(scratchPath))
+                {
+                    if (!await _sharedUploads.TryCopyCompleteUploadAsync(tenantId, tusFileId, scratch, ct))
+                    {
+                        throw new JobFailedException(
+                            $"The upload for tus file ID '{tusFileId}' disappeared from the artifact store " +
+                            "(expired?). Upload the archive data file again.");
+                    }
+                }
+
+                uploadPath = scratchPath;
+            }
+            else
+            {
+                localUploadPath = ResolveLocalUpload(tenantId, tusFileId);
+                if (localUploadPath == null || !File.Exists(localUploadPath))
+                {
+                    throw new JobFailedException(Path.IsPathRooted(tusFileId)
+                        ? $"The job was queued before AB#8736 with the local upload path '{tusFileId}', and the file " +
+                          "is not on this replica (it was received by another pod). Upload the archive data file again."
+                        : $"Uploaded archive data file not found for tus file ID '{tusFileId}', or the upload is not " +
+                          "complete.");
+                }
+
+                uploadPath = localUploadPath;
             }
 
-            var fileInfo = new FileInfo(uploadedTusFilePath);
+            var fileInfo = new FileInfo(uploadPath);
             if (fileInfo.Length == 0)
             {
                 throw new JobFailedException(
-                    $"Uploaded archive data file at '{uploadedTusFilePath}' is empty (0 bytes). " +
+                    $"Uploaded archive data file for tus file ID '{tusFileId}' is empty (0 bytes). " +
                     "The upload may not have completed successfully.");
             }
 
@@ -79,7 +141,7 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
 
             // 1. Open the ZIP and read metadata.json.
             await using var zipFileStream =
-                new FileStream(uploadedTusFilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                new FileStream(uploadPath, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var archive = new ZipArchive(zipFileStream, ZipArchiveMode.Read);
 
             var metadata = await ReadMetadataAsync(archive, ct);
@@ -177,7 +239,93 @@ public sealed class ImportArchiveDataJob : IImportArchiveDataJob
         }
         finally
         {
-            await _backupFileStorage.DeleteFileAsync(uploadedTusFilePath);
+            // The staged upload is consumed by this run, whether it succeeded or failed (like the restore).
+            await CleanUpAsync(tenantId, tusFileId, stagedFileName, scratchPath, localUploadPath);
+        }
+    }
+
+    /// <summary>
+    ///     The path of an upload received on the local disk before AB#8736, or <c>null</c> when the id cannot name one
+    ///     (it must stay a single file name inside the tenant's tus directory). A job queued before AB#8736 carries the
+    ///     full path the old producer resolved; it is accepted only when it is exactly the tus file of that tenant.
+    /// </summary>
+    private string? ResolveLocalUpload(string tenantId, string tusFileId)
+    {
+        if (!string.IsNullOrWhiteSpace(tusFileId) && Path.IsPathRooted(tusFileId))
+        {
+            return ResolveLegacyQueuedPath(tenantId, tusFileId);
+        }
+
+        if (string.IsNullOrWhiteSpace(tusFileId) || tusFileId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+            tusFileId.Contains(Path.DirectorySeparatorChar) || tusFileId.Contains(Path.AltDirectorySeparatorChar) ||
+            tusFileId is "." or "..")
+        {
+            return null;
+        }
+
+        try
+        {
+            return _backupFileStorage.GetTusUploadFilePath(tenantId, tusFileId);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private string? ResolveLegacyQueuedPath(string tenantId, string queuedPath)
+    {
+        var fileName = Path.GetFileName(queuedPath);
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return null;
+        }
+
+        try
+        {
+            var expected = Path.GetFullPath(_backupFileStorage.GetTusUploadFilePath(tenantId, fileName));
+            return string.Equals(Path.GetFullPath(queuedPath), expected, StringComparison.Ordinal) ? expected : null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private async Task CleanUpAsync(string tenantId, string tusFileId, string? stagedFileName, string? scratchPath,
+        string? localUploadPath)
+    {
+        _artifactStorage.DeleteScratchFile(scratchPath);
+
+        if (stagedFileName != null)
+        {
+            try
+            {
+                await _artifactStorage.DeleteAsync(SharedUploadStore.Category, tenantId, stagedFileName);
+            }
+            catch (Exception e)
+            {
+                // It expires with the retention of the category.
+                _logger.LogWarning(e, "Could not delete the staged upload '{FileName}' of tenant '{TenantId}'",
+                    stagedFileName, tenantId);
+            }
+        }
+
+        try
+        {
+            // The tus upload itself (description and parts), complete or not.
+            await _sharedUploads.DeleteAsync(tenantId, tusFileId);
+        }
+        catch (Exception e)
+        {
+            // They expire with the retention of the category.
+            _logger.LogWarning(e, "Could not delete the parts of upload '{UploadId}' of tenant '{TenantId}'",
+                tusFileId, tenantId);
+        }
+
+        if (localUploadPath != null)
+        {
+            await _backupFileStorage.DeleteFileAsync(localUploadPath);
         }
     }
 

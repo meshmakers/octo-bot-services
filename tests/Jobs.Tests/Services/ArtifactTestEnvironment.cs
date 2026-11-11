@@ -57,6 +57,16 @@ internal sealed class ArtifactTestEnvironment : IDisposable
     }
 
     /// <summary>
+    ///     The view of one more bot replica (AB#8736): its own store client over the same root, its own scratch
+    ///     directory, the same key ring.
+    /// </summary>
+    public BotArtifactStorage CreateReplicaStorage(string replicaName)
+    {
+        return new BotArtifactStorage(new FileSystemArtifactStore(StoreRoot), Keys, Protector,
+            Path.Combine(Directory, $"scratch-{replicaName}"), NullLogger<BotArtifactStorage>.Instance);
+    }
+
+    /// <summary>
     ///     The engine's file protector over <paramref name="ring" /> with <paramref name="activeKeyId" />.
     /// </summary>
     public static ISecretFileProtector CreateProtector(IReadOnlyDictionary<string, byte[]> ring, string? activeKeyId)

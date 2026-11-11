@@ -75,14 +75,38 @@ internal sealed class JobsApiTestHost : IDisposable
     ///     A real file system artifact store with a generated key ring (AB#5561): tenant dumps and staged restore
     ///     uploads a test puts there are served by the real download / restore-validation code.
     /// </summary>
-    public ArtifactTestEnvironment Artifacts { get; } = new("k1");
+    public ArtifactTestEnvironment Artifacts { get; private init; } = null!;
+
+    /// <summary>
+    ///     False when <see cref="Artifacts" /> belongs to another host (a second replica, AB#8736) and is not disposed
+    ///     with this one.
+    /// </summary>
+    private bool _ownsArtifacts = true;
+
+    /// <summary>
+    ///     False for a replica host (AB#8736): the local tus directory of this host holds no file, so a request can only
+    ///     succeed through the artifact store.
+    /// </summary>
+    private bool _localTusFile = true;
+
+    /// <summary>This host's view of the artifact store (its own scratch directory, the shared store root).</summary>
+    public BotArtifactStorage Storage => _replicaStorage ?? Artifacts.Storage;
+
+    private BotArtifactStorage? _replicaStorage;
+
+    /// <summary>The shared upload store of this host (AB#8736).</summary>
+    public ISharedUploadStore SharedUploads { get; private set; } = null!;
 
     public void Dispose()
     {
         _client.Dispose();
         _app.StopAsync().GetAwaiter().GetResult();
         ((IDisposable)_app).Dispose();
-        Artifacts.Dispose();
+        if (_ownsArtifacts)
+        {
+            Artifacts.Dispose();
+        }
+
         if (File.Exists(_tusFilePath))
         {
             File.Delete(_tusFilePath);
@@ -91,9 +115,29 @@ internal sealed class JobsApiTestHost : IDisposable
 
     public static async Task<JobsApiTestHost> StartAsync(Action<TenantAuthorizationOptions>? configure = null)
     {
-        var fixture = new JobsApiTestHost();
+        var fixture = new JobsApiTestHost { Artifacts = new ArtifactTestEnvironment("k1") };
         await fixture.InitializeAsync(configure);
         return fixture;
+    }
+
+    /// <summary>
+    ///     A host that plays one bot replica (AB#8736): its own process state (artifact store client, scratch
+    ///     directory, tus file locks) over the artifact store of <paramref name="artifacts" />, which all replicas
+    ///     share, and nothing in its local tus directory.
+    /// </summary>
+    public static async Task<JobsApiTestHost> StartReplicaAsync(ArtifactTestEnvironment artifacts, string replicaName)
+    {
+        var fixture = new JobsApiTestHost { Artifacts = artifacts, _ownsArtifacts = false, _localTusFile = false };
+        fixture._replicaStorage = artifacts.CreateReplicaStorage(replicaName);
+        await fixture.InitializeAsync(null);
+        return fixture;
+    }
+
+    /// <summary>Sends <paramref name="request" /> with the bearer token <paramref name="token" />.</summary>
+    public Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, string token)
+    {
+        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
+        return _client.SendAsync(request);
     }
 
     /// <summary>The user name carried by the user tokens (<c>name</c> claim).</summary>
@@ -258,7 +302,13 @@ internal sealed class JobsApiTestHost : IDisposable
         // A real, non-empty file: both upload-consuming operations verify the staged upload
         // before enqueuing, and a missing file would answer 404 for reasons unrelated to the gate.
         _tusFilePath = Path.Combine(Path.GetTempPath(), $"octo-bot-tus-{Guid.NewGuid():N}.tmp");
-        await File.WriteAllTextAsync(_tusFilePath, "backup");
+        if (_localTusFile)
+        {
+            await File.WriteAllTextAsync(_tusFilePath, "backup");
+        }
+
+        SharedUploads = new SharedUploadStore(Storage,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SharedUploadStore>.Instance);
 
         _backgroundJobClient = Substitute.For<IBackgroundJobClient>();
         _backgroundJobClient.Create(Arg.Any<Job>(), Arg.Any<IState>()).Returns("job-1");
@@ -285,7 +335,9 @@ internal sealed class JobsApiTestHost : IDisposable
 
         builder.Services.AddSingleton(_backgroundJobClient);
         builder.Services.AddSingleton(backupFileStorage);
-        builder.Services.AddSingleton<IBotArtifactStorage>(Artifacts.Storage);
+        builder.Services.AddSingleton<IBotArtifactStorage>(Storage);
+        // AB#8736: the real shared upload store over the same artifact store.
+        builder.Services.AddSingleton(SharedUploads);
         builder.Services.AddSingleton(DistributedCache);
         builder.Services.AddSingleton(hierarchy);
         builder.Services.AddSingleton(_jobStorage);
@@ -332,6 +384,8 @@ internal sealed class JobsApiTestHost : IDisposable
         _app.UseAuthorization();
         _app.UseOctoTenantAuthorization();
         _app.MapControllers();
+        // AB#8736: the tus endpoint exactly as Program.cs maps it.
+        _app.MapBotTusUpload(SharedUploads, long.MaxValue);
 
         await _app.StartAsync();
         _client = _app.GetTestClient();

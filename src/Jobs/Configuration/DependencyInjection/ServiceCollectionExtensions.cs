@@ -170,6 +170,10 @@ public static class ServiceCollectionExtensions
                 scratchPath, loggerFactory.CreateLogger<BotArtifactStorage>(), presweepStore);
         });
 
+        // AB#8736: the tus uploads live in the artifact store too, so every replica serves every request of an
+        // upload and every replica can run the job that consumes it.
+        services.AddSingleton<ISharedUploadStore, SharedUploadStore>();
+
         // AB#5559: plaintext scratch dumps of a crashed process are removed at startup, not only hours later.
         services.AddHostedService<StaleScratchCleanupHostedService>();
 
