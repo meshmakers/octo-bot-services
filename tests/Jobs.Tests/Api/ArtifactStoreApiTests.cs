@@ -90,6 +90,44 @@ public class ArtifactStoreApiTests
         await Assert.That(host.LastEnqueuedJob().Type).IsEqualTo(typeof(IRestoreRepositoryJob));
     }
 
+    [Test]
+    public async Task RestoreFromUpload_WithoutOverride_EnqueuesTheRunSignatureOlderWorkersKnow()
+    {
+        // AB#8672: during a rolling update an older worker only knows the Run overload without the override.
+        using var host = await JobsApiTestHost.StartAsync();
+        await host.Artifacts.Storage.StoreFileAsync(ArtifactCategories.RestoreStaging, Child, "plainupload",
+            host.Artifacts.WriteFile("plain", [1, 2, 3]), ArtifactEncryption.IfConfigured);
+
+        var response = await host.PostAsync(
+            $"/{Child}/v1/jobs/restore-from-upload?tusFileId=plainupload&databaseName=db1",
+            JobsApiTestHost.UserToken(Child));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var job = host.LastEnqueuedJob();
+        await Assert.That(job.Method.GetParameters().Length).IsEqualTo(7);
+        await Assert.That(job.Method.GetParameters().Any(p => p.Name == "overrideForeignOwnership")).IsFalse();
+    }
+
+    [Test]
+    public async Task RestoreFromUpload_WithOverride_EnqueuesTheOverrideSignature()
+    {
+        using var host = await JobsApiTestHost.StartAsync();
+        await host.Artifacts.Storage.StoreFileAsync(ArtifactCategories.RestoreStaging, Child, "overrideupload",
+            host.Artifacts.WriteFile("override", [1, 2, 3]), ArtifactEncryption.IfConfigured);
+
+        var response = await host.PostAsync(
+            $"/{Child}/v1/jobs/restore-from-upload?tusFileId=overrideupload&databaseName=db1&overrideForeignOwnership=true",
+            JobsApiTestHost.UserToken(Child));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var job = host.LastEnqueuedJob();
+        var parameters = job.Method.GetParameters();
+        await Assert.That(parameters.Length).IsEqualTo(8);
+        var overrideIndex = Array.FindIndex(parameters, p => p.Name == "overrideForeignOwnership");
+        await Assert.That(overrideIndex).IsGreaterThanOrEqualTo(0);
+        await Assert.That((bool)job.Args[overrideIndex]!).IsTrue();
+    }
+
     private static async Task SeedDumpJobAsync(JobsApiTestHost host, string tenantId, string result)
     {
         var response = await host.PostAsync($"/{tenantId}/v1/jobs/dump-repository",
