@@ -47,9 +47,10 @@ public interface IRestoreRepositoryJob
     /// <param name="oldDatabaseName">The database name the backup was taken from, when it differs</param>
     /// <param name="restoreArchiveData">See the overload above.</param>
     /// <param name="overrideForeignOwnership">
-    /// When <c>true</c>, the restore overwrites a tenant database that belongs to another OctoMesh instance on the
-    /// same MongoDB server instead of refusing it; the override is logged as a warning naming the owner. Another
-    /// instance's system database is never overwritten.
+    /// When <c>true</c>, the restore overwrites a tenant database that records another OctoMesh instance on the
+    /// same MongoDB server as its owner while no instance registers it any more, instead of refusing it; the
+    /// override is logged as a warning naming the owner. A database another instance still registers, and another
+    /// instance's system database, are refused even with the override.
     /// </param>
     /// <param name="performContext">Supplied by Hangfire (pass <c>null</c>).</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
