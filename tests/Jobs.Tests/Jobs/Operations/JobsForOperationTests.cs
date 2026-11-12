@@ -236,8 +236,11 @@ public class JobsForOperationTests
 
     // ---- helpers ----
 
+    // The classic signature is the overload with the fewest parameters (the restore job also has a Run overload that
+    // takes the ownership override, AB#8672).
     private static Type[] Parameters<T>(string name) =>
-        typeof(T).GetMethod(name)!.GetParameters().Select(p => p.ParameterType).ToArray();
+        typeof(T).GetMethods().Where(m => m.Name == name).OrderBy(m => m.GetParameters().Length).First()
+            .GetParameters().Select(p => p.ParameterType).ToArray();
 
     private RestoreRepositoryJob RestoreJob() =>
         new(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext,

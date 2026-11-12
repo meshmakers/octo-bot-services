@@ -130,7 +130,7 @@ public abstract class JobsControllerBase : ControllerBase
     ///     Enqueues the repository restore of <paramref name="tenantId" /> from a completed tus upload.
     /// </summary>
     protected async Task<IActionResult> EnqueueRestoreFromUploadAsync(string tusFileId, string tenantId,
-        string databaseName, string? oldDatabaseName, bool restoreArchiveData)
+        string databaseName, string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership = false)
     {
         try
         {
@@ -141,9 +141,15 @@ public abstract class JobsControllerBase : ControllerBase
                 return uploadCheck;
             }
 
-            var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, null,
-                    BotCancellationToken.Null));
+            // A restore without the override is enqueued with the Run signature from before AB#8672, so a worker
+            // that does not know the override overload yet (rolling update) can still run it.
+            var id = overrideForeignOwnership
+                ? _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
+                    job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+                        true, null, BotCancellationToken.Null))
+                : _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
+                    job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+                        null, BotCancellationToken.Null));
 
             RecordStarter(id, tenantId);
             return Ok(new JobResponseDto(id));

@@ -232,7 +232,7 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
         long scratchBytes = -1;
         var scratchFiles = 0;
         _systemContext.RestoreTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
-                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>())
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>(), Arg.Any<bool>())
             .Returns(ci =>
             {
                 var files = Directory.EnumerateFiles(_env.ScratchDirectory).ToList();

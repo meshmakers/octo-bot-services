@@ -67,7 +67,7 @@ public abstract class ArtifactStoreJobTestBase : IDisposable
     {
         var restores = new List<(string, string?, byte[])>();
         _systemContext.RestoreTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
-                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>())
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>(), Arg.Any<bool>())
             .Returns(ci =>
             {
                 restores.Add((ci.ArgAt<string>(1), ci.ArgAt<string?>(3), File.ReadAllBytes(ci.ArgAt<string>(2))));
