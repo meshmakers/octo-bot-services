@@ -51,7 +51,7 @@ public partial class RestoreRepositoryJob(
 
     /// <summary>
     ///     Progress of the running restore (AB#8447). A job instance runs one job (transient registration); the classic
-    ///     <see cref="Run" /> keeps the no-op sink.
+    ///     <see cref="Run(string, string, string, string?, bool, PerformContext?, IBotCancellationToken?)" /> keeps the no-op sink.
     /// </summary>
     private IDumpProgressSink _progress = NullDumpProgressSink.Instance;
 
