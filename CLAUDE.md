@@ -213,7 +213,7 @@ method this service hosts. User documentation: README "Repository dump as an asy
   (`SystemBotCkModel/RtJobResultRecords.Json.cs`, generic `RtRecordWireJsonConverter<T>`; the dump keeps its own converter).
 - Row-pump progress has **no percentage** (`DumpProgress.Percent = -1` → stored without percent).
 - Restore: the operation record is in the system database, never touched by the restore. Deleted tenant: `TenantManagementConsumer`
-  purges via `ICkMethodOperationTenantPurge` (common-services AB#8447) on **`PosDeleteTenant`** (after the drop; `PreDeleteTenant`
+  purges via `ICkMethodOperationTenantPurge` (common-services AB#8447) on **`PosDeleteTenant`** (after the drop, sent from a `finally` also when the drop fails; `PreDeleteTenant`
   only removes the recurring jobs), failures only logged. **The delete events are also sent by a restore (`TenantBackupService`
   drops and re-attaches the tenant) and a detach** — purge only when `ITenantLifecycleStore` shows `Deleting` (the delete endpoint
   marks it before it starts); without that gate a method restore deleted its own record (local E2E 2026-11-11).

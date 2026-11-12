@@ -14,8 +14,8 @@ namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 ///    reads an operation of the old one. A restore is not a delete and keeps the records.
 /// </summary>
 /// <remarks>
-///     The purge runs on <c>PosDeleteTenant</c>, which the tenant delete sends after the database is dropped, so a delete
-///     that fails earlier keeps the records. The event is not only sent for a delete: a restore drops and re-attaches the
+///     The purge runs on <c>PosDeleteTenant</c>, which the tenant delete sends after the database drop, also when the drop
+///     fails (the engine sends it from a <c>finally</c>; the tenant's registry row is already removed then). The event is not only sent for a delete: a restore drops and re-attaches the
 ///     tenant (<c>TenantBackupService.RestoreTenantAsync</c>) and a detach sends it as well. The purge therefore runs only
 ///     when the tenant lifecycle record carries the <see cref="TenantLifecycleState.Deleting" /> tombstone, which the tenant
 ///     delete writes before it starts. Otherwise a restore started as a method would delete its own operation record while
