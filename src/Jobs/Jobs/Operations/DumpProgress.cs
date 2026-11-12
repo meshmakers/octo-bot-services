@@ -6,6 +6,8 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 ///     One progress report of a repository dump (AB#8445): a percentage, a language-neutral stage code and string
 ///     parameters. The dump job writes it as the Hangfire job parameter <see cref="DumpJobParameters.Progress" />; the
 ///     handler of the async method <c>System.Bot/TenantRepository.Dump-1</c> relays it into the operation record.
+///     Since AB#8447 the restore and archive data jobs report with the same record (job parameter
+///     <see cref="OperationJobParameters.Progress" />); a negative <paramref name="Percent" /> means "not known" (row pumps).
 /// </summary>
 /// <param name="Percent">Completion percentage, 0 to 100.</param>
 /// <param name="StageCode">Stage code (UPPER_SNAKE_CASE), see <see cref="DumpStages" />.</param>

@@ -14,6 +14,7 @@ using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects.ApiErrors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Meshmakers.Octo.Services.RestDeprecation;
 
 namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 
@@ -61,6 +62,7 @@ namespace Meshmakers.Octo.Backend.BotServices.SystemApi.v1.Controllers;
 /// </remarks>
 [Authorize(AuthenticationSchemes = OidcConstants.AuthenticationSchemes.AuthorizationHeaderBearer)]
 [Route("system/v{version:apiVersion}/[controller]")]
+[OctoRestDeprecated(Wave = BotRestDeprecation.JobsWave1, Link = BotRestDeprecation.AsyncMethodsLink)]
 [ApiController]
 [ApiVersion("1.0")]
 public class JobsController : JobsControllerBase

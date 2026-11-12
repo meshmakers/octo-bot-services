@@ -28,18 +28,20 @@ public class SystemBotCkLanguage2Tests
     }
 
     [Test]
-    public async Task EmbeddedModel_IsSystemBot_3_7_0_OnCkLanguage2_WithTheCkV2MinEngineVersion()
+    public async Task EmbeddedModel_IsSystemBot_3_8_0_OnCkLanguage2_WithTheCkV2MinEngineVersion()
     {
         var root = await LoadEmbeddedSystemBotAsync();
 
-        // 3.7.0 (AB#8445) adds TenantRepository.Dump-1; still ckLanguage 2 within 3.x.
-        await Assert.That(root.ModelId.ToString()).IsEqualTo("System.Bot-3.7.0");
+        // 3.7.0 (AB#8445) adds TenantRepository.Dump-1, 3.8.0 (AB#8447) Restore-1 and the archive data methods; still
+        // ckLanguage 2 within 3.x.
+        await Assert.That(root.ModelId.ToString()).IsEqualTo("System.Bot-3.8.0");
         await Assert.That(root.CkLanguage).IsEqualTo(2);
         // A ckLanguage 2 model always carries a minEngineVersion, so an engine without CK v2 refuses it (message 126)
         // instead of reading it as a classic model; the compiler stamps it, the sources never set it. Pinned exactly: a
         // higher value means every service below it can no longer import System.Bot. 3.7.0 (AB#8445) raised it from
         // 3.5.1 to 3.5.67: the async method declares execution.mode, which the compiler stamps with the engine version
-        // that reads the field (AB#6925/AB#6926). A further raise is again a deliberate rollout decision.
+        // that reads the field (AB#6925/AB#6926). 3.8.0 (AB#8447) adds methods with the same fields and keeps it. A further
+        // raise is again a deliberate rollout decision.
         await Assert.That(root.MinEngineVersion).IsNotNull();
         await Assert.That(Version.Parse(root.MinEngineVersion!)).IsEqualTo(new Version(3, 5, 67));
     }
@@ -104,5 +106,47 @@ public class SystemBotCkLanguage2Tests
         await Assert.That((method.Errors ?? []).Select(e => e.Code).ToArray())
             .IsEquivalentTo(new[] { "DUMP_FAILED", "DUMP_INTERRUPTED" });
         await Assert.That((root.Records ?? []).Any(r => r.RecordId.Name == "RepositoryDumpResult")).IsTrue();
+    }
+
+    /// <summary>
+    ///     AB#8447 (F3.6): <c>Restore-1</c>, <c>ExportArchiveData-1</c> and <c>ImportArchiveData-1</c> are static,
+    ///     asynchronous, service-handled methods for tenant administrators with their result records and declared errors;
+    ///     the import mode is the enum <c>ArchiveImportMode</c> with the keys of the REST enum.
+    /// </summary>
+    [Test]
+    [Arguments("Restore-1", "RepositoryRestoreResult", new[] { "UPLOAD_NOT_FOUND", "RESTORE_FAILED", "RESTORE_INTERRUPTED" })]
+    [Arguments("ExportArchiveData-1", "ArchiveDataExportResult",
+        new[] { "ARCHIVE_EXPORT_FAILED", "ARCHIVE_EXPORT_INTERRUPTED" })]
+    [Arguments("ImportArchiveData-1", "ArchiveDataImportResult",
+        new[] { "UPLOAD_NOT_FOUND", "ARCHIVE_IMPORT_FAILED", "ARCHIVE_IMPORT_INTERRUPTED" })]
+    public async Task TenantRepository_DeclaresTheAsyncJobMethods(string methodId, string resultRecord, string[] errors)
+    {
+        var root = await LoadEmbeddedSystemBotAsync();
+
+        var type = (root.Types ?? []).Single(t => t.TypeId.Name == "TenantRepository");
+        var method = (type.Methods ?? []).SingleOrDefault(m => m.MethodId == methodId);
+        await Assert.That(method).IsNotNull();
+        await Assert.That(method!.Kind).IsEqualTo(CkMethodKindDto.Static);
+        await Assert.That(method.Execution!.Mode).IsEqualTo("async");
+        await Assert.That(method.Execution.Handler).IsEqualTo("service");
+        await Assert.That(method.Authorization!.Roles!).IsEquivalentTo(new[] { "TenantManagement" });
+        await Assert.That(method.Result!.ValueType).IsEqualTo(AttributeValueTypesDto.Record);
+        await Assert.That(method.Result.ValueCkRecordId!.ToString()).Contains(resultRecord);
+        await Assert.That((method.Errors ?? []).Select(e => e.Code).ToArray()).IsEquivalentTo(errors);
+        await Assert.That((root.Records ?? []).Any(r => r.RecordId.Name == resultRecord)).IsTrue();
+    }
+
+    [Test]
+    public async Task ArchiveImportMode_HasTheKeysOfTheRestEnum()
+    {
+        var root = await LoadEmbeddedSystemBotAsync();
+
+        var mode = (root.Enums ?? []).Single(e => e.EnumId.Name == "ArchiveImportMode");
+        var values = mode.Values.ToDictionary(v => v.Name, v => v.Key);
+
+        await Assert.That(values["InsertOnly"])
+            .IsEqualTo((int)Communication.Contracts.DataTransferObjects.ArchiveImportMode.InsertOnly);
+        await Assert.That(values["Upsert"])
+            .IsEqualTo((int)Communication.Contracts.DataTransferObjects.ArchiveImportMode.Upsert);
     }
 }

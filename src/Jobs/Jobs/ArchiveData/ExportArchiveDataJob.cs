@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using Hangfire.Server;
+using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
 using Meshmakers.Octo.ConstructionKit.Contracts;
@@ -32,26 +34,53 @@ public sealed class ExportArchiveDataJob : IExportArchiveDataJob
     private readonly ILogger<ExportArchiveDataJob> _logger;
     private readonly ISystemContext _systemContext;
     private readonly IBackupFileStorageService _backupFileStorage;
+    private readonly IDumpOperationGate? _operationGate;
 
     /// <summary>
     ///     Constructor.
     /// </summary>
+    /// <param name="logger">Logger.</param>
+    /// <param name="systemContext">Access to the tenant contexts.</param>
+    /// <param name="backupFileStorage">Where the export file is written.</param>
+    /// <param name="operationGate">
+    ///     The gate on the method operation store (AB#8447); <c>null</c> where no method host is registered.
+    /// </param>
     public ExportArchiveDataJob(
         ILogger<ExportArchiveDataJob> logger,
         ISystemContext systemContext,
-        IBackupFileStorageService backupFileStorage)
+        IBackupFileStorageService backupFileStorage,
+        IDumpOperationGate? operationGate = null)
     {
         _logger = logger;
         _systemContext = systemContext;
         _backupFileStorage = backupFileStorage;
+        _operationGate = operationGate;
     }
 
     /// <inheritdoc />
     public async Task<string?> Run(string tenantId, string archiveRtId, DateTime? fromUtc,
         DateTime? toUtc, IBotCancellationToken? cancellationToken)
     {
-        var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        var (path, _) = await RunCoreAsync(tenantId, archiveRtId, fromUtc, toUtc, NullDumpProgressSink.Instance,
+            cancellationToken?.ShutdownToken ?? CancellationToken.None);
+        return path;
+    }
 
+    /// <inheritdoc />
+    public async Task<string?> RunForOperation(string tenantId, string archiveRtId, DateTime? fromUtc,
+        DateTime? toUtc, string operationId, PerformContext? performContext, IBotCancellationToken? cancellationToken)
+    {
+        var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        var progress = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Generic,
+            _operationGate, tenantId, operationId, "archive data export", _logger, ct);
+        var (path, rows) = await RunCoreAsync(tenantId, archiveRtId, fromUtc, toUtc, progress, ct);
+        OperationJobGuard.WriteResult(performContext, new ArchiveDataOperationSummary(rows).ToJson(), _logger);
+        return path;
+    }
+
+    private async Task<(string Path, long Rows)> RunCoreAsync(string tenantId, string archiveRtId, DateTime? fromUtc,
+        DateTime? toUtc, IDumpProgressSink progress, CancellationToken ct)
+    {
         try
         {
             var tenantContext = await _systemContext.FindTenantContextAsync(tenantId)
@@ -97,6 +126,7 @@ public sealed class ExportArchiveDataJob : IExportArchiveDataJob
             }
 
             var rowWindow = BuildRowWindow(fromUtc, toUtc);
+            long rowCount = 0;
 
             _logger.LogInformation("Writing archive data export for '{ArchiveRtId}' to '{FilePath}'", archiveRtId,
                 filePath);
@@ -124,10 +154,15 @@ public sealed class ExportArchiveDataJob : IExportArchiveDataJob
                     writer.NewLine = "\n";
 
                     var rowsSinceFlush = 0;
+                    progress.Report(ArchiveDataStages.Rows(ArchiveDataStages.ExportingRows, 0));
                     await foreach (var row in repository.ExportRowsAsync(archiveObjectId, rowWindow, ct))
                     {
                         var line = JsonSerializer.Serialize(row, NdjsonJsonOptions);
                         await writer.WriteLineAsync(line.AsMemory(), ct);
+                        if (++rowCount % ArchiveDataStages.ReportEveryRows == 0)
+                        {
+                            progress.Report(ArchiveDataStages.Rows(ArchiveDataStages.ExportingRows, rowCount));
+                        }
 
                         if (++rowsSinceFlush >= 256)
                         {
@@ -140,10 +175,10 @@ public sealed class ExportArchiveDataJob : IExportArchiveDataJob
                 }
             }
 
-            _logger.LogInformation("Archive data export completed for '{ArchiveRtId}' at '{FilePath}'", archiveRtId,
-                filePath);
+            _logger.LogInformation("Archive data export completed for '{ArchiveRtId}' at '{FilePath}' ({RowCount} rows)",
+                archiveRtId, filePath, rowCount);
 
-            return filePath;
+            return (filePath, rowCount);
         }
         catch (OperationCanceledException)
         {

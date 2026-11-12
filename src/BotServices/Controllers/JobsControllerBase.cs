@@ -604,80 +604,29 @@ public abstract class JobsControllerBase : ControllerBase
     }
 
     /// <summary>
-    ///     Verifies that the upload is usable for this tenant and not empty, without copying it (AB#8736: the job does
-    ///     that, on whichever replica runs it): a staged file in the artifact store
-    ///     (<c>restore-staging/&lt;tenant&gt;/&lt;id&gt;</c>, AB#5561), else a complete tus upload in the shared store,
-    ///     else a file on the local disk received before AB#8736 (see <see cref="ValidateTusUpload" />). The store key
-    ///     carries the tenant like the local directory does, so a foreign id answers 404 either way.
+    ///     Verifies that the upload is usable for this tenant and not empty, without copying it
+    ///     (<see cref="StagedUploadCheck" />, shared with the async methods of AB#8447).
     /// </summary>
-    private async Task<IActionResult?> ValidateStagedUploadAsync(string tenantId, string tusFileId)
-    {
-        var ct = HttpContext.RequestAborted;
-        var staged = await _sharedUploads.FindStagedAsync(tenantId, tusFileId, ct);
-        long size;
-        if (staged != null)
-        {
-            size = staged.Value.Size;
-        }
-        else if (await _sharedUploads.GetAsync(tenantId, tusFileId, ct) is { } upload)
-        {
-            if (!await _sharedUploads.IsCompleteAsync(tenantId, tusFileId, ct))
-            {
-                return BadRequest(new InternalServerErrorDto(
-                    $"The upload for tus file ID '{tusFileId}' is not complete. Finish the upload first."));
-            }
-
-            size = upload.UploadLength;
-        }
-        else
-        {
-            return ValidateTusUpload(tenantId, tusFileId, out _);
-        }
-
-        return size == 0
-            ? BadRequest(new InternalServerErrorDto(
-                $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."))
-            : null;
-    }
-
-    /// <summary>
-    ///     Verifies that the tus upload exists for this tenant and is not empty.
-    /// </summary>
-    /// <param name="tenantId">The tenant the consuming job will run for.</param>
-    /// <param name="tusFileId">The tus file ID from the completed upload.</param>
-    /// <param name="filePath">The resolved path of the uploaded file.</param>
-    /// <returns>
-    ///     <c>null</c> when the upload is usable, otherwise the error result to return to the caller.
-    /// </returns>
     /// <remarks>
     ///     🔴 <b>"Whose file is it" is answered by the address, not by a check here (AB#5060).</b>
-    ///     Uploads are stored under a per-tenant directory, so resolving the id against
-    ///     <paramref name="tenantId" /> cannot reach a file staged by another tenant — the not-found
-    ///     branch below <i>is</i> the ownership answer for a foreign id. Until stage 3 the sink was
-    ///     flat and this method only asked "is there a file"; the <c>tenantId</c> upload metadata
-    ///     that looked like it bound the two was never read by anything.
-    ///     <para>
-    ///         Deliberately not distinguished in the response: "no such upload" and "that upload
-    ///         belongs to another tenant" both answer 404. Separating them would turn this into an
-    ///         oracle for which tus ids exist elsewhere.
-    ///     </para>
+    ///     Uploads are stored under a per-tenant directory and a per-tenant store key, so resolving the id against
+    ///     <paramref name="tenantId" /> cannot reach a file staged by another tenant — the not-found answer <i>is</i> the
+    ///     ownership answer for a foreign id. Deliberately not distinguished in the response: "no such upload" and "that
+    ///     upload belongs to another tenant" both answer 404. Separating them would turn this into an oracle for which tus
+    ///     ids exist elsewhere.
     /// </remarks>
-    private IActionResult? ValidateTusUpload(string tenantId, string tusFileId, out string filePath)
+    private async Task<IActionResult?> ValidateStagedUploadAsync(string tenantId, string tusFileId)
     {
-        filePath = _backupFileStorage.GetTusUploadFilePath(tenantId, tusFileId);
-        if (!System.IO.File.Exists(filePath))
-        {
-            return NotFound(new NotFoundErrorDto(
-                $"Upload file not found for tus file ID '{tusFileId}'. Ensure the upload completed successfully."));
-        }
-
-        var fileInfo = new FileInfo(filePath);
-        if (fileInfo.Length == 0)
-        {
-            return BadRequest(new InternalServerErrorDto(
-                $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully."));
-        }
-
-        return null;
+        return await StagedUploadCheck.CheckAsync(_sharedUploads, _backupFileStorage, tenantId, tusFileId,
+                HttpContext.RequestAborted) switch
+            {
+                StagedUploadProblem.None => null,
+                StagedUploadProblem.Incomplete => BadRequest(new InternalServerErrorDto(
+                    $"The upload for tus file ID '{tusFileId}' is not complete. Finish the upload first.")),
+                StagedUploadProblem.Empty => BadRequest(new InternalServerErrorDto(
+                    $"Upload file for tus file ID '{tusFileId}' is empty (0 bytes). The upload may not have completed successfully.")),
+                _ => NotFound(new NotFoundErrorDto(
+                    $"Upload file not found for tus file ID '{tusFileId}'. Ensure the upload completed successfully."))
+            };
     }
 }

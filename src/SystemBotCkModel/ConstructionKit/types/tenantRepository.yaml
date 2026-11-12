@@ -23,3 +23,65 @@ types:
       execution:
         handler: service
         mode: async
+    # AB#8447 (3.8.0, Feature AB#5694 F3.6): restore and archive data export/import run as async methods with the same
+    # handle as the dump. Each starts the same Hangfire job type as its REST endpoint, once (no retry), and answers its
+    # declared errors. The uploads (tusFileId) come from the tenant's tus endpoint {tenantId}/v1/tus-upload; a file of
+    # another tenant is not found. Restore replaces the tenant database; its own operation record lives in the system
+    # database and stays readable.
+    - methodId: Restore-1
+      kind: Static
+      description: "Restores the tenant repository from an uploaded backup (dump .tar.gz or .octobak.zip) and returns an operation handle. The tenant database is replaced. Progress and the result are read through runtime.operations."
+      parameters:
+        - { name: tusFileId, valueType: String, description: "Id of the completed upload of the backup file ({tenantId}/v1/tus-upload)." }
+        - { name: databaseName, valueType: String, description: "Name of the tenant database that is restored." }
+        - { name: oldDatabaseName, valueType: String, isOptional: true, description: "Name of the database in the backup, when it differs from databaseName." }
+        - { name: restoreArchiveData, valueType: Boolean, isOptional: true, description: "Also restore the archive (stream data) rows of an .octobak.zip backup. Default false (MongoDB only)." }
+      result:
+        valueType: Record
+        valueCkRecordId: "${this}/RepositoryRestoreResult"
+      errors:
+        - { code: UPLOAD_NOT_FOUND, description: "No complete, non-empty upload with this id exists for the tenant; the parameter reason says which." }
+        - { code: RESTORE_FAILED, description: "The restore job failed; the parameter jobId names the job, system/v1/jobs shows its error." }
+        - { code: RESTORE_INTERRUPTED, description: "The restore job was interrupted (the bot service stopped while it ran) and is not started again; the tenant database may be partly restored." }
+      authorization:
+        roles: [ TenantManagement ]
+      execution:
+        handler: service
+        mode: async
+    - methodId: ExportArchiveData-1
+      kind: Static
+      description: "Exports the data rows of an archive of the tenant to a downloadable ZIP and returns an operation handle. Progress, the row count and the download reference are read through runtime.operations."
+      parameters:
+        - { name: archiveRtId, valueType: String, description: "Runtime id of the archive (System.StreamData/Archive)." }
+        - { name: fromUtc, valueType: DateTime, isOptional: true, description: "Inclusive lower bound of the exported time window (UTC). Without both bounds the whole archive is exported." }
+        - { name: toUtc, valueType: DateTime, isOptional: true, description: "Exclusive upper bound of the exported time window (UTC)." }
+      result:
+        valueType: Record
+        valueCkRecordId: "${this}/ArchiveDataExportResult"
+      errors:
+        - { code: ARCHIVE_EXPORT_FAILED, description: "The export job failed (e.g. unknown archive, stream data off); the parameter jobId names the job, system/v1/jobs shows its error." }
+        - { code: ARCHIVE_EXPORT_INTERRUPTED, description: "The export job was interrupted (the bot service stopped while it ran) and is not started again." }
+      authorization:
+        roles: [ TenantManagement ]
+      execution:
+        handler: service
+        mode: async
+    - methodId: ImportArchiveData-1
+      kind: Static
+      description: "Imports the rows of an uploaded archive data export into a disabled archive of the tenant and returns an operation handle. Progress and the row count are read through runtime.operations."
+      parameters:
+        - { name: tusFileId, valueType: String, description: "Id of the completed upload of the export ZIP ({tenantId}/v1/tus-upload)." }
+        - { name: archiveRtId, valueType: String, description: "Runtime id of the target archive (System.StreamData/Archive); it must be disabled and provisioned." }
+        - { name: mode, valueType: Enum, valueCkEnumId: "${this}/ArchiveImportMode", isOptional: true, description: "InsertOnly (default) or Upsert." }
+      result:
+        valueType: Record
+        valueCkRecordId: "${this}/ArchiveDataImportResult"
+      errors:
+        - { code: UPLOAD_NOT_FOUND, description: "No complete, non-empty upload with this id exists for the tenant; the parameter reason says which." }
+        - { code: ARCHIVE_IMPORT_FAILED, description: "The import job failed (e.g. schema mismatch, archive not disabled); the parameter jobId names the job, system/v1/jobs shows its error." }
+        - { code: ARCHIVE_IMPORT_INTERRUPTED, description: "The import job was interrupted (the bot service stopped while it ran) and is not started again; rows read before may be written." }
+      authorization:
+        roles: [ TenantManagement ]
+      execution:
+        handler: service
+        mode: async

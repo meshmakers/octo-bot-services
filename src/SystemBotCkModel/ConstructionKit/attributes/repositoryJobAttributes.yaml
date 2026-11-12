@@ -1,0 +1,15 @@
+$schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
+# AB#8447 (3.8.0): members of the result records of TenantRepository.Restore-1, ExportArchiveData-1 and ImportArchiveData-1.
+attributes:
+- id: RepositoryRestore.ArchiveCount
+  valueType: Int
+  description: "Number of archives in the restored backup that were handled (restored, skipped or failed); 0 for a MongoDB-only restore."
+- id: RepositoryRestore.FailedArchiveCount
+  valueType: Int
+  description: "Number of archives that could not be restored; the job result (system/v1/jobs) names them."
+- id: RepositoryRestore.SecretsToReEnterCount
+  valueType: Int
+  description: "Number of secrets the post-restore secret sweep could not read and that must be entered again; the sweep report names them."
+- id: ArchiveData.RowCount
+  valueType: Int64
+  description: "Number of archive rows written to the export file, or read from the import file."

@@ -69,7 +69,26 @@ public class BackupFileStorageService : IBackupFileStorageService
     /// <inheritdoc />
     public string GetTusUploadFilePath(string tenantId, string tusFileId)
     {
-        return Path.Combine(GetTusUploadDirectory(tenantId), tusFileId);
+        var directory = GetTusUploadDirectory(tenantId);
+
+        // The tus file id is caller-supplied as well (a REST body, a CK method parameter or a queued job argument) and
+        // must name one file in the tenant's directory, never a path into another tenant's or out of the root
+        // (AB#8447 review: "../<otherTenant>/<id>" reached File.Exists and the restore's clean-up).
+        if (string.IsNullOrWhiteSpace(tusFileId) || tusFileId is "." or ".." ||
+            tusFileId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || tusFileId.Contains('/') ||
+            tusFileId.Contains('\\'))
+        {
+            throw new ArgumentException($"'{tusFileId}' is not a valid upload id.", nameof(tusFileId));
+        }
+
+        var path = Path.GetFullPath(Path.Combine(directory, tusFileId));
+        if (!string.Equals(Path.GetDirectoryName(path), directory, StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"'{tusFileId}' would resolve outside the tenant's upload directory.",
+                nameof(tusFileId));
+        }
+
+        return path;
     }
 
     /// <inheritdoc />

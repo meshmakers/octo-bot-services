@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Hangfire.Server;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
+using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
@@ -43,16 +44,47 @@ public partial class RestoreRepositoryJob(
     IArchiveCopyStagingLocationFactory? stagingFactory = null,
     TimeProvider? timeProvider = null,
     IStreamDataRepositoryFactory? streamDataFactory = null,
-    ISharedUploadStore? sharedUploads = null) : IRestoreRepositoryJob
+    ISharedUploadStore? sharedUploads = null,
+    IDumpOperationGate? operationGate = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    ///     Progress of the running restore (AB#8447). A job instance runs one job (transient registration); the classic
+    ///     <see cref="Run" /> keeps the no-op sink.
+    /// </summary>
+    private IDumpProgressSink _progress = NullDumpProgressSink.Instance;
+
     /// <inheritdoc />
-    public async Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
+    public Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
         string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext,
         IBotCancellationToken? cancellationToken)
     {
+        return RunCoreAsync(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData, performContext,
+            cancellationToken?.ShutdownToken ?? CancellationToken.None);
+    }
+
+    /// <inheritdoc />
+    public async Task<RestoreRepositoryResult?> RunForOperation(string tenantId, string databaseName, string tusFileId,
+        string? oldDatabaseName, bool restoreArchiveData, string operationId, PerformContext? performContext,
+        IBotCancellationToken? cancellationToken)
+    {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        _progress = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Generic,
+            operationGate, tenantId, operationId, "restore", logger, ct);
+        var result = await RunCoreAsync(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+            performContext, ct);
+        if (result != null)
+        {
+            OperationJobGuard.WriteResult(performContext, RestoreOperationSummary.From(result).ToJson(), logger);
+        }
+
+        return result;
+    }
+
+    private async Task<RestoreRepositoryResult?> RunCoreAsync(string tenantId, string databaseName, string cacheKey,
+        string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext, CancellationToken ct)
+    {
 
         // cacheKey is used as the tus file ID (or legacy cache key). The tenant is part of the
         // address since AB#5060: uploads live under a per-tenant directory (and, since AB#5561, under the
@@ -69,6 +101,8 @@ public partial class RestoreRepositoryJob(
             {
                 return null;
             }
+
+            _progress.Report(new DumpProgress(5, RestoreStages.PreparingUpload));
 
             // AB#8736: a tus upload in the shared store is assembled into its staged file here, in the job, on
             // whichever replica runs it (never inside the upload request).
@@ -251,6 +285,7 @@ public partial class RestoreRepositoryJob(
             return null;
         }
 
+        _progress.Report(new DumpProgress(90, RestoreStages.SweepingSecrets));
         var report = await secretSweepCoordinator.RunAfterRestoreAsync(tenantId, new SecretSweepRunInfo(jobId), ct);
         if (report.SecretsToReEnter.Count > 0)
         {
@@ -334,6 +369,7 @@ public partial class RestoreRepositoryJob(
         string? oldDatabaseName, CancellationToken ct)
     {
         logger.LogInformation("Running restore command for '{TenantId}' from file '{FilePath}'", tenantId, blobPath);
+        _progress.Report(new DumpProgress(20, RestoreStages.RestoringDatabase));
 
         var r = await systemContext.RestoreTenantAsync(tenantId, databaseName, blobPath, oldDatabaseName,
             true, true, TimeSpan.FromHours(1), ct);
@@ -385,9 +421,11 @@ public partial class RestoreRepositoryJob(
             await repository.SetRestoreReconcilePendingAsync(true, ct);
         }
 
+        var archiveNumber = 0;
         foreach (var entry in ordered)
         {
             ct.ThrowIfCancellationRequested();
+            _progress.Report(ArchiveProgress(++archiveNumber, ordered.Count));
             results.Add(await RestoreOneArchiveAsync(tenantId, entry, zip, repository, lifecycle, archiveStore,
                 deferred.Contains(entry.Schema.RtId), ct));
         }
@@ -688,6 +726,20 @@ public partial class RestoreRepositoryJob(
 
         public static ArchiveRestoreResult Failed(string rtId, string reason) =>
             new(rtId, ArchiveRestoreOutcome.Failed, reason, 0, null);
+    }
+
+    /// <summary>
+    ///     Progress of the archive restore: 50 % after the database, up to 85 % before the last archive. Parameters are the
+    ///     archive number and count, never an archive id or name (AB#8447).
+    /// </summary>
+    internal static DumpProgress ArchiveProgress(int archiveNumber, int archiveCount)
+    {
+        var percent = archiveCount <= 0 ? 50 : 50 + (int)(35L * (archiveNumber - 1) / archiveCount);
+        return new DumpProgress(percent, RestoreStages.RestoringArchives, new Dictionary<string, string>
+        {
+            ["archive"] = archiveNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["archiveCount"] = archiveCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        });
     }
 }
 

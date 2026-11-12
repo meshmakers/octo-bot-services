@@ -62,39 +62,10 @@ public partial class DumpRepositoryJob(
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
 
-        // At most once (AB#8445, OD-5 of AB#6927): Hangfire requeues a job whose server stopped or died, AutomaticRetry
-        // does not cover that. A job that started before is therefore refused, and so is a job whose operation was ended
-        // in the meantime (the sweep ended it as lost) - the caller was told the outcome is unknown, a dump now would
-        // be a second, unrequested one.
-        if (performContext != null)
-        {
-            if (performContext.GetJobParameter<bool>(DumpJobParameters.Started))
-            {
-                logger.LogWarning(
-                    "Dump of tenant '{TenantId}' for method operation '{OperationId}' (job '{JobId}') was interrupted " +
-                    "and is not started again", tenantId, operationId, performContext.BackgroundJob.Id);
-                performContext.SetJobParameter(DumpJobParameters.Outcome, DumpJobParameters.InterruptedOutcome);
-                throw new JobFailedException(
-                    $"The dump of tenant '{tenantId}' was interrupted (the bot service stopped while it ran) and is not " +
-                    "started again: a dump started by a method call runs at most once.");
-            }
-
-            performContext.SetJobParameter(DumpJobParameters.Started, true);
-        }
-
-        if (operationGate != null && !await operationGate.IsOperationOpenAsync(tenantId, operationId, ct))
-        {
-            logger.LogWarning(
-                "Dump of tenant '{TenantId}' is not started: method operation '{OperationId}' is no longer open",
-                tenantId, operationId);
-            performContext?.SetJobParameter(DumpJobParameters.Outcome, DumpJobParameters.OperationClosedOutcome);
-            throw new JobFailedException(
-                $"The dump of tenant '{tenantId}' is not started: its method operation was already ended.");
-        }
-
-        var sink = performContext != null
-            ? new JobParameterDumpProgressSink(performContext, logger)
-            : (IDumpProgressSink)NullDumpProgressSink.Instance;
+        // At most once (AB#8445, OD-5 of AB#6927): a requeued job and a job whose operation was ended are refused
+        // (OperationJobGuard, shared with restore and archive data since AB#8447).
+        var sink = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Dump, operationGate,
+            tenantId, operationId, "dump", logger, ct);
         return await RunCoreAsync(tenantId, includeArchiveData, sink, ct);
     }
 
@@ -431,26 +402,6 @@ public partial class DumpRepositoryJob(
             ["archive"] = archiveNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["archiveCount"] = archiveCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
         });
-    }
-
-    /// <summary>
-    ///     Writes the progress as the job parameter <see cref="DumpJobParameters.Progress" /> (shared job storage, so the
-    ///     handler reads it on any replica). A storage problem is logged and never fails the dump.
-    /// </summary>
-    private sealed class JobParameterDumpProgressSink(PerformContext performContext, ILogger logger) : IDumpProgressSink
-    {
-        public void Report(DumpProgress progress)
-        {
-            try
-            {
-                performContext.SetJobParameter(DumpJobParameters.Progress, progress.ToJson());
-            }
-            catch (Exception e)
-            {
-                logger.LogWarning("Progress of dump job '{JobId}' not stored ({ExceptionType})",
-                    performContext.BackgroundJob.Id, e.GetType().Name);
-            }
-        }
     }
 
     private static string BuildBackupArchiveFileName(string tenantId)

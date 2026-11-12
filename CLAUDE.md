@@ -198,6 +198,31 @@ method this service hosts. User documentation: README "Repository dump as an asy
   `Jobs.Tests/CkModels/SystemBotCkLanguage2Tests` and `Jobs.IntegrationTests/SystemBotCkLanguage2PersistenceTests` (method survives the
   round trip).
 
+## Restore and archive data as async CK methods (AB#8447; System.Bot 3.8.0)
+
+`TenantRepository.Restore-1`, `ExportArchiveData-1`, `ImportArchiveData-1` (static, async, `TenantManagement`). User docs: README
+"Restore and archive data export/import as asynchronous CK methods".
+
+- **Shared pieces** (use them for the next job method): `Methods/JobOperationRelay` (records starter + operation id, relays
+  progress, reports the end: Succeeded / Failed / Interrupted / LockTimeout / Missing), `Methods/BotJobMethodErrors` (`UPLOAD_NOT_FOUND`
+  reasons, `jobId` / `reason` parameters, `BotJobMethodOptions` = `Methods:BotJobs`), `Services/StagedUploadCheck` (same upload rule
+  as the REST routes), `Jobs/Operations/OperationJobGuard` (at most once; generic parameter names `OctoOperation*`; the dump keeps its
+  `OctoDump*` names through `OperationJobParameterNames.Dump`), `Jobs/Operations/OperationSummaries` (stage codes, count summary
+  written as `OctoOperationResult`). The dump handler now uses the relay too.
+- Handlers validate synchronously (upload, ids, window) and enqueue only inside the work. Results are bare camel-case records
+  (`SystemBotCkModel/RtJobResultRecords.Json.cs`, generic `RtRecordWireJsonConverter<T>`; the dump keeps its own converter).
+- Row-pump progress has **no percentage** (`DumpProgress.Percent = -1` → stored without percent).
+- Restore: the operation record is in the system database, never touched by the restore. Deleted tenant: `TenantManagementConsumer`
+  purges via `ICkMethodOperationTenantPurge` (common-services AB#8447) on **`PosDeleteTenant`** (after the drop, sent from a `finally` also when the drop fails; `PreDeleteTenant`
+  only removes the recurring jobs), failures only logged. **The delete events are also sent by a restore (`TenantBackupService`
+  drops and re-attaches the tenant) and a detach** — purge only when `ITenantLifecycleStore` shows `Deleting` (the delete endpoint
+  marks it before it starts); without that gate a method restore deleted its own record (local E2E 2026-11-11).
+- Upload ids: `GetTusUploadFilePath` refuses anything but a single file name (review of PR #59, path traversal).
+- `system/v1/jobs` (System API `JobsController`) carries `[OctoRestDeprecated(Wave = BotRestDeprecation.JobsWave1)]`; dates only from
+  configuration. Keep the sunset unset until every job type has a handle.
+- CK model: 3.8.0 = additions only (Minor), `minEngineVersion` stays 3.5.67; enum `ArchiveImportMode` keys = REST enum keys (test).
+- Tests: see README.
+
 ## System.Bot on ckLanguage 2 (AB#8593; System.Bot 3.6.0)
 
 `src/SystemBotCkModel` is `System.Bot-3.6.0`, the first `ckLanguage: 2` release, a **Minor** against 3.5.0 (dependency

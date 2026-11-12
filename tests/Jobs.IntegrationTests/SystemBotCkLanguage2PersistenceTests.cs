@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Meshmakers.Octo.Backend.Jobs.IntegrationTests;
 
 /// <summary>
-///     AB#8593: System.Bot 3.6.0 (now 3.7.0, AB#8445) is the first ckLanguage 2 release. The CK cache of a tenant is rebuilt from the model
+///     AB#8593: System.Bot 3.6.0 (now 3.8.0, AB#8445/AB#8447) is the first ckLanguage 2 release. The CK cache of a tenant is rebuilt from the model
 ///     stored in MongoDB, not from the compiled file, so the explicit <c>derivable: Any</c> must survive the import and the
 ///     read-back; if it were lost, the cache would apply the ckLanguage 2 default <c>Model</c> and every model deriving from a
 ///     System.Bot type would stop resolving. A second import of the same version (a service restart) must succeed without errors.
@@ -24,7 +24,7 @@ public class SystemBotCkLanguage2PersistenceTests
         foreach (var attempt in new[] { "first import", "re-import (service restart)" })
         {
             var operationResult = new OperationResult();
-            await fixture.SystemContext.ImportCkModelAsync(new CkModelId("System.Bot-3.7.0"), operationResult);
+            await fixture.SystemContext.ImportCkModelAsync(new CkModelId("System.Bot-3.8.0"), operationResult);
             await Assert.That(operationResult.HasErrors).IsFalse().Because($"{attempt}: {operationResult}");
         }
 
@@ -42,5 +42,19 @@ public class SystemBotCkLanguage2PersistenceTests
         await Assert.That(dump!.Kind).IsEqualTo(CkMethodKindDto.Static);
         await Assert.That(dump.Execution!.Mode).IsEqualTo("async");
         await Assert.That(dump.Authorization!.Roles!).IsEquivalentTo(new[] { "TenantManagement" });
+
+        // AB#8447: restore and the archive data methods survive the round trip too, with the enum parameter of the import.
+        foreach (var methodId in new[] { "Restore-1", "ExportArchiveData-1", "ImportArchiveData-1" })
+        {
+            var method = repository.DefinedMethods.SingleOrDefault(m => m.MethodId == methodId);
+            await Assert.That(method).IsNotNull().Because(methodId);
+            await Assert.That(method!.Execution!.Mode).IsEqualTo("async").Because(methodId);
+            await Assert.That(method.Authorization!.Roles!).IsEquivalentTo(new[] { "TenantManagement" });
+        }
+
+        var import = repository.DefinedMethods.Single(m => m.MethodId == "ImportArchiveData-1");
+        var mode = import.Parameters!.Single(p => p.Name == "mode");
+        await Assert.That(mode.ValueType).IsEqualTo(AttributeValueTypesDto.Enum);
+        await Assert.That(mode.IsOptional).IsTrue();
     }
 }
