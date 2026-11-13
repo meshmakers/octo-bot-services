@@ -522,6 +522,11 @@ System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the s
   writes first. The event is not a proof that the delete succeeded: the engine sends it from a `finally` after the database
   and archive drop, so a delete whose drop fails purges the records too (the tenant's registry row is already removed at that
   point). A tenant without a lifecycle record, or a failed purge, leaves the records to expire with the retention.
+- **Tenant id created again (AB#8881).** A new tenant with the id of a deleted one never reads the old tenant's operation records,
+  also when the purge failed or a call admitted just before the delete wrote its record after the purge: the store registration wraps
+  the store so that every read ignores records accepted before the current tenant's creation time (tenant lifecycle record), and every
+  tenant setup (`OperationRecordGenerationCleanup`, `StartTenantAsync`) removes them. A restore keeps the creation time, so its own
+  record stays. Tests `tests/Jobs.Tests/Methods/OperationRecordGenerationCleanupTests`.
 - **Upload ids** must name one file: `BackupFileStorageService.GetTusUploadFilePath` refuses separators, `.`/`..` and paths
   that leave the tenant's upload directory, so the upload check answers `UPLOAD_NOT_FOUND` for them.
 - **`system/v1/jobs` is deprecated** (`[OctoRestDeprecated(Wave = "BotJobs1")]` on the System API `JobsController`, link to the

@@ -69,6 +69,8 @@ internal static class BotMethodHost
         services.AddCkMethodMongoOperationStore();
         services.AddCkMethodOperations();
         services.TryAddSingleton<IDumpOperationGate, DumpOperationGate>();
+        // AB#8881: the tenant setup removes records an earlier tenant with the same id left behind (reads ignore them)
+        services.TryAddSingleton<OperationRecordGenerationCleanup>();
 
         services.AddOptions<RepositoryDumpMethodOptions>()
             .BindConfiguration(RepositoryDumpMethodOptions.SectionName)

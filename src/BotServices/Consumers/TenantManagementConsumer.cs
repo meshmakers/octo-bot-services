@@ -20,7 +20,10 @@ namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 ///     when the tenant lifecycle record carries the <see cref="TenantLifecycleState.Deleting" /> tombstone, which the tenant
 ///     delete writes before it starts. Otherwise a restore started as a method would delete its own operation record while
 ///     it runs (found in the local end-to-end check of AB#8447). A tenant without a lifecycle record, or a failed purge,
-///     leaves the records to expire with the store retention.
+///     leaves the records to expire with the store retention. AB#8881: a tenant created again with the same id never reads
+///     them — the store compares every read with the current tenant's creation time
+///     (<see cref="CkMethodTenantGenerationOperationStore" />) — and its setup removes them
+///     (<see cref="Methods.OperationRecordGenerationCleanup" />).
 /// </remarks>
 // ReSharper disable once ClassNeverInstantiated.Global
 internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,

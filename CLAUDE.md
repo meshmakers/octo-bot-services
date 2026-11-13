@@ -217,6 +217,12 @@ method this service hosts. User documentation: README "Repository dump as an asy
   only removes the recurring jobs), failures only logged. **The delete events are also sent by a restore (`TenantBackupService`
   drops and re-attaches the tenant) and a detach** — purge only when `ITenantLifecycleStore` shows `Deleting` (the delete endpoint
   marks it before it starts); without that gate a method restore deleted its own record (local E2E 2026-11-11).
+- **Recreated tenant id (AB#8881, security)**: the purge can fail and a call admitted before the delete can write its record after the
+  purge. `AddCkMethodMongoOperationStore()` wraps the store in `CkMethodTenantGenerationOperationStore` (common-services), so every read
+  (`DumpOperationGate`, the gateway) ignores records accepted before the current tenant's `TenantLifecycleRecord.CreatedUtc`.
+  `DefaultConfigurationCreatorService.StartTenantAsync` runs `Methods/OperationRecordGenerationCleanup` (removes those records via
+  `DeleteTenantAcceptedBeforeAsync`; nothing while the generation is unknown; never throws). A restore keeps `CreatedUtc`, so its own record
+  stays. Tests `tests/Jobs.Tests/Methods/OperationRecordGenerationCleanupTests.cs`.
 - Upload ids: `GetTusUploadFilePath` refuses anything but a single file name (review of PR #59, path traversal).
 - `system/v1/jobs` (System API `JobsController`) carries `[OctoRestDeprecated(Wave = BotRestDeprecation.JobsWave1)]`; dates only from
   configuration. Keep the sunset unset until every job type has a handle.
