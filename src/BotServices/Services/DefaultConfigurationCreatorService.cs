@@ -1,6 +1,7 @@
 using BotServices.Resources;
 using Duende.IdentityModel;
 using Meshmakers.Common.Shared;
+using Meshmakers.Octo.Backend.BotServices.Methods;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.ConstructionKit.Contracts;
@@ -23,7 +24,8 @@ internal class DefaultConfigurationCreatorService(
     ICommandClient<CreateIdentityDataCommandRequest> createIdentityDataCommandClient,
     IOptions<OctoBotServicesOptions> octoBotServicesOptions,
     FailedTenantRegistry failedTenantRegistry,
-    TenantSetupRetryTracker tenantSetupRetryTracker)
+    TenantSetupRetryTracker tenantSetupRetryTracker,
+    OperationRecordGenerationCleanup? operationRecordCleanup = null)
     : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
         BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
         null, // migrationService - we don't need migrations here
@@ -42,7 +44,7 @@ internal class DefaultConfigurationCreatorService(
         await base.InitializeAsync();
     }
 
-    protected override Task StartTenantAsync(string tenantId)
+    protected override async Task StartTenantAsync(string tenantId)
     {
         // Create jobs
         jobCreatorService.DeleteJobs(
@@ -50,7 +52,13 @@ internal class DefaultConfigurationCreatorService(
         jobCreatorService.CreateJobs(
             octoBotServicesOptions.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix, tenantId);
 
-        return base.StartTenantAsync(tenantId);
+        // AB#8881: remove the method operation records an earlier tenant with this id left behind (never throws)
+        if (operationRecordCleanup is not null)
+        {
+            await operationRecordCleanup.RunAsync(tenantId);
+        }
+
+        await base.StartTenantAsync(tenantId);
     }
 
     protected override Task StopTenantAsync(string tenantId)
