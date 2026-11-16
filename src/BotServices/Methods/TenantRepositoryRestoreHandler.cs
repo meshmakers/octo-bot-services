@@ -103,14 +103,19 @@ public sealed class TenantRepositoryRestoreHandler(
 
     private bool IsSystemOperator(CkMethodPrincipal? caller)
     {
-        var callerTenantId = caller?.TokenTenantId ?? caller?.TenantId;
+        if (caller is null)
+        {
+            return false;
+        }
+
+        var callerTenantId = caller.TokenTenantId ?? caller.TenantId;
         if (callerTenantId is null ||
             !string.Equals(callerTenantId, systemConfiguration.Value.SystemTenantId, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        return caller!.Roles.Any(role =>
+        return caller.Roles.Any(role =>
             string.Equals(role, CommonConstants.TenantManagementRole, StringComparison.OrdinalIgnoreCase));
     }
 
