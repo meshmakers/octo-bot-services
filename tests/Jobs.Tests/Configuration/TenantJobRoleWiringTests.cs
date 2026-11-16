@@ -94,7 +94,6 @@ internal class TenantJobRoleWiringTests
     [Test]
     [Arguments(nameof(TenantJobsController.RunFixupScripts))]
     [Arguments(nameof(TenantJobsController.DumpRepository))]
-    [Arguments(nameof(TenantJobsController.RestoreFromUpload))]
     [Arguments(nameof(TenantJobsController.ExportArchiveData))]
     [Arguments(nameof(TenantJobsController.ImportArchiveDataFromUpload))]
     [Arguments(nameof(TenantJobsController.DownloadJobResult))]
@@ -103,6 +102,64 @@ internal class TenantJobRoleWiringTests
         var attribute = typeof(TenantJobsController).GetMethod(method)!.GetCustomAttribute<AuthorizeAttribute>();
 
         await Assert.That(attribute?.Policy).IsEqualTo(BotServiceConstants.TenantJobManagementPolicy);
+    }
+
+    [Test]
+    public async Task RestoreFromUpload_CarriesTheSystemOperatorPolicy()
+    {
+        var attribute = typeof(TenantJobsController).GetMethod(nameof(TenantJobsController.RestoreFromUpload))!
+            .GetCustomAttribute<AuthorizeAttribute>();
+
+        await Assert.That(attribute?.Policy).IsEqualTo(BotServiceConstants.UploadedArchiveRestorePolicy);
+    }
+
+    [Test]
+    public async Task RestorePolicy_SystemTenantCallerWithScopeAndRole_Succeeds()
+    {
+        await Assert.That(await RestorePolicyAllows(Caller("OctoSystem", CommonConstants.OctoApiFullAccess,
+            ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsTrue();
+    }
+
+    [Test]
+    public async Task RestorePolicy_TenantAdministratorOfAnotherTenant_IsRefused()
+    {
+        await Assert.That(await RestorePolicyAllows(Caller("t", CommonConstants.OctoApiFullAccess,
+            ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsFalse();
+    }
+
+    [Test]
+    public async Task RestorePolicy_SystemTenantCallerWithoutRole_IsRefused()
+    {
+        await Assert.That(await RestorePolicyAllows(Caller("OctoSystem", CommonConstants.OctoApiFullAccess,
+            ClaimTypes.Role, CommonConstants.AdminPanelManagementRole))).IsFalse();
+    }
+
+    [Test]
+    public async Task RestorePolicy_SystemTenantCallerWithReadOnlyScope_IsRefused()
+    {
+        await Assert.That(await RestorePolicyAllows(Caller("OctoSystem", CommonConstants.OctoApiReadOnly,
+            ClaimTypes.Role, CommonConstants.TenantManagementRole))).IsFalse();
+    }
+
+    [Test]
+    public async Task RestorePolicy_WithoutHttpContext_FailsClosed()
+    {
+        await Assert.That(await RestorePolicyAllows(Caller("OctoSystem", CommonConstants.OctoApiFullAccess,
+            ClaimTypes.Role, CommonConstants.TenantManagementRole), withHttpContext: false)).IsFalse();
+    }
+
+    private static async Task<bool> RestorePolicyAllows(ClaimsPrincipal user, bool withHttpContext = true)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddOptions<Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration.OctoSystemConfiguration>();
+        services.AddAuthorization(o => o.AddBotPolicies());
+        await using var provider = services.BuildServiceProvider();
+        var authorization = provider.GetRequiredService<IAuthorizationService>();
+        var resource = withHttpContext ? new DefaultHttpContext { RequestServices = provider } : null;
+        var result = await authorization.AuthorizeAsync(user, resource,
+            BotServiceConstants.UploadedArchiveRestorePolicy);
+        return result.Succeeded;
     }
 
     [Test]
@@ -140,6 +197,7 @@ internal class TenantJobRoleWiringTests
         await Assert.That(code).DoesNotContain("UserTokenEnforcement");
         await Assert.That(code).DoesNotContain("ServiceTokenEnforcement");
         await Assert.That(code).Contains("BotServiceConstants.TenantJobManagementPolicy");
+        await Assert.That(code).Contains("BotServiceConstants.UploadedArchiveRestorePolicy");
         await Assert.That(code).Contains("HangfireDashboardAccessMiddleware>(dashboardSystemTenantId)");
         await Assert.That(code).Contains("new HangfireDashboardAuthorizationFilter(dashboardSystemTenantId)");
 

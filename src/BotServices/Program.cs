@@ -285,6 +285,7 @@ try
             { BotServiceConstants.JobApiReadOnlyPolicy, [CommonConstants.OctoApiReadOnly] },
             { BotServiceConstants.JobApiReadWritePolicy, [CommonConstants.OctoApiFullAccess] },
             { BotServiceConstants.TenantJobManagementPolicy, [CommonConstants.OctoApiFullAccess] },
+            { BotServiceConstants.UploadedArchiveRestorePolicy, [CommonConstants.OctoApiFullAccess] },
             { BotServiceConstants.SecretManagementPolicy, [CommonConstants.OctoApiFullAccess] },
             { BotServiceConstants.SecretAdministrationReadPolicy, [CommonConstants.OctoApiReadOnly] }
         };

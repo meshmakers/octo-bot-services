@@ -45,7 +45,6 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
-    [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
     [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_OwnTenantUserToken_IsAllowed(string route, string query)
@@ -67,7 +66,6 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
-    [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
     [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_ParentUserToken_IsAllowedOnChildRoute(string route, string query)
@@ -131,7 +129,6 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
-    [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
     [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_OwnServiceToken_IsAllowed(string route, string query)
@@ -162,7 +159,6 @@ internal class TenantJobRouteAuthorizationTests
     [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
-    [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
     [Arguments("secret-sweep", SecretSweepQuery)]
     public async Task TenantRoute_EnqueuesTheJobForTheRouteTenant(string route, string query)

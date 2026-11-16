@@ -60,6 +60,9 @@ internal sealed class JobsApiTestHost : IDisposable
     public const string Child = "childtenant";
     public const string Unrelated = "othertenant";
 
+    /// <summary>The system tenant of the host (the default of <c>OctoSystemConfiguration.SystemTenantId</c>).</summary>
+    public const string SystemTenant = "OctoSystem";
+
     private const string SchemeName = "Bearer";
 
     private WebApplication _app = null!;
@@ -170,6 +173,12 @@ internal sealed class JobsApiTestHost : IDisposable
     public static string UserTokenWithRoles(string tenantId, params string[] roles)
     {
         return $"user:{tenantId}|{string.Join(',', roles)}";
+    }
+
+    /// <summary>A system operator: a user of the system tenant with <c>TenantManagement</c>.</summary>
+    public static string SystemOperatorToken()
+    {
+        return UserTokenWithRoles(SystemTenant, CommonConstants.TenantManagementRole);
     }
 
     /// <summary>
@@ -324,10 +333,12 @@ internal sealed class JobsApiTestHost : IDisposable
         _secretSweepRunService = Substitute.For<ISecretSweepRunService>();
         _secretEnvironmentStatusService = Substitute.For<ISecretEnvironmentStatusService>();
 
-        // parenttenant -> childtenant is the only relation in this hierarchy; every other pair,
-        // including the reverse and any self-pair, answers false (NSubstitute's default).
+        // parenttenant -> childtenant and the system tenant above both are the only relations in this hierarchy;
+        // every other pair, including the reverse and any self-pair, answers false (NSubstitute's default).
         var hierarchy = Substitute.For<ITenantHierarchyReader>();
         hierarchy.IsChildTenantAsync(Parent, Child).Returns(true);
+        hierarchy.IsChildTenantAsync(SystemTenant, Parent).Returns(true);
+        hierarchy.IsChildTenantAsync(SystemTenant, Child).Returns(true);
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();

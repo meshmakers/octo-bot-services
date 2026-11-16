@@ -8,7 +8,8 @@ root `CLAUDE.md` rules (`dotnet build Octo.Bots.sln -c DebugL`, tests are TUnit:
 
 | Surface | Required |
 | --- | --- |
-| Dump, restore, archive export / import, fixup script run, tus upload, artifact download | scope `octo_api` (full access) + tenant role `TenantManagement` (`BotServiceConstants.TenantJobManagementPolicy`; tus: `TusUploadAuthorization`) |
+| Dump, archive export / import, fixup script run, tus upload, artifact download | scope `octo_api` (full access) + tenant role `TenantManagement` (`BotServiceConstants.TenantJobManagementPolicy`; tus: `TusUploadAuthorization`) |
+| Restore from an upload (REST `restore-from-upload`, method `Restore-1`) | scope + `TenantManagement` + caller of the **system tenant** (`BotServiceConstants.UploadedArchiveRestorePolicy`; the method handler checks the same, AB#9127). A tenant identity never restores an archive it may have edited |
 | Secret sweep trigger / delete dump | scope + `SecretManagement`; sweep report / runs: read scope + `AdminPanelManagement` |
 | Job status / delete (System API) | scope + job tenant binding (`JobTenantAccessGuard`) |
 | Hangfire dashboard `/ui/jobs` | scope + caller of the **system tenant** (`tenant_id` claim) **and** tenant role `TenantManagement` (`HangfireDashboardAccessMiddleware` + `HangfireDashboardAuthorizationFilter`; others get 403) |

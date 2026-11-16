@@ -11,6 +11,7 @@ using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Models.System.Bot.Generated.System.Bot.v3;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Methods;
 using Meshmakers.Octo.Services.Methods;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Services.Methods.Authorization;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -31,6 +32,7 @@ public class TenantRepositoryJobMethodHandlerTests
     private const string JobId = "job-7";
     private const string ArchiveRtId = "65f0a1b2c3d4e5f6a7b8c9d0";
     private const string UploadId = "upload-1";
+    private const string SystemTenant = "OctoSystem";
 
     private readonly IBackgroundJobClient _jobs = Substitute.For<IBackgroundJobClient>();
     private readonly GenericFakeJobStorage _storage = new();
@@ -51,6 +53,53 @@ public class TenantRepositoryJobMethodHandlerTests
     }
 
     // ---- Restore-1 ----
+
+    [Test]
+    public async Task Restore_ByTheTenantAdministrator_IsForbidden_AndAcceptsNothing()
+    {
+        StagedUpload(1024);
+
+        var outcome = await RestoreHandler().HandleAsync(
+            RestoreContext(caller: TokenCaller(Tenant, "TenantManagement")), CancellationToken.None);
+
+        await Assert.That(outcome.IsAccepted).IsFalse();
+        await Assert.That(outcome.Failure!.Code).IsEqualTo(CkMethodErrorCodes.MethodForbidden);
+        await Assert.That(_enqueued).IsNull();
+    }
+
+    [Test]
+    public async Task Restore_ByACallerWithoutTokenTenant_IsForbidden()
+    {
+        StagedUpload(1024);
+
+        var outcome = await RestoreHandler().HandleAsync(RestoreContext(caller: Admin()), CancellationToken.None);
+
+        await Assert.That(outcome.Failure!.Code).IsEqualTo(CkMethodErrorCodes.MethodForbidden);
+    }
+
+    [Test]
+    public async Task Restore_BySystemTenantCallerWithoutTenantManagement_IsForbidden()
+    {
+        StagedUpload(1024);
+
+        var outcome = await RestoreHandler().HandleAsync(
+            RestoreContext(caller: TokenCaller(SystemTenant, "AdminPanelManagement")), CancellationToken.None);
+
+        await Assert.That(outcome.Failure!.Code).IsEqualTo(CkMethodErrorCodes.MethodForbidden);
+    }
+
+    [Test]
+    public async Task Restore_WithoutCaller_IsForbidden()
+    {
+        StagedUpload(1024);
+        var context = new CkMethodContext<TenantRepositoryRestoreParameters>(
+            Request(SystemBotCkIds.TenantRepositoryRestoreMethodId),
+            new TenantRepositoryRestoreParameters { TusFileId = UploadId, DatabaseName = "db1" });
+
+        var outcome = await RestoreHandler().HandleAsync(context, CancellationToken.None);
+
+        await Assert.That(outcome.Failure!.Code).IsEqualTo(CkMethodErrorCodes.MethodForbidden);
+    }
 
     [Test]
     public async Task Restore_UsableUpload_AcceptsWithoutEnqueuing()
@@ -347,7 +396,7 @@ public class TenantRepositoryJobMethodHandlerTests
 
     private TenantRepositoryRestoreHandler RestoreHandler() =>
         new(_jobs, _storage, _uploads, _backupFiles, FastOptions(), TimeProvider.System,
-            NullLogger<TenantRepositoryRestoreHandler>.Instance);
+            NullLogger<TenantRepositoryRestoreHandler>.Instance, Options.Create(new OctoSystemConfiguration()));
 
     private TenantRepositoryExportArchiveDataHandler ExportHandler() =>
         new(_jobs, _storage, FastOptions(), TimeProvider.System,
@@ -368,11 +417,17 @@ public class TenantRepositoryJobMethodHandlerTests
 
     private static CkMethodPrincipal Admin() => new("user-1", ["TenantManagement"], ["octo_api"]);
 
-    private static CkMethodContext<TenantRepositoryRestoreParameters> RestoreContext(string databaseName = "db1") =>
+    private static CkMethodPrincipal TokenCaller(string tokenTenantId, params string[] roles) =>
+        new("user-1", roles, ["octo_api"]) { IsFromAccessToken = true, TokenTenantId = tokenTenantId };
+
+    private static CkMethodPrincipal SystemOperator() => TokenCaller(SystemTenant, "TenantManagement");
+
+    private static CkMethodContext<TenantRepositoryRestoreParameters> RestoreContext(string databaseName = "db1",
+        CkMethodPrincipal? caller = null) =>
         new(Request(SystemBotCkIds.TenantRepositoryRestoreMethodId),
             new TenantRepositoryRestoreParameters { TusFileId = UploadId, DatabaseName = databaseName })
         {
-            CallerPrincipal = Admin()
+            CallerPrincipal = caller ?? SystemOperator()
         };
 
     private static CkMethodContext<TenantRepositoryExportArchiveDataParameters> ExportContext(string archiveRtId,

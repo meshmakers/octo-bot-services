@@ -52,6 +52,13 @@ internal static class BotServiceConstants
     public const string TenantJobManagementPolicy = "TenantJobManagementPolicy";
 
     /// <summary>
+    ///     Policy of the restore from an uploaded archive: full-access scope, the tenant role <c>TenantManagement</c> and
+    ///     a token of the system tenant (a system operator). The restore writes the archive's documents as they are, so a
+    ///     tenant identity must not start it with an archive it may have edited.
+    /// </summary>
+    public const string UploadedArchiveRestorePolicy = "UploadedArchiveRestorePolicy";
+
+    /// <summary>
     ///     Policy of the secrets admin operations that change data (AB#5544, contract §6): trigger a secret
     ///     sweep, delete a pre-sweep dump early. Full-access scope plus the tenant role
     ///     <c>SecretManagement</c>.

@@ -26,7 +26,11 @@ namespace Meshmakers.Octo.Backend.BotServices.TenantApi.v1.Controllers;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         🔴 <b>Role (AB#4497, AB#6848).</b> Dump, restore, archive export, archive import, the fixup script run and the artifact download need
+///         🔴 <b>Restore from an upload is for system operators only (AB#9127)</b>: a user of the system tenant with
+///         <c>TenantManagement</c> (<see cref="BotServiceConstants.UploadedArchiveRestorePolicy" />).
+///     </para>
+///     <para>
+///         🔴 <b>Role (AB#4497, AB#6848).</b> Dump, archive export, archive import, the fixup script run and the artifact download need
 ///         the tenant role <c>TenantManagement</c> in addition to the <c>octo_api</c> scope
 ///         (<see cref="BotServiceConstants.TenantJobManagementPolicy" />, <c>403</c> otherwise, no job enqueued).
 ///         The role is read from the caller's own token, i.e. the caller's own tenant: a parent-tenant user
@@ -126,6 +130,9 @@ public class JobsController : JobsControllerBase
     /// <summary>
     ///     Restores the repository for the tenant taken from the route from a tus resumable upload.
     ///     The file must have been uploaded via the tus endpoint at <c>/system/v1/tus-upload</c> first.
+    ///     Only a system operator may start it (a user of the system tenant with <c>TenantManagement</c>,
+    ///     <see cref="BotServiceConstants.UploadedArchiveRestorePolicy" />): the restore writes the archive's
+    ///     documents as they are, so a tenant identity, also a tenant administrator, gets <c>403</c>.
     /// </summary>
     /// <param name="tenantId">The tenant id, from the route.</param>
     /// <param name="tusFileId">The tus file ID from the completed upload.</param>
@@ -136,7 +143,7 @@ public class JobsController : JobsControllerBase
     // POST: {tenantId}/v1/jobs/restore-from-upload
     [HttpPost]
     [Route("restore-from-upload")]
-    [Authorize(BotServiceConstants.TenantJobManagementPolicy)]
+    [Authorize(BotServiceConstants.UploadedArchiveRestorePolicy)]
     [ProducesResponseType(typeof(JobResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

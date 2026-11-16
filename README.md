@@ -117,12 +117,17 @@ without it, no job is enqueued):
 | Operation | Route | Required |
 | --- | --- | --- |
 | Repository dump | `POST {tenantId}/v1/jobs/dump-repository` | scope + `TenantManagement` |
-| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | scope + `TenantManagement` |
+| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | scope + `TenantManagement` + caller of the **system tenant** (system operator, `UploadedArchiveRestorePolicy`, AB#9127) |
 | Archive data export / import | `POST {tenantId}/v1/jobs/export-archive-data`, `.../import-archive-data-from-upload` | scope + `TenantManagement` |
 | tus upload feeding restore / import | `{tenantId}/v1/tus-upload` | scope + `TenantManagement` (`TusUploadAuthorization`) |
 | Artifact download (dump / export file) | `GET {tenantId}/v1/jobs/download`, deprecated `GET system/v1/jobs/download` | scope + `TenantManagement` |
 | Fixup script run | `POST {tenantId}/v1/jobs/run-fixup-scripts` | scope + `TenantManagement` |
 
+* **Restore from an upload is for system operators only (AB#9127).** The restore writes the archive's documents as they
+  are, so an edited archive could move protected values between attributes. A tenant identity, also a tenant administrator
+  or the administrator of a parent tenant, gets `403`; a user of the system tenant with `TenantManagement` restores any
+  tenant below it. The method `Restore-1` refuses the same callers with `METHOD_FORBIDDEN`. Dumps, archive export and import
+  and the restore of a pre-sweep dump (a server-side backup) are unchanged.
 * The role is read from the **caller's own token**, i.e. the caller's own tenant. A user of a parent tenant keeps
   `[AllowParentTenantAdministration]` on these routes, but needs `TenantManagement` in the **parent** tenant; the role is
   not looked up in the target tenant.
@@ -489,7 +494,8 @@ with `runtime.operations(operationId: …)`:
 ### Restore and archive data export/import as asynchronous CK methods (AB#8447)
 
 System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the same handle, rules and operation store as
-`Dump-1` (static, `execution.mode: async`, role `TenantManagement`):
+`Dump-1` (static, `execution.mode: async`, role `TenantManagement`). `Restore-1` additionally needs a system operator
+(a token of the system tenant with `TenantManagement`, AB#9127); every other caller gets `METHOD_FORBIDDEN`:
 
 | Method | Parameters | Result (`Succeeded`) | Declared errors |
 | --- | --- | --- | --- |

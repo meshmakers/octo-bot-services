@@ -399,7 +399,6 @@ internal class JobArtifactTenantBindingTests
     [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", "?archiveRtId=6512a1b2c3d4e5f601020304")]
-    [Arguments("restore-from-upload", "?tusFileId=upload-1&databaseName=octo-child")]
     [Arguments("import-archive-data-from-upload", "?tusFileId=upload-1&archiveRtId=6512a1b2c3d4e5f601020304")]
     public async Task EveryEnqueuedJobCarriesItsTenantInItsArguments(string route, string query)
     {

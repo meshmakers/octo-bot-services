@@ -77,7 +77,7 @@ public class ArtifactStoreApiTests
         // An empty staged upload is refused although the (substituted) local tus path holds a file: the store wins.
         var empty = await host.PostAsync(
             $"/{Child}/v1/jobs/restore-from-upload?tusFileId=emptyupload&databaseName=db1",
-            JobsApiTestHost.UserToken(Child));
+            JobsApiTestHost.SystemOperatorToken());
         await Assert.That(empty.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(host.EnqueuedJobCount).IsEqualTo(0);
 
@@ -85,7 +85,7 @@ public class ArtifactStoreApiTests
             host.Artifacts.WriteFile("good", [1, 2, 3]), ArtifactEncryption.IfConfigured);
         var good = await host.PostAsync(
             $"/{Child}/v1/jobs/restore-from-upload?tusFileId=goodupload&databaseName=db1",
-            JobsApiTestHost.UserToken(Child));
+            JobsApiTestHost.SystemOperatorToken());
         await Assert.That(good.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(host.LastEnqueuedJob().Type).IsEqualTo(typeof(IRestoreRepositoryJob));
     }
@@ -100,7 +100,7 @@ public class ArtifactStoreApiTests
 
         var response = await host.PostAsync(
             $"/{Child}/v1/jobs/restore-from-upload?tusFileId=plainupload&databaseName=db1",
-            JobsApiTestHost.UserToken(Child));
+            JobsApiTestHost.SystemOperatorToken());
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var job = host.LastEnqueuedJob();
@@ -117,7 +117,7 @@ public class ArtifactStoreApiTests
 
         var response = await host.PostAsync(
             $"/{Child}/v1/jobs/restore-from-upload?tusFileId=overrideupload&databaseName=db1&overrideForeignOwnership=true",
-            JobsApiTestHost.UserToken(Child));
+            JobsApiTestHost.SystemOperatorToken());
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var job = host.LastEnqueuedJob();

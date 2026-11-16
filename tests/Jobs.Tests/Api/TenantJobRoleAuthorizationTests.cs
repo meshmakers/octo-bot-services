@@ -7,7 +7,8 @@ namespace Meshmakers.Octo.Backend.Jobs.Tests.Api;
 ///     AB#4497 / AB#6848 — dump, restore, archive export, archive import, the fixup script run and the download of their artifacts need the
 ///     tenant role <c>TenantManagement</c> on top of the <c>octo_api</c> scope. A token with the scope but
 ///     without the role answers <c>403</c> and no job is enqueued. For a parent-tenant caller the role is the one
-///     in the caller's own (parent) tenant.
+///     in the caller's own (parent) tenant. The restore from an upload is refused in every case below; only a system
+///     operator may start it (<see cref="TenantRestoreOperatorOnlyTests" />).
 /// </summary>
 internal class TenantJobRoleAuthorizationTests
 {
@@ -59,7 +60,6 @@ internal class TenantJobRoleAuthorizationTests
     [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
-    [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
     public async Task OwnTenantUserWithTenantManagement_IsAllowed_AndEnqueues(string route, string query)
     {
@@ -95,7 +95,6 @@ internal class TenantJobRoleAuthorizationTests
     [Arguments("run-fixup-scripts", "")]
     [Arguments("dump-repository", "")]
     [Arguments("export-archive-data", ExportQuery)]
-    [Arguments("restore-from-upload", RestoreQuery)]
     [Arguments("import-archive-data-from-upload", ImportQuery)]
     public async Task ParentUserWithTenantManagement_IsAllowedOnChildRoute(string route, string query)
     {

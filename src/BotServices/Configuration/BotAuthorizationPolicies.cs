@@ -2,7 +2,11 @@ using System.Security.Claims;
 using Duende.IdentityModel;
 using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.Services.Infrastructure;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Meshmakers.Octo.Backend.BotServices.Configuration;
 
@@ -48,6 +52,10 @@ internal static class BotAuthorizationPolicies
             policyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)
                 .RequireAssertion(context => HasTenantRole(context.User, CommonConstants.TenantManagementRole)));
 
+        options.AddPolicy(BotServiceConstants.UploadedArchiveRestorePolicy, policyBuilder =>
+            policyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)
+                .RequireAssertion(context => IsSystemOperator(context)));
+
         // AB#5544 (contract §6): trigger sweeps and delete dumps.
         options.AddPolicy(BotServiceConstants.SecretManagementPolicy, policyBuilder =>
             policyBuilder.RequireClaim(InfrastructureCommon.ClaimScope, CommonConstants.OctoApiFullAccess)
@@ -59,6 +67,23 @@ internal static class BotAuthorizationPolicies
                     CommonConstants.OctoApiFullAccess,
                     CommonConstants.OctoApiReadOnly)
                 .RequireAssertion(context => HasTenantRole(context.User, CommonConstants.AdminPanelManagementRole)));
+    }
+
+    /// <summary>
+    ///     A system operator: a caller of the system tenant with <c>TenantManagement</c>, the same rule as the job
+    ///     dashboard. Fails closed when the request or the system tenant is not known.
+    /// </summary>
+    private static bool IsSystemOperator(AuthorizationHandlerContext context)
+    {
+        if (context.Resource is not HttpContext httpContext)
+        {
+            return false;
+        }
+
+        var systemTenantId = httpContext.RequestServices.GetService<IOptions<OctoSystemConfiguration>>()?.Value
+            .SystemTenantId;
+        return systemTenantId != null &&
+               HangfireDashboardScopes.IsSystemTenantAdministrator(context.User, systemTenantId);
     }
 
     /// <summary>

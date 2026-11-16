@@ -4,8 +4,11 @@ using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Services;
+using Meshmakers.Octo.Communication.Contracts;
 using Meshmakers.Octo.ConstructionKit.Models.System.Bot.Generated.System.Bot.v3;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Services.Methods;
+using Meshmakers.Octo.Services.Methods.Authorization;
 using Meshmakers.Octo.Services.Methods.Operations;
 using Microsoft.Extensions.Options;
 
@@ -13,9 +16,14 @@ namespace Meshmakers.Octo.Backend.BotServices.Methods;
 
 /// <summary>
 ///     Handler of the asynchronous method <c>System.Bot/TenantRepository.Restore-1</c> (AB#8447, Feature AB#5694 F3.6): a
-///     tenant administrator restores the tenant from an uploaded backup and follows it by the operation handle.
+///     system operator restores a tenant from an uploaded backup and follows it by the operation handle.
 /// </summary>
 /// <remarks>
+///     <para>
+///         Only a system operator (a token of the system tenant with <c>TenantManagement</c>) may start it: the restore
+///         writes the archive's documents as they are, so a tenant identity must not restore an archive it may have
+///         edited. Everyone else gets <c>METHOD_FORBIDDEN</c> before anything is checked or enqueued.
+///     </para>
 ///     <para>
 ///         <see cref="HandleAsync" /> checks the upload (complete, not empty, of this tenant) and answers
 ///         <c>UPLOAD_NOT_FOUND</c> at once when it is not usable; otherwise it accepts. The work enqueues the <b>same
@@ -37,7 +45,8 @@ public sealed class TenantRepositoryRestoreHandler(
     IBackupFileStorageService backupFileStorage,
     IOptions<BotJobMethodOptions> options,
     TimeProvider timeProvider,
-    ILogger<TenantRepositoryRestoreHandler> logger)
+    ILogger<TenantRepositoryRestoreHandler> logger,
+    IOptions<OctoSystemConfiguration> systemConfiguration)
     : ICkMethodHandler<TenantRepositoryRestoreParameters, TenantRepositoryRestoreResult>
 {
     /// <summary>Declared error: the restore job failed.</summary>
@@ -50,6 +59,15 @@ public sealed class TenantRepositoryRestoreHandler(
     public async Task<CkMethodOutcome<TenantRepositoryRestoreResult>> HandleAsync(
         CkMethodContext<TenantRepositoryRestoreParameters> context, CancellationToken cancellationToken)
     {
+        if (!IsSystemOperator(context.CallerPrincipal))
+        {
+            logger.LogWarning(
+                "Restore of tenant '{TenantId}' from an upload refused: only a system operator may restore an uploaded archive",
+                context.TenantId);
+            return CkMethodOutcome<TenantRepositoryRestoreResult>.Forbidden(
+                "Only a system operator may restore an uploaded archive.");
+        }
+
         var parameters = context.Parameters;
         if (string.IsNullOrWhiteSpace(parameters.TusFileId))
         {
@@ -81,6 +99,19 @@ public sealed class TenantRepositoryRestoreHandler(
         return CkMethodOutcome<TenantRepositoryRestoreResult>.Accepted((progress, ct) =>
             RunAsync(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, subjectId, clientId,
                 progress, ct));
+    }
+
+    private bool IsSystemOperator(CkMethodPrincipal? caller)
+    {
+        var callerTenantId = caller?.TokenTenantId ?? caller?.TenantId;
+        if (callerTenantId is null ||
+            !string.Equals(callerTenantId, systemConfiguration.Value.SystemTenantId, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return caller!.Roles.Any(role =>
+            string.Equals(role, CommonConstants.TenantManagementRole, StringComparison.OrdinalIgnoreCase));
     }
 
     internal async Task<CkMethodOutcome<TenantRepositoryRestoreResult>> RunAsync(string tenantId, string databaseName,

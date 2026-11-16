@@ -83,7 +83,7 @@ public class SharedUploadReplicaTests
         using var artifacts = new ArtifactTestEnvironment("k1");
         using var replicaA = await JobsApiTestHost.StartReplicaAsync(artifacts, "a");
         using var replicaB = await JobsApiTestHost.StartReplicaAsync(artifacts, "b");
-        var token = JobsApiTestHost.UserToken(Child);
+        var token = JobsApiTestHost.SystemOperatorToken();
         var dump = RandomNumberGenerator.GetBytes(4096);
 
         var location = await CreateUploadAsync(replicaA, token, dump.Length, "databaseName");
