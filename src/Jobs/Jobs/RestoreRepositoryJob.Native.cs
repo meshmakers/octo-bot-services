@@ -316,7 +316,7 @@ public partial class RestoreRepositoryJob
 
             if (FindSourceRestoredWithoutActivation(entry.Schema.RtId, sources, results) is { } blockedBySource)
             {
-                results.Add(ArchiveRestoreResult.Skipped(entry.Schema.RtId, blockedBySource));
+                results.Add(ArchiveRestoreResult.Skipped(entry.Schema.RtId, blockedBySource) with { KeptOutOfRepair = true });
                 continue;
             }
 
@@ -428,14 +428,14 @@ public partial class RestoreRepositoryJob
             var hidden = await CheckHiddenColumnsAsync(tenantId, objectId, lifecycle, archiveStore);
             if (hidden.SkipReason != null)
             {
-                return ArchiveRestoreResult.Skipped(rtId, hidden.SkipReason);
+                return ArchiveRestoreResult.Skipped(rtId, hidden.SkipReason) with { KeptOutOfRepair = true };
             }
 
             if (hidden.WithoutHidden != null && FindDumpedHiddenColumn(plan, hidden.HiddenPaths) is { } dumpedHidden)
             {
                 return ArchiveRestoreResult.Skipped(rtId,
                     $"the backup holds values of the column '{dumpedHidden}', which reaches a Hidden attribute (a backup written " +
-                    "before AB#9141); the archive is not restored, its table was not touched");
+                    "before AB#9141); the archive is not restored, its table was not touched") with { KeptOutOfRepair = true };
             }
 
             location = stagingFactory!.Create(tenantId, runId, ArchiveCopyStagingAccess.Restore);
@@ -631,7 +631,12 @@ public partial class RestoreRepositoryJob
             logger.LogWarning(
                 "Rollup reconcile of tenant '{TenantId}': {Count} rollup(s) are inconsistent after the restore; repairing",
                 tenantId, before.Rollups.Count(r => !r.IsOk));
-            var repair = await repository.RepairRollupsAsync(null, false, ct);
+            // AB#9141: a rollup skipped because of Hidden columns keeps its table untouched, also by the repair.
+            var keptOut = archives.Where(a => a.KeptOutOfRepair).Select(a => a.RtId).ToHashSet(StringComparer.Ordinal);
+            IReadOnlyCollection<OctoObjectId>? repairScope = keptOut.Count == 0
+                ? null
+                : before.Rollups.Select(r => r.RollupRtId).Where(id => !keptOut.Contains(id.ToString())).ToList();
+            var repair = await repository.RepairRollupsAsync(repairScope, false, ct);
             foreach (var rollup in repair.Before.Rollups)
             {
                 var id = rollup.RollupRtId;

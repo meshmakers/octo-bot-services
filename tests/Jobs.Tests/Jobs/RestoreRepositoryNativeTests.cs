@@ -681,6 +681,39 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task Reconcile_ARollupSkippedForHiddenColumns_IsKeptOutOfTheRepair()
+    {
+        // AB#9141: the skip promises an untouched table; the tenant-wide repair must not rewrite it either.
+        CaptureRestores();
+        SetupPostRestore((RtIdA, CkArchiveStatus.Activated));
+        var rollupId = new OctoObjectId(RollupId);
+        var rollup = Snapshot(RollupId, CkArchiveStatus.Failed) with
+        {
+            RollupAggregations = [new CkRollupAggregationSpec("voltage", CkRollupFunction.Sum, null)]
+        };
+        _archiveStore.GetAsync(rollupId).Returns(Snapshot(RollupId, CkArchiveStatus.Activated), rollup);
+        _lifecycle.RevalidateAccessAsync(rollupId).Returns(false);
+        await StageContainerAsync([
+            NativeEntry(RtIdA, CkArchiveStatus.Activated, ("s1", 10)),
+            NativeEntry(RollupId, CkArchiveStatus.Activated, ("r1", 10))
+        ]);
+        var finding = new RollupConsistencyFinding(RollupConsistencyCheck.PointerWithoutRows, "pointer without rows");
+        var bad = new RollupConsistencyReport([new RollupConsistencyEntry(rollupId, [finding])], DateTime.UtcNow);
+        _repository.ValidateRollupsAsync(Arg.Any<IReadOnlyCollection<OctoObjectId>?>(), Arg.Any<CancellationToken>())
+            .Returns(bad);
+        IReadOnlyCollection<OctoObjectId>? scope = null;
+        _repository.RepairRollupsAsync(Arg.Do<IReadOnlyCollection<OctoObjectId>?>(s => scope = s), false,
+                Arg.Any<CancellationToken>())
+            .Returns(new RollupRepairReport(false, bad, [], bad, null));
+
+        var result = await RunAsync();
+
+        await Assert.That(result!.Archives.Single(a => a.RtId == RollupId).Outcome).IsEqualTo("Skipped");
+        await Assert.That(scope).IsNotNull();
+        await Assert.That(scope!.Contains(rollupId)).IsFalse();
+    }
+
+    [Test]
     public async Task Reconcile_AFailingRepair_LeavesTheMarkerSet_AndNamesTheFailingStep_WithoutFailingTheRestore()
     {
         CaptureRestores();

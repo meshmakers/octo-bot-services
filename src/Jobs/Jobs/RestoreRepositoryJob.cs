@@ -450,7 +450,7 @@ public partial class RestoreRepositoryJob(
             _progress.Report(ArchiveProgress(++archiveNumber, ordered.Count));
             if (FindSourceRestoredWithoutActivation(entry.Schema.RtId, sources, results) is { } blockedBySource)
             {
-                results.Add(ArchiveRestoreResult.Skipped(entry.Schema.RtId, blockedBySource));
+                results.Add(ArchiveRestoreResult.Skipped(entry.Schema.RtId, blockedBySource) with { KeptOutOfRepair = true });
                 continue;
             }
 
@@ -693,7 +693,7 @@ public partial class RestoreRepositoryJob(
             var hidden = await CheckHiddenColumnsAsync(tenantId, objectId, lifecycle, archiveStore);
             if (hidden.SkipReason != null)
             {
-                return ArchiveRestoreResult.Skipped(rtId, hidden.SkipReason);
+                return ArchiveRestoreResult.Skipped(rtId, hidden.SkipReason) with { KeptOutOfRepair = true };
             }
 
             if (hidden.WithoutHidden is { } withoutHidden)
@@ -882,6 +882,12 @@ public partial class RestoreRepositoryJob(
 
         /// <summary>AB#9141: restored without its Hidden columns and not activated (its rollups cannot be activated).</summary>
         public bool WithoutHiddenColumns { get; init; }
+
+        /// <summary>
+        ///     AB#9141: skipped because of Hidden columns with its table untouched; the rollup repair after the restore leaves it
+        ///     alone too.
+        /// </summary>
+        public bool KeptOutOfRepair { get; init; }
 
         public static ArchiveRestoreResult Imported(string rtId, long rowCount, CkArchiveStatus restoredStatus) =>
             new(rtId, ArchiveRestoreOutcome.Imported, null, rowCount, restoredStatus);
