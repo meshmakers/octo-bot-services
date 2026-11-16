@@ -52,6 +52,8 @@ public class RestoreRepositoryArchiveDataTests
         _tenantContext.GetStreamDataRepository().Returns(_repository);
         _tenantContext.GetArchiveLifecycleService().Returns(_lifecycle);
         _tenantContext.GetArchiveRuntimeStore().Returns(_archiveStore);
+        // AB#9141: no column reaches a Hidden attribute unless a test says so.
+        _lifecycle.RevalidateAccessAsync(Arg.Any<OctoObjectId>()).Returns(true);
 
         foreach (var rtId in rtIds)
         {
@@ -131,6 +133,41 @@ public class RestoreRepositoryArchiveDataTests
                 EngineArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
             await _lifecycle.DidNotReceive().EnableAsync(Arg.Any<OctoObjectId>());
             await _backupFileStorage.Received(1).DeleteFileAsync(path);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task Run_OctoBak_AnArchiveFailedOnHiddenColumns_IsImportedWithoutThem_AndStaysFailed()
+    {
+        // AB#9141: the activation would be refused; the table is provisioned for the Failed definition instead.
+        var snapshot = Snapshot(RtIdA, CkArchiveStatus.Activated);
+        var path = WriteOctoBak(new[] { ManifestEntry(snapshot) });
+        try
+        {
+            SetupCommon(path);
+            SetupTenant(CkArchiveStatus.Activated, RtIdA);
+            var id = new OctoObjectId(RtIdA);
+            var failed = Snapshot(RtIdA, CkArchiveStatus.Failed) with { StatusReason = "Pin", HiddenColumns = ["Pin"] };
+            _archiveStore.GetAsync(id).Returns(snapshot, failed);
+            _lifecycle.RevalidateAccessAsync(id).Returns(false);
+
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+
+            Received.InOrder(() =>
+            {
+                _lifecycle.RevalidateAccessAsync(id);
+                _repository.DeleteArchiveAsync(id);
+                _repository.EnsureArchiveCreatedAsync(failed);
+                _repository.ImportRowsAsync(id, Arg.Any<IAsyncEnumerable<IReadOnlyDictionary<string, object?>>>(),
+                    EngineArchiveImportMode.InsertOnly, Arg.Any<CancellationToken>());
+            });
+            await _lifecycle.DidNotReceive().ActivateAsync(Arg.Any<OctoObjectId>());
+            await _lifecycle.DidNotReceive().EnableAsync(Arg.Any<OctoObjectId>());
+            await _lifecycle.DidNotReceive().DisableAsync(Arg.Any<OctoObjectId>());
         }
         finally
         {

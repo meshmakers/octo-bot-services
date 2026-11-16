@@ -367,6 +367,18 @@ the backup is format 2 with archive data and the installation has no staging are
 without account key) or no native copy; an unknown `formatVersion` is refused listing the supported versions `1 and 2`.
 The storage version recorded in the manifest and the target's are logged side by side; a difference is not refused.
 
+**Hidden columns** (AB#9141, format 1 and 2). A dump leaves out the values of every column known to reach a Hidden CK attribute
+(and of computed or rollup columns derived from it) from the staged files, the manifest and the NDJSON rows; when the archive's
+CK type cannot be read, only the columns recorded on the archive are known (residual risk, see the engine doc). Before a restore touches an archive's table it re-validates the restored definition
+(`IArchiveLifecycleService.RevalidateAccessAsync`, which sets an Activated archive with such a column to `Failed`). A raw or
+time-range archive that is then not Activated (Failed, Disabled) is not activated (the activation refuses it): its table is
+dropped, created for the definition without those columns (`IStreamDataRepository.EnsureArchiveCreatedAsync`), loaded, and the
+archive **keeps its status** (result detail `status Failed` / `status Disabled`); `RedactHiddenColumns` removes the columns.
+Skipped with the reason, table untouched: a rollup over a Hidden attribute, a rollup whose source was restored this way, and a
+native backup written before AB#9141 that still holds such a column; the rollup repair after the restore leaves these archives
+alone too (its scope excludes them). If the check cannot read the model, the restore goes on as before. The job takes the optional `ICkCacheService` to name the Hidden columns of an archive the re-validation does not record.
+Details: engine `docs/archive-hidden-columns.md`, "Backups".
+
 **Rollup reconcile** (after the archives of every restore with archive data, format 1 and 2; AB#5967 slice 2). A recompute flag
 restored from the backup (`RecomputeInProgress`) is reset first, because it would suppress the orphan check. The
 restore-reconcile marker is set (reclaim, forward aggregation and recompute stand still for the tenant), the rollups are

@@ -52,6 +52,8 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
         _tenantContext.GetRollupArchiveRuntimeStore().Returns(_rollupStore);
         _tenantContext.GetArchiveRecomputeStateStore().Returns(_stateStore);
         _rollupStore.EnumerateAsync().Returns(_ => NoRollups());
+        // AB#9141: no column reaches a Hidden attribute unless a test says so.
+        _lifecycle.RevalidateAccessAsync(Arg.Any<OctoObjectId>()).Returns(true);
 
         _streamFactory.CheckStagingCopyReadinessAsync(Arg.Any<CancellationToken>())
             .Returns(new StagingCopyReadiness(true, true, "6.4.6", null));
@@ -339,6 +341,149 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task Run_Format2_AnArchiveFailedOnHiddenColumns_IsLoadedWithoutThem_AndStaysFailed()
+    {
+        // AB#9141: the re-validation of the restored definition fails the archive on its Hidden column Pin.
+        CaptureRestores();
+        var id = new OctoObjectId(RtIdA);
+        var failed = Snapshot(RtIdA, CkArchiveStatus.Failed) with
+        {
+            StatusReason = "'Pin' (reaches the Hidden attribute 'Pin')", HiddenColumns = ["Pin"]
+        };
+        _archiveStore.GetAsync(id).Returns(Snapshot(RtIdA, CkArchiveStatus.Activated), failed);
+        _lifecycle.RevalidateAccessAsync(id).Returns(false);
+        await StageContainerAsync([NativeEntry(RtIdA, CkArchiveStatus.Activated, ("s1", 100))]);
+
+        var result = await RunAsync();
+
+        var archive = result!.Archives.Single();
+        await Assert.That(archive.Outcome).IsEqualTo("Imported");
+        await Assert.That(archive.Detail).IsEqualTo("status Failed");
+        await Assert.That(archive.Rows).IsEqualTo(100L);
+        Received.InOrder(() =>
+        {
+            _lifecycle.RevalidateAccessAsync(id);
+            _repository.DeleteArchiveAsync(id);
+            _repository.EnsureArchiveCreatedAsync(failed);
+            _repository.LoadArchiveFromStagingAsync(id, Arg.Any<ArchiveCopyPlan>(), Arg.Any<ArchiveCopyStagingLocation>(),
+                Arg.Any<ArchiveCopyOptions?>(), Arg.Any<CancellationToken>());
+        });
+        await _lifecycle.DidNotReceive().ActivateAsync(Arg.Any<OctoObjectId>());
+        await _lifecycle.DidNotReceive().EnableAsync(Arg.Any<OctoObjectId>());
+        await _lifecycle.DidNotReceive().DisableAsync(Arg.Any<OctoObjectId>());
+        await Assert.That(_log.Messages.Any(m => m.Contains("reach Hidden attributes (Pin)") && m.Contains("stays Failed")))
+            .IsTrue();
+    }
+
+    [Test]
+    public async Task Run_Format2_ADisabledArchiveWithAHiddenColumn_IsLoadedWithoutIt_AndStaysDisabled()
+    {
+        // AB#9141: the re-validation records nothing for a Disabled archive; the restore still keeps the Hidden values out.
+        CaptureRestores();
+        var id = new OctoObjectId(RtIdA);
+        var disabled = Snapshot(RtIdA, CkArchiveStatus.Disabled);
+        _archiveStore.GetAsync(id).Returns(disabled);
+        _lifecycle.RevalidateAccessAsync(id).Returns(false);
+        await StageContainerAsync([NativeEntry(RtIdA, CkArchiveStatus.Disabled, ("s1", 100))]);
+
+        var result = await RunAsync();
+
+        await Assert.That(result!.Archives.Single().Outcome).IsEqualTo("Imported");
+        await Assert.That(result.Archives.Single().Detail).IsEqualTo("status Disabled");
+        await _repository.Received(1).EnsureArchiveCreatedAsync(disabled);
+        await _lifecycle.DidNotReceive().ActivateAsync(Arg.Any<OctoObjectId>());
+        await _lifecycle.DidNotReceive().EnableAsync(Arg.Any<OctoObjectId>());
+    }
+
+    [Test]
+    public async Task Run_Format2_ABackupThatHoldsAHiddenColumn_IsSkippedBeforeItsTableIsTouched()
+    {
+        // AB#9141: a backup written before the change carries the column 'pin'; the load would refuse it after the drop.
+        CaptureRestores();
+        var id = new OctoObjectId(RtIdA);
+        var failed = Snapshot(RtIdA, CkArchiveStatus.Failed) with { StatusReason = "Pin", HiddenColumns = ["Pin"] };
+        _archiveStore.GetAsync(id).Returns(failed);
+        _lifecycle.RevalidateAccessAsync(id).Returns(false);
+        var entry = NativeEntry(RtIdA, CkArchiveStatus.Failed, ("s1", 100));
+        entry = entry with
+        {
+            Copy = entry.Copy! with
+            {
+                Tables = [new BackupManifestTable("Data", [new BackupManifestColumn("rtid", "text"), new BackupManifestColumn("pin", "double precision")])]
+            }
+        };
+        await StageContainerAsync([entry]);
+
+        var result = await RunAsync();
+
+        await Assert.That(result!.Archives.Single().Outcome).IsEqualTo("Skipped");
+        await Assert.That(result.Archives.Single().Detail!.Contains("'pin'")).IsTrue();
+        await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Any<OctoObjectId>());
+    }
+
+    [Test]
+    public async Task Run_Format2_ARollupOverAHiddenAttribute_IsSkippedBeforeItsTableIsTouched()
+    {
+        CaptureRestores();
+        var id = new OctoObjectId(RollupId);
+        var rollup = Snapshot(RollupId, CkArchiveStatus.Failed) with
+        {
+            RollupAggregations = [new CkRollupAggregationSpec("voltage", CkRollupFunction.Sum, null)]
+        };
+        _archiveStore.GetAsync(id).Returns(Snapshot(RollupId, CkArchiveStatus.Activated), rollup);
+        _lifecycle.RevalidateAccessAsync(id).Returns(false);
+        await StageContainerAsync([NativeEntry(RollupId, CkArchiveStatus.Activated, ("r1", 10))]);
+
+        var result = await RunAsync();
+
+        await Assert.That(result!.Archives.Single().Outcome).IsEqualTo("Skipped");
+        await Assert.That(result.Archives.Single().Detail!.Contains("a rollup")).IsTrue();
+        await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Any<OctoObjectId>());
+    }
+
+    [Test]
+    public async Task Run_Format2_ARollupOfASourceRestoredWithoutItsHiddenColumns_IsSkippedBeforeItsTableIsTouched()
+    {
+        CaptureRestores();
+        SetupPostRestore((RollupId, CkArchiveStatus.Activated));
+        var source = new OctoObjectId(RtIdA);
+        var failed = Snapshot(RtIdA, CkArchiveStatus.Failed) with { StatusReason = "Pin", HiddenColumns = ["Pin"] };
+        _archiveStore.GetAsync(source).Returns(Snapshot(RtIdA, CkArchiveStatus.Activated), failed);
+        _lifecycle.RevalidateAccessAsync(source).Returns(false);
+        await StageContainerAsync([
+            NativeEntry(RollupId, CkArchiveStatus.Activated, ("r1", 10)),
+            NativeEntry(RtIdA, CkArchiveStatus.Activated, ("s1", 10))
+        ]);
+        var rollup = new RollupArchiveSnapshot(new OctoObjectId(RollupId), new RtCkId<CkTypeId>("System-1.0.0/Sensor"),
+            CkArchiveStatus.Activated, "rollup", [new RollupSourceReference(source)],
+            TimeSpan.FromHours(1), TimeSpan.Zero, null, [], null);
+        _rollupStore.EnumerateAsync().Returns(_ => One(rollup));
+
+        var result = await RunAsync();
+
+        await Assert.That(result!.Archives.Single(a => a.RtId == RtIdA).Detail).IsEqualTo("status Failed");
+        var skipped = result.Archives.Single(a => a.RtId == RollupId);
+        await Assert.That(skipped.Outcome).IsEqualTo("Skipped");
+        await Assert.That(skipped.Detail!.Contains(RtIdA)).IsTrue();
+        await _repository.DidNotReceive().DeleteArchiveAsync(new OctoObjectId(RollupId));
+        await _lifecycle.DidNotReceive().EnableAsync(Arg.Any<OctoObjectId>());
+    }
+
+    [Test]
+    public async Task Run_Format2_AFailingHiddenCheck_RestoresAsBefore()
+    {
+        CaptureRestores();
+        SetupPostRestore((RtIdA, CkArchiveStatus.Disabled));
+        _lifecycle.RevalidateAccessAsync(new OctoObjectId(RtIdA)).Returns<bool>(_ => throw new InvalidOperationException("no type"));
+        await StageContainerAsync([NativeEntry(RtIdA, CkArchiveStatus.Disabled, ("s1", 100))]);
+
+        var result = await RunAsync();
+
+        await Assert.That(result!.Archives.Single().Outcome).IsEqualTo("Imported");
+        await _lifecycle.Received(1).ActivateAsync(new OctoObjectId(RtIdA));
+    }
+
+    [Test]
     public async Task Run_Format2_FilesMissingFromTheContainer_SkipTheArchiveBeforeItsTableIsTouched()
     {
         CaptureRestores();
@@ -533,6 +678,39 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
         await Assert.That(entry.After.Count).IsEqualTo(0);
         // The repair clears the marker itself when it ends ok; the job must not clear it before.
         await _repository.DidNotReceive().SetRestoreReconcilePendingAsync(false, Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task Reconcile_ARollupSkippedForHiddenColumns_IsKeptOutOfTheRepair()
+    {
+        // AB#9141: the skip promises an untouched table; the tenant-wide repair must not rewrite it either.
+        CaptureRestores();
+        SetupPostRestore((RtIdA, CkArchiveStatus.Activated));
+        var rollupId = new OctoObjectId(RollupId);
+        var rollup = Snapshot(RollupId, CkArchiveStatus.Failed) with
+        {
+            RollupAggregations = [new CkRollupAggregationSpec("voltage", CkRollupFunction.Sum, null)]
+        };
+        _archiveStore.GetAsync(rollupId).Returns(Snapshot(RollupId, CkArchiveStatus.Activated), rollup);
+        _lifecycle.RevalidateAccessAsync(rollupId).Returns(false);
+        await StageContainerAsync([
+            NativeEntry(RtIdA, CkArchiveStatus.Activated, ("s1", 10)),
+            NativeEntry(RollupId, CkArchiveStatus.Activated, ("r1", 10))
+        ]);
+        var finding = new RollupConsistencyFinding(RollupConsistencyCheck.PointerWithoutRows, "pointer without rows");
+        var bad = new RollupConsistencyReport([new RollupConsistencyEntry(rollupId, [finding])], DateTime.UtcNow);
+        _repository.ValidateRollupsAsync(Arg.Any<IReadOnlyCollection<OctoObjectId>?>(), Arg.Any<CancellationToken>())
+            .Returns(bad);
+        IReadOnlyCollection<OctoObjectId>? scope = null;
+        _repository.RepairRollupsAsync(Arg.Do<IReadOnlyCollection<OctoObjectId>?>(s => scope = s), false,
+                Arg.Any<CancellationToken>())
+            .Returns(new RollupRepairReport(false, bad, [], bad, null));
+
+        var result = await RunAsync();
+
+        await Assert.That(result!.Archives.Single(a => a.RtId == RollupId).Outcome).IsEqualTo("Skipped");
+        await Assert.That(scope).IsNotNull();
+        await Assert.That(scope!.Contains(rollupId)).IsFalse();
     }
 
     [Test]

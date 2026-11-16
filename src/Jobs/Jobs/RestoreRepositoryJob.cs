@@ -8,8 +8,10 @@ using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.ConstructionKit.Contracts;
+using Meshmakers.Octo.ConstructionKit.Contracts.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.StreamData;
+using Meshmakers.Octo.Runtime.Engine.StreamData;
 using Meshmakers.Octo.Services.ArtifactStorage;
 using Meshmakers.Octo.Services.ArtifactStorage.Staging;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Services;
@@ -45,7 +47,8 @@ public partial class RestoreRepositoryJob(
     TimeProvider? timeProvider = null,
     IStreamDataRepositoryFactory? streamDataFactory = null,
     ISharedUploadStore? sharedUploads = null,
-    IDumpOperationGate? operationGate = null) : IRestoreRepositoryJob
+    IDumpOperationGate? operationGate = null,
+    ICkCacheService? ckCacheService = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -428,7 +431,7 @@ public partial class RestoreRepositoryJob(
         var archiveStore = tenantContext.GetArchiveRuntimeStore();
         var results = new List<ArchiveRestoreResult>(manifest.Archives.Count);
 
-        var (ordered, sourcesOfOthers) = await OrderSourcesFirstAsync(tenantContext, manifest.Archives);
+        var (ordered, sourcesOfOthers, sources) = await OrderSourcesFirstAsync(tenantContext, manifest.Archives);
 
         // See RestoreArchivesNativeAsync: a source that was not Activated but has rollups stays Activated until they are
         // restored (the restore-reconcile marker keeps the forward aggregation away meanwhile).
@@ -445,13 +448,21 @@ public partial class RestoreRepositoryJob(
         {
             ct.ThrowIfCancellationRequested();
             _progress.Report(ArchiveProgress(++archiveNumber, ordered.Count));
+            if (FindSourceRestoredWithoutActivation(entry.Schema.RtId, sources, results) is { } blockedBySource)
+            {
+                results.Add(ArchiveRestoreResult.Skipped(entry.Schema.RtId, blockedBySource) with { KeptOutOfRepair = true });
+                continue;
+            }
+
             results.Add(await RestoreOneArchiveAsync(tenantId, entry, zip, repository, lifecycle, archiveStore,
                 deferred.Contains(entry.Schema.RtId), ct));
         }
 
         for (var i = 0; i < results.Count; i++)
         {
-            if (deferred.Contains(results[i].RtId) && results[i].Outcome == ArchiveRestoreOutcome.Imported)
+            // AB#9141: an archive restored without its Hidden columns was never enabled for its dependents.
+            if (deferred.Contains(results[i].RtId) && results[i].Outcome == ArchiveRestoreOutcome.Imported &&
+                results[i].RestoredStatus == CkArchiveStatus.Activated)
             {
                 await lifecycle.DisableAsync(new OctoObjectId(results[i].RtId));
                 results[i] = results[i] with { RestoredStatus = CkArchiveStatus.Disabled };
@@ -473,17 +484,18 @@ public partial class RestoreRepositoryJob(
     ///     rollups by the length of their source chain; manifest order otherwise). A rollup cannot be activated before its
     ///     source is <c>Activated</c> again, and the dump lists the archives in no dependency order.
     /// </summary>
-    private static async Task<(IReadOnlyList<BackupManifestArchive> Ordered, HashSet<string> SourcesOfOthers)>
+    private static async Task<(IReadOnlyList<BackupManifestArchive> Ordered, HashSet<string> SourcesOfOthers,
+            IReadOnlyDictionary<string, List<string>> Sources)>
         OrderSourcesFirstAsync(ITenantContext tenantContext, IReadOnlyList<BackupManifestArchive> archives)
     {
         var sourcesOfOthers = new HashSet<string>(StringComparer.Ordinal);
+        var sources = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var rollupStore = tenantContext.GetRollupArchiveRuntimeStore();
         if (rollupStore == null || archives.Count < 2)
         {
-            return (archives, sourcesOfOthers);
+            return (archives, sourcesOfOthers, sources);
         }
 
-        var sources = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         await foreach (var rollup in rollupStore.EnumerateAsync())
         {
             sources[rollup.RtId.ToString()] = rollup.Sources.Select(r => r.SourceArchiveRtId.ToString()).ToList();
@@ -491,7 +503,7 @@ public partial class RestoreRepositoryJob(
 
         if (sources.Count == 0)
         {
-            return (archives, sourcesOfOthers);
+            return (archives, sourcesOfOthers, sources);
         }
 
         var inManifest = archives.Select(a => a.Schema.RtId).ToHashSet(StringComparer.Ordinal);
@@ -525,7 +537,111 @@ public partial class RestoreRepositoryJob(
 
         var ordered = archives.Select((entry, index) => (entry, index, depth: DepthOf(entry.Schema.RtId, [])))
             .OrderBy(x => x.depth).ThenBy(x => x.index).Select(x => x.entry).ToList();
-        return (ordered, sourcesOfOthers);
+        return (ordered, sourcesOfOthers, sources);
+    }
+
+    /// <summary>What <see cref="CheckHiddenColumnsAsync" /> found (AB#9141).</summary>
+    /// <param name="WithoutHidden">
+    ///     The archive (raw or time-range, not Activated after the re-validation) has columns that reach Hidden attributes:
+    ///     restore it without them and keep its status.
+    /// </param>
+    /// <param name="HiddenPaths">The column paths that reach Hidden (recorded, or from the CK model when it is available).</param>
+    /// <param name="SkipReason">The archive cannot be restored; its table was not touched.</param>
+    private sealed record HiddenColumnCheck(ArchiveSnapshot? WithoutHidden, IReadOnlyCollection<string> HiddenPaths,
+        string? SkipReason);
+
+    private static readonly HiddenColumnCheck NoHiddenColumns = new(null, [], null);
+
+    /// <summary>
+    ///     AB#9141: re-checks the restored archive definition against Hidden attributes of the restored CK model, before its
+    ///     table is touched. The lifecycle refuses to activate an archive whose columns reach a Hidden attribute, so the
+    ///     clean restore (drop, activate, disable, load) would drop the table and then fail. The re-validation
+    ///     (<see cref="IArchiveLifecycleService.RevalidateAccessAsync" />) sets an Activated archive to Failed with its reason
+    ///     and Hidden columns (a rollup over a Hidden attribute too, without columns). A raw or time-range archive that is not
+    ///     Activated then is restored without the Hidden columns (the backup holds none of their values) and keeps its status
+    ///     (Failed, Disabled), so <c>RedactHiddenColumns</c> resumes it. A rollup over a Hidden attribute is skipped.
+    /// </summary>
+    private async Task<HiddenColumnCheck> CheckHiddenColumnsAsync(string tenantId, OctoObjectId objectId,
+        IArchiveLifecycleService lifecycle, IArchiveRuntimeStore archiveStore)
+    {
+        try
+        {
+            if (await lifecycle.RevalidateAccessAsync(objectId))
+            {
+                return NoHiddenColumns;
+            }
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // The check could not read the model (e.g. the archive's type is unknown): the restore goes on as before, the
+            // activation reports the cause.
+            logger.LogWarning(e, "Archive '{ArchiveRtId}': the Hidden-attribute check before the restore failed", objectId);
+            return NoHiddenColumns;
+        }
+
+        var snapshot = await archiveStore.GetAsync(objectId);
+        if (snapshot is null || snapshot.RollupAggregations is not null || snapshot.Status == CkArchiveStatus.Activated)
+        {
+            return new HiddenColumnCheck(null, [],
+                $"it aggregates or archives an attribute that is Hidden in the CK model (archive is now " +
+                $"'{snapshot?.Status.ToString() ?? "unknown"}'{(snapshot?.RollupAggregations is null ? string.Empty : ", a rollup")}" +
+                "); it cannot be activated, its table was not touched. Change the rollup or the model");
+        }
+
+        var paths = new HashSet<string>(snapshot.HiddenColumns, StringComparer.OrdinalIgnoreCase);
+        if (ckCacheService != null)
+        {
+            try
+            {
+                paths.UnionWith(ArchiveHiddenColumnGuard.FindHiddenColumns(ckCacheService, tenantId, snapshot).Select(h => h.Path));
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                logger.LogWarning(e, "Archive '{ArchiveRtId}': the Hidden columns could not be read from the CK model", objectId);
+            }
+        }
+
+        return new HiddenColumnCheck(snapshot, paths, null);
+    }
+
+    /// <summary>
+    ///     AB#9141: a backup written before AB#9141 can hold the values of a column that reaches Hidden. The native load
+    ///     refuses a dumped column the table does not have, so such an archive is skipped before its table is dropped.
+    ///     Physical names follow the data store's rule (segments joined, lower case; engine-mongodb <c>ColumnNameMapper</c>).
+    /// </summary>
+    private static string? FindDumpedHiddenColumn(ArchiveCopyPlan plan, IReadOnlyCollection<string> hiddenPaths)
+    {
+        var hidden = hiddenPaths.Select(p => p.Replace(".", string.Empty, StringComparison.Ordinal).ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return plan.Tables.Where(t => t.Table == ArchiveCopyTable.Data).SelectMany(t => t.Columns).Select(c => c.Name)
+            .FirstOrDefault(hidden.Contains);
+    }
+
+    private void LogRestoredWithoutHidden(string tenantId, string rtId, ArchiveSnapshot snapshot,
+        IReadOnlyCollection<string> hiddenPaths) =>
+        logger.LogWarning(
+            "Archive '{ArchiveRtId}' of tenant '{TenantId}' has columns that reach Hidden attributes ({HiddenColumns}); its data " +
+            "was restored without them and it stays {Status} - RedactHiddenColumns removes them from the definition",
+            rtId, tenantId, string.Join(", ", hiddenPaths), snapshot.Status);
+
+    /// <summary>
+    ///     AB#9141: a rollup whose source was restored without activation (Hidden columns) cannot be activated either;
+    ///     skipped before its table is dropped.
+    /// </summary>
+    private static string? FindSourceRestoredWithoutActivation(string rtId,
+        IReadOnlyDictionary<string, List<string>> sources, IReadOnlyList<ArchiveRestoreResult> results)
+    {
+        if (!sources.TryGetValue(rtId, out var parents))
+        {
+            return null;
+        }
+
+        var blocked = results.Where(r => r.WithoutHiddenColumns).Select(r => r.RtId).ToHashSet(StringComparer.Ordinal);
+        var parent = parents.FirstOrDefault(blocked.Contains);
+        return parent == null
+            ? null
+            : $"its source archive '{parent}' was restored without its Hidden columns and is not Activated; the rollup " +
+              "cannot be activated, its table was not touched";
     }
 
     /// <summary>
@@ -571,6 +687,33 @@ public partial class RestoreRepositoryJob(
             {
                 return ArchiveRestoreResult.Skipped(rtId,
                     $"NDJSON entry '{entry.NdjsonEntry}' is missing from the backup container");
+            }
+
+            // AB#9141: an archive whose columns reach Hidden attributes cannot be activated; decided before the table is touched.
+            var hidden = await CheckHiddenColumnsAsync(tenantId, objectId, lifecycle, archiveStore);
+            if (hidden.SkipReason != null)
+            {
+                return ArchiveRestoreResult.Skipped(rtId, hidden.SkipReason) with { KeptOutOfRepair = true };
+            }
+
+            if (hidden.WithoutHidden is { } withoutHidden)
+            {
+                // The table without the Hidden columns; a value a row of an older backup carries for one of them is ignored.
+                await repository.DeleteArchiveAsync(objectId);
+                await repository.EnsureArchiveCreatedAsync(withoutHidden);
+                var hiddenCounter = new RowCounter();
+                await using (var dataStream = dataEntry.Open())
+                {
+                    await repository.ImportRowsAsync(objectId,
+                        NdjsonRowReader.ReadRowsAsync(dataStream, () => hiddenCounter.Count++, ct),
+                        ArchiveImportMode.InsertOnly, ct);
+                }
+
+                LogRestoredWithoutHidden(tenantId, rtId, withoutHidden, hidden.HiddenPaths);
+                return ArchiveRestoreResult.Imported(rtId, hiddenCounter.Count, withoutHidden.Status) with
+                {
+                    Seconds = stopwatch.Elapsed.TotalSeconds, WithoutHiddenColumns = true
+                };
             }
 
             // Clean restore (concept §5.1): drop -> recreate -> disable -> import -> restore status.
@@ -736,6 +879,15 @@ public partial class RestoreRepositoryJob(
 
         /// <summary>True when a failure applies to every further archive as well (the job log filter is missing).</summary>
         public bool StopsTheRestore { get; init; }
+
+        /// <summary>AB#9141: restored without its Hidden columns and not activated (its rollups cannot be activated).</summary>
+        public bool WithoutHiddenColumns { get; init; }
+
+        /// <summary>
+        ///     AB#9141: skipped because of Hidden columns with its table untouched; the rollup repair after the restore leaves it
+        ///     alone too.
+        /// </summary>
+        public bool KeptOutOfRepair { get; init; }
 
         public static ArchiveRestoreResult Imported(string rtId, long rowCount, CkArchiveStatus restoredStatus) =>
             new(rtId, ArchiveRestoreOutcome.Imported, null, rowCount, restoredStatus);

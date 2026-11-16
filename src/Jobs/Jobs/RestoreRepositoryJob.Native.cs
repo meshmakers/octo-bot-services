@@ -290,7 +290,7 @@ public partial class RestoreRepositoryJob
         var archiveStore = tenantContext.GetArchiveRuntimeStore();
         var results = new List<ArchiveRestoreResult>(manifest.Archives.Count);
         string? stopReason = null;
-        var (ordered, sourcesOfOthers) = await OrderSourcesFirstAsync(tenantContext, manifest.Archives);
+        var (ordered, sourcesOfOthers, sources) = await OrderSourcesFirstAsync(tenantContext, manifest.Archives);
 
         // A rollup is activated only while its source is Activated. A source that was not Activated in the backup but has
         // rollups in it is therefore left Activated until those are restored and set back at the end; for that time the
@@ -314,6 +314,12 @@ public partial class RestoreRepositoryJob
                 continue;
             }
 
+            if (FindSourceRestoredWithoutActivation(entry.Schema.RtId, sources, results) is { } blockedBySource)
+            {
+                results.Add(ArchiveRestoreResult.Skipped(entry.Schema.RtId, blockedBySource) with { KeptOutOfRepair = true });
+                continue;
+            }
+
             var archiveResult = await RestoreOneNativeArchiveAsync(tenantId, entry, pass.RunId, staged, repository,
                 lifecycle, archiveStore, deferred.Contains(entry.Schema.RtId), ct);
             results.Add(archiveResult);
@@ -326,7 +332,9 @@ public partial class RestoreRepositoryJob
 
         for (var i = 0; i < results.Count; i++)
         {
-            if (deferred.Contains(results[i].RtId) && results[i].Outcome == ArchiveRestoreOutcome.Imported)
+            // AB#9141: an archive restored without its Hidden columns was never enabled for its dependents.
+            if (deferred.Contains(results[i].RtId) && results[i].Outcome == ArchiveRestoreOutcome.Imported &&
+                results[i].RestoredStatus == CkArchiveStatus.Activated)
             {
                 await lifecycle.DisableAsync(new OctoObjectId(results[i].RtId));
                 results[i] = results[i] with { RestoredStatus = CkArchiveStatus.Disabled };
@@ -416,7 +424,48 @@ public partial class RestoreRepositoryJob
                     $"the files of slice '{missing?.Key ?? "?"}' are missing from the backup container");
             }
 
+            // AB#9141: an archive whose columns reach Hidden attributes cannot be activated; decided before the table is touched.
+            var hidden = await CheckHiddenColumnsAsync(tenantId, objectId, lifecycle, archiveStore);
+            if (hidden.SkipReason != null)
+            {
+                return ArchiveRestoreResult.Skipped(rtId, hidden.SkipReason) with { KeptOutOfRepair = true };
+            }
+
+            if (hidden.WithoutHidden != null && FindDumpedHiddenColumn(plan, hidden.HiddenPaths) is { } dumpedHidden)
+            {
+                return ArchiveRestoreResult.Skipped(rtId,
+                    $"the backup holds values of the column '{dumpedHidden}', which reaches a Hidden attribute (a backup written " +
+                    "before AB#9141); the archive is not restored, its table was not touched") with { KeptOutOfRepair = true };
+            }
+
             location = stagingFactory!.Create(tenantId, runId, ArchiveCopyStagingAccess.Restore);
+            if (hidden.WithoutHidden is { } withoutHidden)
+            {
+                // The table without the Hidden columns (the dump has none), the status stays as restored (Failed, Disabled).
+                await repository.DeleteArchiveAsync(objectId);
+                await repository.EnsureArchiveCreatedAsync(withoutHidden);
+                var hiddenLoad = await repository.LoadArchiveFromStagingAsync(objectId, plan, location, null, ct);
+                if (!hiddenLoad.IsSuccess)
+                {
+                    var reason = location.Scrub(hiddenLoad.Slices.FirstOrDefault(s => !s.IsSuccess)?.Message ??
+                                                $"the tables hold {hiddenLoad.LoadedRows?.ToString() ?? "an unknown number of"} " +
+                                                $"row(s), {hiddenLoad.ExpectedRows} expected");
+                    logger.LogWarning("Archive '{ArchiveRtId}' of tenant '{TenantId}' was not loaded: {Reason}", rtId,
+                        tenantId, reason);
+                    return ArchiveRestoreResult.Failed(rtId, reason) with
+                    {
+                        Seconds = stopwatch.Elapsed.TotalSeconds, WithoutHiddenColumns = true
+                    };
+                }
+
+                LogRestoredWithoutHidden(tenantId, rtId, withoutHidden, hidden.HiddenPaths);
+                return ArchiveRestoreResult.Imported(rtId,
+                    plan.Slices.Where(sl => sl.Table == ArchiveCopyTable.Data).Sum(sl => sl.RowCount),
+                    withoutHidden.Status) with
+                {
+                    Seconds = stopwatch.Elapsed.TotalSeconds, WithoutHiddenColumns = true
+                };
+            }
 
             // Clean restore (concept §7): disable, drop, create fresh (the platform's current DDL), disable.
             if (postSnapshot.Status == CkArchiveStatus.Activated)
@@ -582,7 +631,12 @@ public partial class RestoreRepositoryJob
             logger.LogWarning(
                 "Rollup reconcile of tenant '{TenantId}': {Count} rollup(s) are inconsistent after the restore; repairing",
                 tenantId, before.Rollups.Count(r => !r.IsOk));
-            var repair = await repository.RepairRollupsAsync(null, false, ct);
+            // AB#9141: a rollup skipped because of Hidden columns keeps its table untouched, also by the repair.
+            var keptOut = archives.Where(a => a.KeptOutOfRepair).Select(a => a.RtId).ToHashSet(StringComparer.Ordinal);
+            IReadOnlyCollection<OctoObjectId>? repairScope = keptOut.Count == 0
+                ? null
+                : before.Rollups.Select(r => r.RollupRtId).Where(id => !keptOut.Contains(id.ToString())).ToList();
+            var repair = await repository.RepairRollupsAsync(repairScope, false, ct);
             foreach (var rollup in repair.Before.Rollups)
             {
                 var id = rollup.RollupRtId;
