@@ -249,6 +249,13 @@ public partial class RestoreRepositoryJob(
         catch (Exception e)
         {
             logger.LogError(e, "Error while restoring database for tenant '{TenantId}'", tenantId);
+            if (_notificationWarnings.Count > 0 && e is not OperationCanceledException)
+            {
+                // The database is restored but a step after it failed (archives, secret sweep): the job error still
+                // names the recovery of the failed tenant notification.
+                throw NotificationWarningsFailure(e, _notificationWarnings);
+            }
+
             throw;
         }
         finally
@@ -915,6 +922,13 @@ public partial class RestoreRepositoryJob(
         public static ArchiveRestoreResult Failed(string rtId, string reason) =>
             new(rtId, ArchiveRestoreOutcome.Failed, reason, 0, null);
     }
+
+    /// <summary>
+    ///     The failure of a restore that threw after the database was restored and a tenant notification failed: the
+    ///     message of <paramref name="cause" /> followed by the warnings, which name the recovery (run ClearCache).
+    /// </summary>
+    internal static JobFailedException NotificationWarningsFailure(Exception cause, IEnumerable<string> warnings) =>
+        new($"{cause.Message} {string.Join(" ", warnings)}", cause);
 
     /// <summary>
     ///     Progress of the archive restore: 50 % after the database, up to 85 % before the last archive. Parameters are the

@@ -127,8 +127,17 @@ public class RestorePreSweepDumpJob(
         }
 
         // The restore is done; a Verify shows what came back (plaintext counts after restoring a pre-Encrypt dump).
-        var verify = await secretSweepCoordinator.SweepTenantAsync(tenantId, SecretSweepMode.Verify,
-            SecretSweepTrigger.Restore, new SecretSweepRunInfo(performContext?.BackgroundJob?.Id, triggeredBy), ct);
+        SecretSweepReport verify;
+        try
+        {
+            verify = await secretSweepCoordinator.SweepTenantAsync(tenantId, SecretSweepMode.Verify,
+                SecretSweepTrigger.Restore, new SecretSweepRunInfo(performContext?.BackgroundJob?.Id, triggeredBy), ct);
+        }
+        catch (Exception e) when (notificationWarnings.Count > 0 && e is not OperationCanceledException)
+        {
+            // The dump is restored; the job error still names the recovery of the failed tenant notification.
+            throw RestoreRepositoryJob.NotificationWarningsFailure(e, notificationWarnings);
+        }
         var legacy = verify.RemainingLegacyValues;
         if (legacy > 0)
         {

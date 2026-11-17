@@ -76,6 +76,28 @@ public class PreSweepDumpRestoreJobTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task RestoreJob_VerifyThrowsAfterAFailedNotification_TheJobErrorNamesClearCache()
+    {
+        await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+            new SecretSweepRunInfo("run-v"), CancellationToken.None);
+        CaptureRestores(() => new CommandResult
+        {
+            Success = true, TenantCreatedNotificationFailed = true,
+            Output = "Tenant 'tenant-1' was restored, but the tenant-created notification failed (bus down): run " +
+                     "ClearCache for the tenant."
+        });
+        _coordinator.SweepTenantAsync(Tenant, SecretSweepMode.Verify, Arg.Any<SecretSweepTrigger>(),
+                Arg.Any<SecretSweepRunInfo?>(), Arg.Any<CancellationToken>())
+            .Returns<SecretSweepReport>(_ => throw new InvalidOperationException("verify failed (test)"));
+
+        var failure = await Assert.That(async () => await CreateRestoreJob().Run(Tenant, "run-v", null, null, null))
+            .Throws<JobFailedException>();
+
+        await Assert.That(failure!.Message).Contains("verify failed (test)");
+        await Assert.That(failure.Message).Contains("run ClearCache for the tenant");
+    }
+
+    [Test]
     public async Task RestoreJob_AllNotificationsPublished_HasNoNotificationWarnings()
     {
         await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,

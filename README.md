@@ -383,11 +383,22 @@ dropped one. The recovery is a **ClearCache of the tenant**. The engine reports 
 | `Restore-1` method result | `clearCacheRequired: true` (a flag only; the summary carries no text) |
 | Bot log | one WARN per warning |
 
-A restore that **fails** after a failed notification keeps the engine's line in the job error: the failure message of the job
-embeds the whole engine result, `Output` included. The display of the warning in the CLI (`RestoreTenant`) and in the Refinery
-Studio restore view follows separately; until then both show the restore as completed with warnings without the text. The job
-does not run ClearCache itself: ClearCache publishes on the same bus whose publish just failed.
-Tests: `tests/Jobs.Tests/Jobs/TenantNotificationWarningsTests`, `RestoreRepositoryJobTests`, `PreSweepDumpRestoreJobTests`,
+A restore that **fails** after a failed notification names the recovery in the job error (`errorMessage`) as well: when the
+engine result is a failure, the job error embeds the whole engine result, `Output` included; when the engine restore succeeded
+and a later step of the job throws (archive restore, the Verify sweep of a pre-sweep dump restore), the job error is the
+exception message followed by the warnings.
+
+What the clients do today (their display of the warning text follows separately):
+
+- **octo-cli `RestoreTenant`** sees `outcome` `SucceededWithWarnings`, fails with "Tenant '...' (database '...') restored with
+  warnings. The tenant is not fully restored." and exits **non-zero**, without the ClearCache text. A script that runs the
+  restore therefore fails when the only warning is a notification warning.
+- **Refinery Studio** (restore view, `tenant-job.service.ts`) checks only `status` and reports a plain success; it shows
+  neither the outcome nor the text.
+
+The job does not run ClearCache itself: ClearCache publishes on the same bus whose publish just failed.
+Tests: `tests/Jobs.Tests/Jobs/TenantNotificationWarningsTests`, `RestoreRepositoryJobTests`, `RestoreRepositoryArchiveDataTests`,
+`PreSweepDumpRestoreJobTests`,
 `tests/Jobs.Tests/Api/RestoreOutcomeTests`, `tests/Jobs.Tests/Jobs/Operations/JobsForOperationTests`,
 `tests/Jobs.Tests/Methods/TenantRepositoryJobMethodHandlerTests`.
 
