@@ -176,6 +176,64 @@ public class RestoreOutcomeTests
         await Assert.That(dto.Outcome).IsEqualTo("SucceededWithWarnings");
     }
 
+    private const string ClearCacheWarning = "Tenant 'tenant-1' was restored and attached to database 'db-1', but the " +
+                                             "tenant-created notification failed (bus down). The services have not " +
+                                             "set the tenant up: run ClearCache for the tenant.";
+
+    [Test]
+    public async Task ARestoreWithANotificationWarning_SurvivesTheWire_AsWarningsWithTheClearCacheReason()
+    {
+        var result = JsonSerializer.Serialize(new Meshmakers.Octo.Backend.Jobs.Jobs.RestoreRepositoryResult
+        {
+            TenantId = "tenant-1", DatabaseName = "db-1", NotificationWarnings = [ClearCacheWarning]
+        });
+
+        var dto = OverTheWire(result);
+
+        await Assert.That(dto.Status).IsEqualTo("Succeeded");
+        await Assert.That(dto.Outcome).IsEqualTo("SucceededWithWarnings");
+        await Assert.That(dto.HasWarnings).IsTrue();
+        await Assert.That(dto.Reason).IsEqualTo(ClearCacheWarning);
+        await Assert.That(dto.FailedArchives).IsEmpty();
+    }
+
+    [Test]
+    public async Task APreSweepDumpRestoreWithANotificationWarning_IsSucceededWithWarnings()
+    {
+        var result = JsonSerializer.Serialize(new Meshmakers.Octo.Backend.Jobs.Jobs.PreSweepDumpRestoreResult
+        {
+            TenantId = "tenant-1", RunId = "run-1", NotificationWarnings = [ClearCacheWarning]
+        });
+
+        var dto = OverTheWire(result);
+
+        await Assert.That(dto.Outcome).IsEqualTo("SucceededWithWarnings");
+        await Assert.That(dto.Reason).IsEqualTo(ClearCacheWarning);
+    }
+
+    [Test]
+    public async Task ARestoreWithoutNotificationWarnings_KeepsTheReasonAndIsSucceeded()
+    {
+        var result = JsonSerializer.Serialize(new Meshmakers.Octo.Backend.Jobs.Jobs.RestoreRepositoryResult
+            { TenantId = "tenant-1", DatabaseName = "db-1" });
+
+        var dto = OverTheWire(result);
+
+        await Assert.That(dto.Outcome).IsEqualTo("Succeeded");
+        await Assert.That(dto.Reason).IsNull();
+        await Assert.That(dto.HasWarnings).IsFalse();
+    }
+
+    [Test]
+    public async Task APreSweepDumpRestoreWithoutNotificationWarnings_IsLeftAlone()
+    {
+        var dto = Apply(JsonSerializer.Serialize(new Meshmakers.Octo.Backend.Jobs.Jobs.PreSweepDumpRestoreResult
+            { TenantId = "tenant-1", RunId = "run-1" }));
+
+        await Assert.That(dto.Outcome).IsNull();
+        await Assert.That(dto.Reason).IsNull();
+    }
+
     [Test]
     [Arguments(null)]
     [Arguments("")]

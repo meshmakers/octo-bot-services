@@ -60,6 +60,34 @@ public class PreSweepDumpRestoreJobTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task RestoreJob_TenantNotificationFailed_ReturnsTheClearCacheWarningInTheResult()
+    {
+        await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+            new SecretSweepRunInfo("run-n"), CancellationToken.None);
+        const string warning = "Tenant 'tenant-1' was restored and attached to database 'tenant1db', but the " +
+                               "tenant-created notification failed (bus down). The services have not set the tenant " +
+                               "up: run ClearCache for the tenant.";
+        CaptureRestores(() => new CommandResult
+            { Success = true, TenantCreatedNotificationFailed = true, Output = warning });
+
+        var result = await CreateRestoreJob().Run(Tenant, "run-n", null, null, null);
+
+        await Assert.That(result!.NotificationWarnings).IsEquivalentTo(new[] { warning });
+    }
+
+    [Test]
+    public async Task RestoreJob_AllNotificationsPublished_HasNoNotificationWarnings()
+    {
+        await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+            new SecretSweepRunInfo("run-p"), CancellationToken.None);
+        CaptureRestores();
+
+        var result = await CreateRestoreJob().Run(Tenant, "run-p", null, null, null);
+
+        await Assert.That(result!.NotificationWarnings).IsEmpty();
+    }
+
+    [Test]
     public async Task RestoreJob_DeletedDump_FailsWithoutRestoring()
     {
         await _runs.UpsertAsync(Tenant, new SecretSweepRunDto

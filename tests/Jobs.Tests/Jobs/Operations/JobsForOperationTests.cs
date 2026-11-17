@@ -146,6 +146,25 @@ public class JobsForOperationTests
         await Assert.That(summary).IsEqualTo(new RestoreOperationSummary(3, 1, 0));
         await Assert.That(summary.ToJson()).DoesNotContain("boom");
         await Assert.That(RestoreOperationSummary.FromJson("nope")).IsNull();
+        await Assert.That(summary.ClearCacheRequired).IsFalse();
+    }
+
+    [Test]
+    public async Task RestoreSummary_ANotificationWarning_SetsClearCacheRequired_WithoutItsText()
+    {
+        var result = new RestoreRepositoryResult
+        {
+            NotificationWarnings = ["Tenant 't' was dropped, but the tenant-deleted notification failed (boom). " +
+                                    "The services may still hold the tenant's cached state: run ClearCache for the tenant."]
+        };
+
+        var summary = RestoreOperationSummary.From(result);
+
+        await Assert.That(summary).IsEqualTo(new RestoreOperationSummary(0, 0, 0, true));
+        await Assert.That(summary.ToJson()).DoesNotContain("boom");
+        // A summary written before the member existed still reads, as "no ClearCache needed".
+        await Assert.That(RestoreOperationSummary.FromJson("""{"archiveCount":1,"failedArchiveCount":0,"secretsToReEnterCount":0}"""))
+            .IsEqualTo(new RestoreOperationSummary(1, 0, 0));
     }
 
     [Test]

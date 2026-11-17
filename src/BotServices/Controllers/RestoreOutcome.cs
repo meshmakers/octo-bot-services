@@ -7,6 +7,9 @@ namespace Meshmakers.Octo.Backend.BotServices.Controllers;
 ///     Reads the outcome of a restore from the stored job result (AB#6969): the job state stays <c>Succeeded</c> (concept
 ///     decision 4), but a restore whose archives failed or whose rollups could not be checked must not look like a plain
 ///     success to the CLI. Results of other job kinds (a file reference, a dump) are left alone.
+///     A restore whose tenant notification failed after the commit (the services may not have set the restored tenant up)
+///     is <c>SucceededWithWarnings</c> as well, and its warnings, which name the recovery (run ClearCache for the tenant), go
+///     into <see cref="JobDto.Reason" />, the only text field of the job for a succeeded job.
 /// </summary>
 internal static class RestoreOutcome
 {
@@ -33,8 +36,10 @@ internal static class RestoreOutcome
             return;
         }
 
+        var notificationWarnings = (result?.NotificationWarnings ?? [])
+            .Where(w => !string.IsNullOrWhiteSpace(w)).ToList();
         if (result is null || (result.Archives is null && result.RollupReconcile is null &&
-                               result.BackupFormatVersion is null))
+                               result.BackupFormatVersion is null && notificationWarnings.Count == 0))
         {
             return;
         }
@@ -56,8 +61,14 @@ internal static class RestoreOutcome
 
         dto.FailedArchives = failed;
         dto.NotCheckedRollups = notChecked;
-        var needsAttention = failed.Count > 0 || notChecked.Any(n => n.IsBlocking) || reconcile is { Ok: false };
+        var needsAttention = failed.Count > 0 || notChecked.Any(n => n.IsBlocking) || reconcile is { Ok: false } ||
+                             notificationWarnings.Count > 0;
         dto.Outcome = needsAttention ? "SucceededWithWarnings" : "Succeeded";
+        if (notificationWarnings.Count > 0)
+        {
+            var warnings = string.Join(" ", notificationWarnings);
+            dto.Reason = string.IsNullOrWhiteSpace(dto.Reason) ? warnings : dto.Reason + " " + warnings;
+        }
     }
 
     private sealed class RestoreResultShape
@@ -67,6 +78,8 @@ internal static class RestoreOutcome
         public List<ArchiveShape>? Archives { get; set; }
 
         public ReconcileShape? RollupReconcile { get; set; }
+
+        public List<string>? NotificationWarnings { get; set; }
     }
 
     private sealed class ArchiveShape

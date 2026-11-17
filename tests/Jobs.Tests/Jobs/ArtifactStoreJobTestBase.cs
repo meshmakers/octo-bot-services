@@ -63,7 +63,8 @@ public abstract class ArtifactStoreJobTestBase : IDisposable
     }
 
     /// <summary>Captures what mongorestore would have read.</summary>
-    protected List<(string Database, string? Source, byte[] Content)> CaptureRestores()
+    protected List<(string Database, string? Source, byte[] Content)> CaptureRestores(
+        Func<CommandResult>? engineResult = null)
     {
         var restores = new List<(string, string?, byte[])>();
         _systemContext.RestoreTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
@@ -71,7 +72,7 @@ public abstract class ArtifactStoreJobTestBase : IDisposable
             .Returns(ci =>
             {
                 restores.Add((ci.ArgAt<string>(1), ci.ArgAt<string?>(3), File.ReadAllBytes(ci.ArgAt<string>(2))));
-                return Task.FromResult(new CommandResult { Success = true });
+                return Task.FromResult(engineResult?.Invoke() ?? new CommandResult { Success = true });
             });
         return restores;
     }

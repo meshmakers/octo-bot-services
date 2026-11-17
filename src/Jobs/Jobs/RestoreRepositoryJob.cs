@@ -58,6 +58,12 @@ public partial class RestoreRepositoryJob(
     /// </summary>
     private IDumpProgressSink _progress = NullDumpProgressSink.Instance;
 
+    /// <summary>
+    ///     The tenant notification warnings of the engine restore of the running job (see
+    ///     <see cref="TenantNotificationWarnings" />); copied into <see cref="RestoreRepositoryResult.NotificationWarnings" />.
+    /// </summary>
+    private readonly List<string> _notificationWarnings = [];
+
     /// <inheritdoc />
     public Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
         string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext,
@@ -143,6 +149,7 @@ public partial class RestoreRepositoryJob(
                         stagedFileName, ct), ct);
                 if (nativeFromStore != null)
                 {
+                    nativeFromStore.NotificationWarnings = [.. _notificationWarnings];
                     nativeFromStore.SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId,
                         performContext?.BackgroundJob?.Id, ct);
                     return nativeFromStore;
@@ -198,6 +205,7 @@ public partial class RestoreRepositoryJob(
                         FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan)), ct);
                 if (nativeFromFile != null)
                 {
+                    nativeFromFile.NotificationWarnings = [.. _notificationWarnings];
                     nativeFromFile.SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId,
                         performContext?.BackgroundJob?.Id, ct);
                     return nativeFromFile;
@@ -234,6 +242,7 @@ public partial class RestoreRepositoryJob(
                 BackupFormatVersion = manifest?.FormatVersion,
                 Archives = octoBakResult?.Archives ?? [],
                 RollupReconcile = octoBakResult?.RollupReconcile,
+                NotificationWarnings = [.. _notificationWarnings],
                 SecretSweep = await RunPostRestoreSecretSweepAsync(tenantId, performContext?.BackgroundJob?.Id, ct)
             };
         }
@@ -402,6 +411,14 @@ public partial class RestoreRepositoryJob(
         }
 
         logger.LogInformation("Restored database '{DatabaseName}' for tenant '{TenantId}'", databaseName, tenantId);
+
+        // The data is restored, but the services may not know: a tenant notification of the engine failed after its
+        // commit. The administrator gets the recovery in the job result, not only in this log.
+        foreach (var warning in TenantNotificationWarnings.From(r, tenantId))
+        {
+            logger.LogWarning("Restore of tenant '{TenantId}' needs attention: {Warning}", tenantId, warning);
+            _notificationWarnings.Add(warning);
+        }
     }
 
     /// <summary>
@@ -950,6 +967,14 @@ public class RestoreRepositoryResult
     ///     archive data was restored or the data store has no rollup validation.
     /// </summary>
     public RollupReconcileSummary? RollupReconcile { get; set; }
+
+    /// <summary>
+    ///     Tenant notifications that failed after the restore committed, each naming the recovery (run ClearCache for the
+    ///     tenant); empty when every notification went out. The data is restored either way, but until the recovery the
+    ///     services may not have set the restored tenant up. A restore with warnings reports
+    ///     <c>SucceededWithWarnings</c>.
+    /// </summary>
+    public List<string> NotificationWarnings { get; set; } = [];
 }
 
 /// <summary>

@@ -1,4 +1,5 @@
 using Meshmakers.Octo.Backend.Jobs.Jobs;
+using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
@@ -98,6 +99,69 @@ public class RestoreRepositoryJobTests
             await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
 
             await _backupFileStorage.Received(1).DeleteFileAsync(tempFile);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Test]
+    public async Task Run_TenantNotificationFailed_ReturnsTheClearCacheWarningInTheResult()
+    {
+        const string deleteWarning = "Tenant 'tenant-1' was dropped, but the tenant-deleted notification failed (bus " +
+                                     "down). The services may still hold the tenant's cached state: run ClearCache for " +
+                                     "the tenant.";
+        const string createWarning = "Tenant 'tenant-1' was restored and attached to database 'db-1', but the " +
+                                     "tenant-created notification failed (bus down). The services have not set the " +
+                                     "tenant up: run ClearCache for the tenant.";
+        var result = await RunWithEngineResultAsync(new CommandResult
+        {
+            Success = true,
+            TenantCreatedNotificationFailed = true,
+            Output = createWarning + Environment.NewLine + deleteWarning
+        });
+
+        await Assert.That(result!.NotificationWarnings).IsEquivalentTo(new[] { createWarning, deleteWarning });
+        await Assert.That(RestoreOperationSummary.From(result).ClearCacheRequired).IsTrue();
+    }
+
+    [Test]
+    public async Task Run_AllNotificationsPublished_HasNoNotificationWarnings()
+    {
+        var result = await RunWithEngineResultAsync(new CommandResult { Success = true });
+
+        await Assert.That(result!.NotificationWarnings).IsEmpty();
+        await Assert.That(RestoreOperationSummary.From(result).ClearCacheRequired).IsFalse();
+    }
+
+    [Test]
+    public async Task Run_FailedRestore_KeepsTheClearCacheLineOfTheEngineInTheJobError()
+    {
+        const string deleteWarning = "Tenant 'tenant-1' was dropped, but the tenant-deleted notification failed (bus " +
+                                     "down). The services may still hold the tenant's cached state: run ClearCache for " +
+                                     "the tenant.";
+
+        await Assert.That(async () => await RunWithEngineResultAsync(new CommandResult
+                { Success = false, ExitCode = 1, Error = "mongorestore failed", Output = deleteWarning }))
+            .Throws<JobFailedException>().WithMessageContaining("run ClearCache for the tenant");
+    }
+
+    private async Task<RestoreRepositoryResult?> RunWithEngineResultAsync(CommandResult engineResult)
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(tempFile, "backup content");
+            _systemContext.IsSystemTenantExistingAsync().Returns(true);
+            _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns(tempFile);
+            _systemContext.RestoreTenantAsync(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(),
+                    Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+                .Returns(engineResult);
+
+            return await CreateJob().Run("tenant-1", "db-1", "abc123", null, false, null, null);
         }
         finally
         {

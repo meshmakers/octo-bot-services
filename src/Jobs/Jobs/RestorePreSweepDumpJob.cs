@@ -48,6 +48,7 @@ public class RestorePreSweepDumpJob(
         var databaseName = tenantContext.DatabaseName;
 
         string? scratchPath = null;
+        IReadOnlyList<string> notificationWarnings = [];
         try
         {
             string dumpPath;
@@ -110,6 +111,14 @@ public class RestorePreSweepDumpJob(
                 {
                     throw JobFailedException.CommandExecutionFailed(result, tenantId, "mongorestore");
                 }
+
+                // Restored, but a tenant notification failed after the commit: the job result names the recovery.
+                notificationWarnings = TenantNotificationWarnings.From(result, tenantId);
+                foreach (var warning in notificationWarnings)
+                {
+                    logger.LogWarning("Restore of the pre-sweep dump of tenant '{TenantId}' needs attention: {Warning}",
+                        tenantId, warning);
+                }
             }
         }
         finally
@@ -134,7 +143,8 @@ public class RestorePreSweepDumpJob(
             RunId = runId,
             FileName = dump.FileName,
             DatabaseName = databaseName,
-            SecretSweep = verify
+            SecretSweep = verify,
+            NotificationWarnings = [.. notificationWarnings]
         };
     }
 }
@@ -161,4 +171,10 @@ public class PreSweepDumpRestoreResult
     ///     (or <c>enc:v1</c>) came back - run <c>Encrypt</c>.
     /// </summary>
     public SecretSweepReport? SecretSweep { get; set; }
+
+    /// <summary>
+    ///     Tenant notifications that failed after the restore committed, each naming the recovery (run ClearCache for the
+    ///     tenant); empty when every notification went out. A restore with warnings reports <c>SucceededWithWarnings</c>.
+    /// </summary>
+    public List<string> NotificationWarnings { get; set; } = [];
 }

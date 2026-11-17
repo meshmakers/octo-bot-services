@@ -3,7 +3,7 @@ $schema: https://schemas.meshmakers.cloud/construction-kit-elements.schema.json
 # Each names the Hangfire job that did the work (system/v1/jobs and the download address it).
 records:
 - recordId: RepositoryRestoreResult
-  description: "Result of a repository restore: the job that restored the tenant, the archives of the backup and the secrets to re-enter."
+  description: "Result of a repository restore: the job that restored the tenant, the archives of the backup, the secrets to re-enter and whether the tenant needs a ClearCache."
   attributes:
     - id: ${this}/RepositoryDump.JobId
       name: JobId
@@ -13,6 +13,9 @@ records:
       name: FailedArchiveCount
     - id: ${this}/RepositoryRestore.SecretsToReEnterCount
       name: SecretsToReEnterCount
+    - id: ${this}/RepositoryRestore.ClearCacheRequired
+      name: ClearCacheRequired
+      isOptional: true
 - recordId: ArchiveDataExportResult
   description: "Result of an archive data export: the job that produced the export file and where it is downloaded."
   attributes:
