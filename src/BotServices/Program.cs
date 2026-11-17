@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Services.Infrastructure.DataProtection;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using BotServices.Resources;
@@ -160,6 +161,11 @@ try
         // the asset-repo over HTTP. BotConfigureStreamDataConfiguration supplies the CrateDB
         // connection from Bot:StreamData* options.
         .AddCrateDbStreamDataRepository<BotConfigureStreamDataConfiguration>();
+
+    // Persisted Data Protection key ring shared by all replicas (cookies, OIDC state, antiforgery survive
+    // load balancing and restarts); encrypted with the SecretEncryption key ring, see octo-common-services
+    // docs/data-protection.md.
+    builder.Services.AddOctoDataProtectionKeyRing("OctoBotServices");
 
     // Register the StreamData CK model descriptor so the archive CK types (CkArchive /
     // CkRollupArchive) resolve when the jobs read an ArchiveSnapshot from the runtime store.

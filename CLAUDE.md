@@ -38,6 +38,10 @@ Rules:
   neither the query token nor the cookie becomes an Authorization header. After the update an old cookie with
   `Path=/` stays in the browser until it expires; it is ignored outside `/ui`.
 
+## Data Protection key ring shared by all replicas (AB#9172)
+
+Data Protection keys (cookies, OIDC `state`/`nonce`, antiforgery) are persisted with `AddOctoDataProtectionKeyRing("OctoBotServices")` (octo-common-services, `docs/data-protection.md`): one key ring shared by all replicas and kept across restarts, stored in the system tenant and encrypted with the `SecretEncryption` key ring. Without a key ring the service keeps the local default directory (one ring per pod) and logs a warning; then multi-replica sign-in fails again. Roll out an identity service that ignores prefixed key names first (soft order).
+
 ## Export jobs run as the caller (AB#6734)
 
 `ExportRtByQuery` / `ExportRtByDeepGraph` (REST on the asset repository -> bus command -> `ModelCommandsConsumer` ->
