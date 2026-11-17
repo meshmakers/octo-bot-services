@@ -252,6 +252,25 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Run_Format2_AFailedTenantNotification_IsReportedInTheResult(bool restoreArchiveData)
+    {
+        const string warning = "Tenant 'tenant-1' was restored and attached to database 'tenantdb', but the " +
+                               "tenant-created notification failed (bus down). The services have not set the tenant " +
+                               "up: run ClearCache for the tenant.";
+        CaptureRestores(() => new CommandResult
+            { Success = true, TenantCreatedNotificationFailed = true, Output = warning });
+        SetupPostRestore((RtIdA, CkArchiveStatus.Activated));
+        await StageContainerAsync([NativeEntry(RtIdA, CkArchiveStatus.Activated, ("s1", 10))]);
+
+        var result = await RunAsync(restoreArchiveData);
+
+        await Assert.That(result!.BackupFormatVersion).IsEqualTo(2);
+        await Assert.That(result.NotificationWarnings).IsEquivalentTo(new[] { warning });
+    }
+
+    [Test]
     public async Task Run_Format2_RestoreArchiveDataOff_RestoresMongoOnly_AndStagesNothing()
     {
         var restores = CaptureRestores();

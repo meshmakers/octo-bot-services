@@ -367,6 +367,32 @@ the backup is format 2 with archive data and the installation has no staging are
 without account key) or no native copy; an unknown `formatVersion` is refused listing the supported versions `1 and 2`.
 The storage version recorded in the manifest and the target's are logged side by side; a difference is not refused.
 
+**Hidden columns** (AB#9141, format 1 and 2). A dump leaves out the values of every column known to reach a Hidden CK attribute
+(and of computed or rollup columns derived from it) from the staged files, the manifest and the NDJSON rows; when the archive's
+CK type cannot be read, only the columns recorded on the archive are known (residual risk, see the engine doc). Before a restore touches an archive's table it re-validates the restored definition
+(`IArchiveLifecycleService.RevalidateAccessAsync`, which sets an Activated archive with such a column to `Failed`). A raw or
+time-range archive that is then not Activated (Failed, Disabled) is not activated (the activation refuses it): its table is
+dropped, created for the definition without those columns (`IStreamDataRepository.EnsureArchiveCreatedAsync`), loaded, and the
+archive **keeps its status** (result detail `status Failed` / `status Disabled`); `RedactHiddenColumns` removes the columns.
+Skipped with the reason, table untouched: a rollup over a Hidden attribute, a rollup whose source was restored this way, and a
+native backup written before AB#9141 that still holds such a column; the rollup repair after the restore leaves these archives
+alone too (its scope excludes them). If the check cannot read the model, the restore goes on as before. The job takes the optional `ICkCacheService` to name the Hidden columns of an archive the re-validation does not record.
+Details: engine `docs/archive-hidden-columns.md`, "Backups".
+
+**Rollup reconcile** (after the archives of every restore with archive data, format 1 and 2; AB#5967 slice 2). A recompute flag
+restored from the backup (`RecomputeInProgress`) is reset first, because it would suppress the orphan check. The
+restore-reconcile marker is set (reclaim, forward aggregation and recompute stand still for the tenant), the rollups are
+validated (`ValidateRollupsAsync`). A consistent restore needs no repair: the marker is cleared and the result reports `ok`.
+Otherwise `RepairRollupsAsync` (validate, repair, validate, synchronous inside the job) runs; it clears the marker only when the
+tenant validates ok afterwards. The result (`rollupReconcile`) carries per rollup the findings before, the repair steps with
+their status and the findings after. A failing step leaves the marker set and is named in `failedStep`; the restore itself has
+succeeded and the job does not fail.
+
+**Fallback to format 1** (the job log names the reason; nothing else changes): no artifact store or a `FileSystem` store, an Azure
+store without an account key (managed identity is phase 2), a stream data repository without native copy
+(`SupportsStagingCopy` false), or a CrateDB whose job log filter is missing (the readiness check, or `ArchiveCopyRefusedException` with reason
+`JobLogNotFiltered`).
+
 ### Restore: services that were not told about the tenant
 
 After its commit the engine (`ITenantBackupService.RestoreTenantAsync`) publishes the tenant notifications: tenant-deleted when it
@@ -397,36 +423,10 @@ What the clients do today (their display of the warning text follows separately)
   neither the outcome nor the text.
 
 The job does not run ClearCache itself: ClearCache publishes on the same bus whose publish just failed.
-Tests: `tests/Jobs.Tests/Jobs/TenantNotificationWarningsTests`, `RestoreRepositoryJobTests`, `RestoreRepositoryArchiveDataTests`,
+Tests: `tests/Jobs.Tests/Jobs/TenantNotificationWarningsTests`, `RestoreRepositoryJobTests`, `RestoreRepositoryArchiveDataTests`, `RestoreRepositoryNativeTests`,
 `PreSweepDumpRestoreJobTests`,
 `tests/Jobs.Tests/Api/RestoreOutcomeTests`, `tests/Jobs.Tests/Jobs/Operations/JobsForOperationTests`,
 `tests/Jobs.Tests/Methods/TenantRepositoryJobMethodHandlerTests`.
-
-**Hidden columns** (AB#9141, format 1 and 2). A dump leaves out the values of every column known to reach a Hidden CK attribute
-(and of computed or rollup columns derived from it) from the staged files, the manifest and the NDJSON rows; when the archive's
-CK type cannot be read, only the columns recorded on the archive are known (residual risk, see the engine doc). Before a restore touches an archive's table it re-validates the restored definition
-(`IArchiveLifecycleService.RevalidateAccessAsync`, which sets an Activated archive with such a column to `Failed`). A raw or
-time-range archive that is then not Activated (Failed, Disabled) is not activated (the activation refuses it): its table is
-dropped, created for the definition without those columns (`IStreamDataRepository.EnsureArchiveCreatedAsync`), loaded, and the
-archive **keeps its status** (result detail `status Failed` / `status Disabled`); `RedactHiddenColumns` removes the columns.
-Skipped with the reason, table untouched: a rollup over a Hidden attribute, a rollup whose source was restored this way, and a
-native backup written before AB#9141 that still holds such a column; the rollup repair after the restore leaves these archives
-alone too (its scope excludes them). If the check cannot read the model, the restore goes on as before. The job takes the optional `ICkCacheService` to name the Hidden columns of an archive the re-validation does not record.
-Details: engine `docs/archive-hidden-columns.md`, "Backups".
-
-**Rollup reconcile** (after the archives of every restore with archive data, format 1 and 2; AB#5967 slice 2). A recompute flag
-restored from the backup (`RecomputeInProgress`) is reset first, because it would suppress the orphan check. The
-restore-reconcile marker is set (reclaim, forward aggregation and recompute stand still for the tenant), the rollups are
-validated (`ValidateRollupsAsync`). A consistent restore needs no repair: the marker is cleared and the result reports `ok`.
-Otherwise `RepairRollupsAsync` (validate, repair, validate, synchronous inside the job) runs; it clears the marker only when the
-tenant validates ok afterwards. The result (`rollupReconcile`) carries per rollup the findings before, the repair steps with
-their status and the findings after. A failing step leaves the marker set and is named in `failedStep`; the restore itself has
-succeeded and the job does not fail.
-
-**Fallback to format 1** (the job log names the reason; nothing else changes): no artifact store or a `FileSystem` store, an Azure
-store without an account key (managed identity is phase 2), a stream data repository without native copy
-(`SupportsStagingCopy` false), or a CrateDB whose job log filter is missing (the readiness check, or `ArchiveCopyRefusedException` with reason
-`JobLogNotFiltered`).
 
 ### The tenant gate was a no-op until AB#5054
 
@@ -558,7 +558,7 @@ System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the s
   `VALIDATING` / `IMPORTING_ROWS` / `FREEZING_ROLLUP_WINDOW` report `rows` (every 10,000) **without a percentage** (the total is
   known only at the end). Every report carries `jobId`. The job writes a count summary (`OctoOperationResult`) that becomes the result.
 - **Tenant notifications that failed after the restore** (`clearCacheRequired`, System.Bot 3.9.0). See "Restore: services that
-  were not told about the tenant" below.
+  were not told about the tenant" above.
 - **Failures** carry `jobId`; `reason` `another-job-running` = the job waited more than 10 min for its
   `DisableConcurrentExecution` lock and never started; `reason` `job-missing` = the job vanished from the job storage. The job's error
   (schema mismatch, archive not disabled, unknown archive, mongorestore failure) is read through `system/v1/jobs/{jobId}`.
