@@ -112,7 +112,8 @@ public sealed class TenantRepositoryRestoreHandler(
                     JobId = jobId,
                     ArchiveCount = summary?.ArchiveCount ?? 0,
                     FailedArchiveCount = summary?.FailedArchiveCount ?? 0,
-                    SecretsToReEnterCount = summary?.SecretsToReEnterCount ?? 0
+                    SecretsToReEnterCount = summary?.SecretsToReEnterCount ?? 0,
+                    ClearCacheRequired = summary?.ClearCacheRequired ?? false
                 }
             });
         }

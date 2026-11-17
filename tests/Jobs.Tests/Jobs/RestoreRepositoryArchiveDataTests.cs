@@ -111,6 +111,58 @@ public class RestoreRepositoryArchiveDataTests
     }
 
     [Test]
+    public async Task Run_OctoBak_ThrowsAfterTheMongoRestore_WithAFailedNotification_TheJobErrorNamesClearCache()
+    {
+        const string warning = "Tenant 'tenant-1' was restored and attached to database 'db-1', but the " +
+                               "tenant-created notification failed (bus down). The services have not set the tenant " +
+                               "up: run ClearCache for the tenant.";
+        var path = WriteOctoBak(new[] { ManifestEntry(Snapshot(RtIdA, CkArchiveStatus.Disabled)) });
+        try
+        {
+            SetupCommon(path);
+            _systemContext.RestoreTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(),
+                    Arg.Any<CancellationToken>(), Arg.Any<bool>())
+                .Returns(new CommandResult { Success = true, TenantCreatedNotificationFailed = true, Output = warning });
+            // No tenant context after the Mongo restore: the archive restore throws.
+            _systemContext.FindTenantContextAsync("tenant-1").Returns(Task.FromResult<ITenantContext>(null!));
+
+            var failure = await Assert.That(async () =>
+                    await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null))
+                .Throws<JobFailedException>();
+
+            await Assert.That(failure!.Message).Contains("Tenant context not found");
+            await Assert.That(failure.Message).Contains("run ClearCache for the tenant");
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task Run_OctoBak_ThrowsAfterTheMongoRestore_WithoutAFailedNotification_KeepsTheOriginalError()
+    {
+        var path = WriteOctoBak(new[] { ManifestEntry(Snapshot(RtIdA, CkArchiveStatus.Disabled)) });
+        try
+        {
+            SetupCommon(path);
+            _systemContext.FindTenantContextAsync("tenant-1").Returns(Task.FromResult<ITenantContext>(null!));
+
+            var failure = await Assert.That(async () =>
+                    await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null))
+                .Throws<JobFailedException>();
+
+            await Assert.That(failure!.Message).Contains("Tenant context not found");
+            await Assert.That(failure.Message).DoesNotContain("ClearCache");
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Test]
     public async Task Run_OctoBak_RestoreArchiveData_Disabled_RunsCleanSequence()
     {
         var snapshot = Snapshot(RtIdA, CkArchiveStatus.Disabled);

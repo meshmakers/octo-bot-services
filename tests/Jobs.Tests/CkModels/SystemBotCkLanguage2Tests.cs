@@ -28,13 +28,13 @@ public class SystemBotCkLanguage2Tests
     }
 
     [Test]
-    public async Task EmbeddedModel_IsSystemBot_3_8_0_OnCkLanguage2_WithTheCkV2MinEngineVersion()
+    public async Task EmbeddedModel_IsSystemBot_3_9_0_OnCkLanguage2_WithTheCkV2MinEngineVersion()
     {
         var root = await LoadEmbeddedSystemBotAsync();
 
-        // 3.7.0 (AB#8445) adds TenantRepository.Dump-1, 3.8.0 (AB#8447) Restore-1 and the archive data methods; still
-        // ckLanguage 2 within 3.x.
-        await Assert.That(root.ModelId.ToString()).IsEqualTo("System.Bot-3.8.0");
+        // 3.7.0 (AB#8445) adds TenantRepository.Dump-1, 3.8.0 (AB#8447) Restore-1 and the archive data methods, 3.9.0
+        // the ClearCacheRequired member of the restore result; still ckLanguage 2 within 3.x.
+        await Assert.That(root.ModelId.ToString()).IsEqualTo("System.Bot-3.9.0");
         await Assert.That(root.CkLanguage).IsEqualTo(2);
         // A ckLanguage 2 model always carries a minEngineVersion, so an engine without CK v2 refuses it (message 126)
         // instead of reading it as a classic model; the compiler stamps it, the sources never set it. Pinned exactly: a

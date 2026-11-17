@@ -133,6 +133,19 @@ public class TenantRepositoryJobMethodHandlerTests
         await Assert.That(record.ArchiveCount).IsEqualTo(2);
         await Assert.That(record.FailedArchiveCount).IsEqualTo(1);
         await Assert.That(record.SecretsToReEnterCount).IsEqualTo(3);
+        await Assert.That(record.ClearCacheRequired).IsFalse();
+    }
+
+    [Test]
+    public async Task Restore_Work_ANotificationWarning_CompletesWithClearCacheRequired()
+    {
+        _storage.States.Enqueue("Succeeded");
+        _storage.ResultJson = new RestoreOperationSummary(0, 0, 0, ClearCacheRequired: true).ToJson();
+
+        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, "user-1", "studio",
+            _progress, CancellationToken.None);
+
+        await Assert.That(outcome.Value!.Value!.ClearCacheRequired).IsTrue();
     }
 
     [Test]
@@ -318,7 +331,8 @@ public class TenantRepositoryJobMethodHandlerTests
     {
         var restore = JsonSerializer.Serialize(new RtRepositoryRestoreResultRecord
         {
-            JobId = JobId, ArchiveCount = 2, FailedArchiveCount = 0, SecretsToReEnterCount = 1
+            JobId = JobId, ArchiveCount = 2, FailedArchiveCount = 0, SecretsToReEnterCount = 1,
+            ClearCacheRequired = true
         }, CkMethodJson.Options);
         var export = JsonSerializer.Serialize(new RtArchiveDataExportResultRecord
         {
@@ -328,7 +342,8 @@ public class TenantRepositoryJobMethodHandlerTests
             CkMethodJson.Options);
 
         await Assert.That(restore).IsEqualTo(
-            "{\"jobId\":\"job-7\",\"archiveCount\":2,\"failedArchiveCount\":0,\"secretsToReEnterCount\":1}");
+            "{\"jobId\":\"job-7\",\"archiveCount\":2,\"failedArchiveCount\":0,\"secretsToReEnterCount\":1," +
+            "\"clearCacheRequired\":true}");
         await Assert.That(export).IsEqualTo(
             "{\"jobId\":\"job-7\",\"downloadPath\":\"t/v1/jobs/download?id=job-7\",\"rowCount\":5000000000}");
         await Assert.That(import).IsEqualTo("{\"jobId\":\"job-7\",\"rowCount\":3}");

@@ -10,6 +10,9 @@ attributes:
 - id: RepositoryRestore.SecretsToReEnterCount
   valueType: Int
   description: "Number of secrets the post-restore secret sweep could not read and that must be entered again; the sweep report names them."
+- id: RepositoryRestore.ClearCacheRequired
+  valueType: Boolean
+  description: "True when the restore committed but a tenant notification failed afterwards: the services may not have set the restored tenant up. Run ClearCache for the tenant; the job result (system/v1/jobs) carries the warning text."
 - id: ArchiveData.RowCount
   valueType: Int64
   description: "Number of archive rows written to the export file, or read from the import file."

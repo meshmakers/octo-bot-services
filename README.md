@@ -393,6 +393,41 @@ store without an account key (managed identity is phase 2), a stream data reposi
 (`SupportsStagingCopy` false), or a CrateDB whose job log filter is missing (the readiness check, or `ArchiveCopyRefusedException` with reason
 `JobLogNotFiltered`).
 
+### Restore: services that were not told about the tenant
+
+After its commit the engine (`ITenantBackupService.RestoreTenantAsync`) publishes the tenant notifications: tenant-deleted when it
+dropped the existing tenant, tenant-created after the attach. A publish that fails does not fail the restore (the data is
+restored), but until the services hear about the tenant they may not have set it up, or may still hold the cached state of the
+dropped one. The recovery is a **ClearCache of the tenant**. The engine reports this on its result
+(`CommandResult.TenantCreatedNotificationFailed` and a line naming "run ClearCache for the tenant" per failed notification in
+`CommandResult.Output`), and the restore jobs pass it to the administrator instead of only logging it:
+
+| Where | What the administrator sees |
+| --- | --- |
+| Job result (`RestoreRepositoryJob`, `RestorePreSweepDumpJob`) | `notificationWarnings`: one text per failed notification, each naming ClearCache (`TenantNotificationWarnings`, `src/Jobs/Jobs`) |
+| `system/v1/jobs/{jobId}` / `{tenantId}/v1/jobs/{jobId}` (`JobDto`) | `status` `Succeeded`, `outcome` `SucceededWithWarnings`, `reason` = the warning texts (the only text field of a succeeded job) |
+| `Restore-1` method result | `clearCacheRequired: true` (a flag only; the summary carries no text) |
+| Bot log | one WARN per warning |
+
+A restore that **fails** after a failed notification names the recovery in the job error (`errorMessage`) as well: when the
+engine result is a failure, the job error embeds the whole engine result, `Output` included; when the engine restore succeeded
+and a later step of the job throws (archive restore, the Verify sweep of a pre-sweep dump restore), the job error is the
+exception message followed by the warnings.
+
+What the clients do today (their display of the warning text follows separately):
+
+- **octo-cli `RestoreTenant`** sees `outcome` `SucceededWithWarnings`, fails with "Tenant '...' (database '...') restored with
+  warnings. The tenant is not fully restored." and exits **non-zero**, without the ClearCache text. A script that runs the
+  restore therefore fails when the only warning is a notification warning.
+- **Refinery Studio** (restore view, `tenant-job.service.ts`) checks only `status` and reports a plain success; it shows
+  neither the outcome nor the text.
+
+The job does not run ClearCache itself: ClearCache publishes on the same bus whose publish just failed.
+Tests: `tests/Jobs.Tests/Jobs/TenantNotificationWarningsTests`, `RestoreRepositoryJobTests`, `RestoreRepositoryArchiveDataTests`, `RestoreRepositoryNativeTests`,
+`PreSweepDumpRestoreJobTests`,
+`tests/Jobs.Tests/Api/RestoreOutcomeTests`, `tests/Jobs.Tests/Jobs/Operations/JobsForOperationTests`,
+`tests/Jobs.Tests/Methods/TenantRepositoryJobMethodHandlerTests`.
+
 ### The tenant gate was a no-op until AB#5054
 
 `TenantAuthorizationMiddleware` inspects only principals whose `Identity.AuthenticationType` reads
@@ -505,7 +540,7 @@ System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the s
 
 | Method | Parameters | Result (`Succeeded`) | Declared errors |
 | --- | --- | --- | --- |
-| `Restore-1` | `tusFileId`, `databaseName`, `oldDatabaseName?`, `restoreArchiveData?` | `{ jobId, archiveCount, failedArchiveCount, secretsToReEnterCount }` | `UPLOAD_NOT_FOUND` (`reason` `not-found` / `incomplete` / `empty`), `RESTORE_FAILED`, `RESTORE_INTERRUPTED` |
+| `Restore-1` | `tusFileId`, `databaseName`, `oldDatabaseName?`, `restoreArchiveData?` | `{ jobId, archiveCount, failedArchiveCount, secretsToReEnterCount, clearCacheRequired }` (`clearCacheRequired` since System.Bot 3.9.0) | `UPLOAD_NOT_FOUND` (`reason` `not-found` / `incomplete` / `empty`), `RESTORE_FAILED`, `RESTORE_INTERRUPTED` |
 | `ExportArchiveData-1` | `archiveRtId`, `fromUtc?`, `toUtc?` | `{ jobId, downloadPath, rowCount }` | `ARCHIVE_EXPORT_FAILED`, `ARCHIVE_EXPORT_INTERRUPTED` |
 | `ImportArchiveData-1` | `tusFileId`, `archiveRtId`, `mode?` (`InsertOnly` / `Upsert`) | `{ jobId, rowCount }` | `UPLOAD_NOT_FOUND`, `ARCHIVE_IMPORT_FAILED`, `ARCHIVE_IMPORT_INTERRUPTED` |
 
@@ -522,6 +557,8 @@ System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the s
   `RESTORING_ARCHIVES` 50–85 % (`archive`, `archiveCount`) → `SWEEPING_SECRETS` 90 %; export `EXPORTING_ROWS` and import
   `VALIDATING` / `IMPORTING_ROWS` / `FREEZING_ROLLUP_WINDOW` report `rows` (every 10,000) **without a percentage** (the total is
   known only at the end). Every report carries `jobId`. The job writes a count summary (`OctoOperationResult`) that becomes the result.
+- **Tenant notifications that failed after the restore** (`clearCacheRequired`, System.Bot 3.9.0). See "Restore: services that
+  were not told about the tenant" above.
 - **Failures** carry `jobId`; `reason` `another-job-running` = the job waited more than 10 min for its
   `DisableConcurrentExecution` lock and never started; `reason` `job-missing` = the job vanished from the job storage. The job's error
   (schema mismatch, archive not disabled, unknown archive, mongorestore failure) is read through `system/v1/jobs/{jobId}`.

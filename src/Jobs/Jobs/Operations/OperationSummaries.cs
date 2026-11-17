@@ -60,7 +60,12 @@ public static class ArchiveDataStages
 /// <param name="ArchiveCount">Archives of the backup that were handled (restored, skipped or failed).</param>
 /// <param name="FailedArchiveCount">Archives that could not be restored.</param>
 /// <param name="SecretsToReEnterCount">Secrets the post-restore sweep could not read.</param>
-public sealed record RestoreOperationSummary(int ArchiveCount, int FailedArchiveCount, int SecretsToReEnterCount)
+/// <param name="ClearCacheRequired">
+///     A tenant notification failed after the restore committed: run ClearCache for the tenant. The warning text stays in
+///     the job result.
+/// </param>
+public sealed record RestoreOperationSummary(int ArchiveCount, int FailedArchiveCount, int SecretsToReEnterCount,
+    bool ClearCacheRequired = false)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -68,7 +73,8 @@ public sealed record RestoreOperationSummary(int ArchiveCount, int FailedArchive
     public static RestoreOperationSummary From(RestoreRepositoryResult result) =>
         new(result.Archives.Count,
             result.Archives.Count(a => string.Equals(a.Outcome, "Failed", StringComparison.Ordinal)),
-            result.SecretSweep?.SecretsToReEnter.Count ?? 0);
+            result.SecretSweep?.SecretsToReEnter.Count ?? 0,
+            result.NotificationWarnings.Count > 0);
 
     /// <summary>Serializes the summary for the job parameter.</summary>
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);

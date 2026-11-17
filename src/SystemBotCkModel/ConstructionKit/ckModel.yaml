@@ -11,7 +11,9 @@ $schema: https://schemas.meshmakers.cloud/construction-kit-meta.schema.json
 # record RepositoryDumpResult - additions only, a Minor.
 # 3.8.0 (AB#8447, Feature AB#5694 F3.6): TenantRepository gets the static async methods Restore-1, ExportArchiveData-1 and
 # ImportArchiveData-1, their result records, four attributes and the enum ArchiveImportMode - additions only, a Minor.
-modelId: "System.Bot-3.8.0"
+# 3.9.0: the record RepositoryRestoreResult gets the attribute ClearCacheRequired (a restore whose tenant notification failed
+# after the commit) - an addition only, a Minor.
+modelId: "System.Bot-3.9.0"
 ckLanguage: 2
 dependencies:
   - System-[2.5,3.0)

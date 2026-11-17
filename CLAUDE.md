@@ -233,6 +233,21 @@ method this service hosts. User documentation: README "Repository dump as an asy
 - CK model: 3.8.0 = additions only (Minor), `minEngineVersion` stays 3.5.67; enum `ArchiveImportMode` keys = REST enum keys (test).
 - Tests: see README.
 
+## Restore jobs report failed tenant notifications (System.Bot 3.9.0)
+
+A restore whose tenant-created or tenant-deleted notification failed after the engine's commit succeeds, but the services may
+not know the restored tenant; the recovery is a ClearCache of the tenant. `TenantNotificationWarnings.From(CommandResult, tenantId)`
+reads the warnings (output lines naming ClearCache, plus a fallback for `TenantCreatedNotificationFailed` without a line);
+`RestoreRepositoryJob` and `RestorePreSweepDumpJob` put them into `NotificationWarnings` of their result and log them;
+`Controllers/RestoreOutcome` turns them into `Outcome = SucceededWithWarnings` and `JobDto.Reason`; `RestoreOperationSummary.ClearCacheRequired`
+becomes `RepositoryRestoreResult.ClearCacheRequired` (optional record member, so 3.9.0 is a Minor). A failed restore already
+carries the line in the job error (`JobFailedException.CommandExecutionFailed` embeds `CommandResult.ToString()`); a job that
+throws after a successful engine restore with warnings rethrows `RestoreRepositoryJob.NotificationWarningsFailure` (message plus
+warnings; cancellation is rethrown unchanged). The dump job never detaches, so it has no such warning. CLI and Studio display of
+the text are separate changes; until then octo-cli `RestoreTenant` exits non-zero on such a restore and the Studio shows a plain
+success. Details: README
+"Restore: services that were not told about the tenant".
+
 ## System.Bot on ckLanguage 2 (AB#8593; System.Bot 3.6.0)
 
 `src/SystemBotCkModel` is `System.Bot-3.6.0`, the first `ckLanguage: 2` release, a **Minor** against 3.5.0 (dependency

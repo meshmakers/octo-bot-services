@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.9.0 - 2026-11-17
+
+_Required bump level: minor._
+
+### Added
+
+- Attribute `RepositoryRestore.ClearCacheRequired` (Boolean) and the member `ClearCacheRequired` of the record
+  `RepositoryRestoreResult`: true when `Restore-1` restored the tenant, but a tenant notification failed after the commit,
+  so the services may not have set the restored tenant up. The recovery is a ClearCache of the tenant.
+
 ## 3.8.0 - 2026-11-11
 
 _Required bump level: minor._
