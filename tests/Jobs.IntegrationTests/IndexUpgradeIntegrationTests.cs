@@ -96,6 +96,32 @@ public class IndexUpgradeIntegrationTests
     }
 
     [Test]
+    public async Task LegacyIndexOfACollectionTheEngineDoesNotManage_RunEndsIncomplete_TheOthersAreUpgraded()
+    {
+        // Local stack check 2026-11-18: collections of models that are not Available (e.g. RtEntity_SystemStreamDataArchive
+        // in a tenant without an Available StreamData model) keep their legacy indexes, because the engine upgrades only
+        // the collection roots of Available models. A collection the engine has no CK type for behaves the same.
+        await WithTenantAsync("ixincompl", async (tenant, collection) =>
+        {
+            await MakeLegacyAsync(collection);
+            var unmanaged = _mongo.GetDatabase(tenant.DatabaseName).GetCollection<BsonDocument>("RtEntity_NotManaged");
+            await unmanaged.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+                new BsonDocument { { "ckTypeId", 1 }, { "attributes.other", 1 }, { "rtState", 1 } },
+                new CreateIndexOptions { Name = "NotManaged_1" }));
+            var runs = new MongoIndexUpgradeRunStore(_mongo);
+
+            await NewJob(NewStorage(), runs).UpgradeTenantAsync(tenant.TenantId, "test", null);
+
+            var record = await runs.GetAsync(tenant.TenantId);
+            await Assert.That(record!.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
+            await Assert.That(record.Error).Contains("RtEntity_NotManaged.NotManaged_1");
+            await Assert.That(record.LegacyIndexesAfter).IsEqualTo(1);
+            await Assert.That(record.CollectionsUpgraded).Contains(collection.CollectionNamespace.CollectionName);
+            await Assert.That(await DescribeAsync(collection)).Contains(i => i.Keys.SequenceEqual(TiebreakKeys));
+        });
+    }
+
+    [Test]
     public async Task AttachedTenantWithLegacyIndexes_PosCreateTenant_EnqueuesTheJob_WhichUpgradesThem()
     {
         await WithTenantAsync("ixattach", async (tenant, collection) =>

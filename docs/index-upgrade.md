@@ -23,8 +23,12 @@ they had before AB#8960.
    index first, the legacy one dropped after it. The job's token stops the engine **before the next collection** (an
    index build already started finishes) when the service shuts down, the window closes, or a CK import of the tenant
    asks to go first.
-6. **Check**: the legacy indexes are read again. Left over without a cancellation (the engine logs and skips an index it
-   cannot build) means `Failed`.
+6. **Check**: the legacy indexes are read again. Left over without a cancellation means `Incomplete` (warning with the
+   list, no retry): the engine upgrades only the collections of models that are `Available`, and it logs (does not throw)
+   an index it cannot build. A retry changes neither; the next sweep looks again. Seen in the local check: collections of
+   models that are not Available (e.g. `RtEntity_SystemStreamDataArchive` in a tenant without the StreamData model in
+   state Available) keep their legacy indexes until the model is repaired. Such a tenant gets a job after every deploy
+   and in every window; the run costs no index build.
 
 A run is never a failure because it cannot work now: `IndexUpgradeDeferredException` + `IndexUpgradeDeferAttribute`
 (state election filter, order 0, before `AutomaticRetry`) turn it into `Scheduled`: the job never enters `Failed`, the failed
@@ -99,7 +103,7 @@ completes interrupted ones, and the engine never drops an index before its repla
 ## Last-run record and logs
 
 One document per tenant in the **system database**, collection `IndexUpgradeRuns` (`_id` = tenant id in lower case): job id,
-trigger, status (`Running`, `Succeeded`, `NothingToDo`, `Deferred`, `Interrupted`, `Failed`), start, end, duration, legacy
+trigger, status (`Running`, `Succeeded`, `NothingToDo`, `Deferred`, `Interrupted`, `Incomplete`, `Failed`), start, end, duration, legacy
 indexes before and after, collections upgraded, error. Status only: nothing reads it to decide whether to build. The
 status endpoint of AB#9301 reads it.
 
@@ -161,10 +165,11 @@ separate change.
 
 - Unit (`tests/Jobs.Tests/IndexUpgrade`): shape by keys incl. hashed names; deferral filter before `AutomaticRetry`; job:
   nothing to do, upgrade, re-run, global slot held, tenant lease held, `index_update_lock` timeout, engine failure, legacy
-  left, CK import during the upgrade (stops before the next collection, import runs, upgrade continues), shutdown
+  indexes the engine does not upgrade (`Incomplete`), CK import during the upgrade (stops before the next collection, import runs, upgrade continues), shutdown
   (`Interrupted`, re-run completes), window off / closed / closing during the run; scheduler: two replicas receive
   `PosCreateTenant` -> one job, window rules, enqueue failure does not fail the consumer; sweep; import gate; startup.
 - Integration (`tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests`, Docker): real engine clean run, re-run and a run
-  stopped after the build end in the same indexes; attach of a tenant with legacy indexes -> `PosCreateTenant` -> job on a real
+  stopped after the build end in the same indexes; a legacy index in a collection the engine does not manage -> `Incomplete`,
+  the managed collection upgraded; attach of a tenant with legacy indexes -> `PosCreateTenant` -> job on a real
   Hangfire.Mongo storage -> new keys; two Hangfire servers on one storage with two tenants due -> never two rebuilds, the
   waiting job `Scheduled`, never `Failed`; a server stopped during a job -> `Interrupted`, another server completes it.

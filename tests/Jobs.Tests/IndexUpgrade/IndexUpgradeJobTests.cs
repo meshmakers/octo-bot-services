@@ -143,18 +143,26 @@ public class IndexUpgradeJobTests
     }
 
     [Test]
-    public async Task LegacyIndexesLeftAfterTheEngine_FailTheJob()
+    public async Task LegacyIndexesTheEngineDoesNotUpgrade_EndIncomplete_WithoutARetry()
     {
-        // The engine logs and skips an index it cannot build; the job sees the legacy index still there.
+        // The engine upgrades only collections of Available models and logs (not throws) an index it cannot build; the
+        // job sees the legacy index still there. A retry would change nothing: no exception, status Incomplete.
         _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        _indexes.AddLegacy(DatabaseName, "RtEntity_B", "B_1", "attributes.name");
         _tenant.UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>())
-            .Returns(Task.CompletedTask);
+            .Returns(_ =>
+            {
+                _indexes.UpgradeOneCollection(DatabaseName, "RtEntity_B");
+                return Task.CompletedTask;
+            });
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            NewJob().UpgradeTenantAsync(TenantId, "test", null));
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
 
-        await Assert.That(error!.Message).Contains("RtEntity_A.A_1");
-        await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Failed);
+        var record = _runs.Last[TenantId];
+        await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
+        await Assert.That(record.Error).Contains("RtEntity_A.A_1");
+        await Assert.That(record.LegacyIndexesAfter).IsEqualTo(1);
+        await Assert.That(record.CollectionsUpgraded).IsEquivalentTo(new[] { "RtEntity_B" });
     }
 
     [Test]

@@ -25,6 +25,13 @@ public enum IndexUpgradeRunStatus
     /// <summary>The service stopped during the run; Hangfire runs the job again.</summary>
     Interrupted,
 
+    /// <summary>
+    ///     The engine ran, but legacy indexes are left that it does not upgrade: collections of models that are not
+    ///     Available, or an index build the engine logged as failed. Listed in <see cref="IndexUpgradeRunRecord.Error" />;
+    ///     a retry would change nothing, the next sweep tries again.
+    /// </summary>
+    Incomplete,
+
     /// <summary>The run failed with <see cref="IndexUpgradeRunRecord.Error" />.</summary>
     Failed
 }

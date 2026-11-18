@@ -183,10 +183,14 @@ public class IndexUpgradeJob(
 
         if (after > 0)
         {
-            var message = $"{after} legacy index(es) are left after the upgrade: " +
+            // The engine upgrades only the collections of models that are Available and logs (does not throw) an index
+            // it cannot build. A retry changes neither, so the run ends Incomplete, not Failed (found in the local
+            // stack check: collections of models that are not Available keep their legacy indexes).
+            var message = $"{after} legacy index(es) are left that the engine did not upgrade (model not Available, " +
+                          "or the index build failed - see the engine's warnings): " +
                           string.Join(", ", progress.Remaining.Select(i => $"{i.CollectionName}.{i.IndexName}"));
-            await EndAsync(record, clock, IndexUpgradeRunStatus.Failed, message, after);
-            throw new InvalidOperationException($"Index upgrade of tenant '{tenantId}': {message}");
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete, message, after, LogLevel.Warning);
+            return;
         }
 
         await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, 0);
