@@ -13,7 +13,7 @@ public sealed class ArchiveNotRegisteredException : JobFailedException
     /// <summary>The message of every refusal.</summary>
     public const string RefusalMessage =
         ErrorCode + ": the archive is not a dump this platform produced for this tenant. " +
-        "Restore an unedited dump of this tenant, or ask a system operator.";
+        "Restore an unedited dump of this tenant whose registration has not expired, or ask a system operator.";
 
     /// <inheritdoc />
     public ArchiveNotRegisteredException() : base(RefusalMessage)

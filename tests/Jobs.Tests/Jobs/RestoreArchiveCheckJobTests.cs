@@ -2,6 +2,8 @@ using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Backend.Jobs.Tests.DumpRegistry;
+using Meshmakers.Octo.Communication.Contracts.DataTransferObjects;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Services;
 using Meshmakers.Octo.Services.ArtifactStorage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -100,6 +102,20 @@ public class RestoreArchiveCheckJobTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task OverloadWithoutTheCheck_RestoresARegisteredDump_WithoutTheOwnershipOverride()
+    {
+        var downloadedDump = await DumpAndDownloadAsync();
+        await StageUploadAsync(Tenant, "tus-legacy-registered", downloadedDump);
+        var engineCalls = CaptureEngineCalls();
+
+        await RestoreJob().Run(Tenant, "db-1", "tus-legacy-registered", null, false, null, null);
+
+        var engineCall = engineCalls.Single();
+        await Assert.That(engineCall.Content.SequenceEqual(downloadedDump)).IsTrue();
+        await Assert.That(engineCall.OverrideForeignOwnership).IsFalse();
+    }
+
+    [Test]
     public async Task WithoutAVerifier_ACheckedRestoreIsRefused()
     {
         var downloadedDump = await DumpAndDownloadAsync();
@@ -120,13 +136,30 @@ public class RestoreArchiveCheckJobTests : ArtifactStoreJobTestBase
         var downloadedDump = await DumpAndDownloadAsync();
         var localUpload = _env.WriteFile("local-upload", downloadedDump);
         _files.GetTusUploadFilePath(Tenant, "tus-local").Returns(localUpload);
-        var restores = CaptureRestores();
+        var engineCalls = CaptureEngineCalls();
 
         await RestoreJob().Run(Tenant, "db-1", "tus-local", null, false, false, ArchiveRegistrationCheck.Required,
             null, null);
 
-        await Assert.That(restores.Single().Content.SequenceEqual(downloadedDump)).IsTrue();
+        var engineCall = engineCalls.Single();
+        await Assert.That(engineCall.Content.SequenceEqual(downloadedDump)).IsTrue();
+        await Assert.That(engineCall.ArchivePath).IsNotEqualTo(localUpload);
+        await Assert.That(Path.GetDirectoryName(engineCall.ArchivePath)).IsEqualTo(_env.ScratchDirectory);
         await Assert.That(Directory.EnumerateFiles(_env.ScratchDirectory).Any()).IsFalse();
+    }
+
+    private List<(string ArchivePath, bool OverrideForeignOwnership, byte[] Content)> CaptureEngineCalls()
+    {
+        var engineCalls = new List<(string, bool, byte[])>();
+        _systemContext.RestoreTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken?>(), Arg.Any<bool>())
+            .Returns(call =>
+            {
+                var archivePath = call.ArgAt<string>(2);
+                engineCalls.Add((archivePath, call.ArgAt<bool>(8), File.ReadAllBytes(archivePath)));
+                return Task.FromResult(new CommandResult { Success = true });
+            });
+        return engineCalls;
     }
 
     private async Task<byte[]> DumpAndDownloadAsync()
@@ -135,7 +168,7 @@ public class RestoreArchiveCheckJobTests : ArtifactStoreJobTestBase
         _files.GenerateDumpFileName(Tenant).Returns(Path.GetFileName(localDumpPath));
         _files.GetDumpFilePath(Tenant, Path.GetFileName(localDumpPath)).Returns(localDumpPath);
         var recorder = new DumpHashRecorder(_registry, Options.Create(new DumpHashRegistryOptions()),
-            TimeProvider.System, NullLogger<DumpHashRecorder>.Instance, _env.Storage);
+            NullLogger<DumpHashRecorder>.Instance, _env.Storage);
         var dumpJob = new DumpRepositoryJob(Substitute.For<ILogger<DumpRepositoryJob>>(), _systemContext, _files,
             _env.Storage, dumpHashRecorder: recorder);
 

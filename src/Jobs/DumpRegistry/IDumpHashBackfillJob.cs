@@ -10,7 +10,7 @@ public interface IDumpHashBackfillJob
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns>The number of dumps registered by this run.</returns>
     [DisplayName("Register stored tenant dumps in the dump registry")]
-    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [AutomaticRetry(Attempts = 3, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     [DisableConcurrentExecution(60 * 10)]
     Task<int> Run(IBotCancellationToken? cancellationToken);
 }

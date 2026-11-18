@@ -9,8 +9,9 @@ _Required bump level: minor._
 - Attribute `RepositoryDump.Sha256` (String) and the optional member `Sha256` of the record `RepositoryDumpResult`: the
   SHA-256 of the dump file as the download serves it, registered for the tenant.
 - `Restore-1` documents the `reason` `archive-not-registered` of `RESTORE_FAILED`: a caller that is not a system
-  operator restored an archive that is not an unedited dump the platform produced for the tenant. No new error code:
-  adding one is a Major (row M8).
+  operator tried to restore an archive that is not an unedited dump the platform produced for the tenant (or whose
+  registration expired), and the service refused it without restoring anything. No new error code: adding one is a Major
+  (row M8).
 
 ## 3.9.0 - 2026-11-17
 

@@ -55,8 +55,9 @@ public partial class DumpRepositoryJob(
         IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        var dumpStartedAtUtc = DumpStartTime();
         var result = await RunCoreAsync(tenantId, includeArchiveData, NullDumpProgressSink.Instance, ct);
-        await RegisterDumpAsync(tenantId, result, null, ct);
+        await RegisterDumpAsync(tenantId, result, null, dumpStartedAtUtc, ct);
         return result;
     }
 
@@ -70,8 +71,10 @@ public partial class DumpRepositoryJob(
         // (OperationJobGuard, shared with restore and archive data since AB#8447).
         var sink = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Dump, operationGate,
             tenantId, operationId, "dump", logger, ct);
+        var dumpStartedAtUtc = DumpStartTime();
         var result = await RunCoreAsync(tenantId, includeArchiveData, sink, ct);
-        var sha256 = await RegisterDumpAsync(tenantId, result, performContext?.BackgroundJob?.Id, ct);
+        var sha256 = await RegisterDumpAsync(tenantId, result, performContext?.BackgroundJob?.Id, dumpStartedAtUtc,
+            ct);
         WriteDumpHash(performContext, sha256);
         return result;
     }

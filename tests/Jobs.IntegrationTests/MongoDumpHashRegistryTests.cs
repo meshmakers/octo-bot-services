@@ -9,7 +9,7 @@ namespace Meshmakers.Octo.Backend.Jobs.IntegrationTests;
 [NotInParallel]
 public class MongoDumpHashRegistryTests
 {
-    private static readonly DateTime DumpedAtUtc = new(2026, 11, 18, 10, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime DumpedAtUtc = TruncateToMilliseconds(DateTime.UtcNow);
 
     private static MongoDbContainer? _container;
     private static MongoClient? _client;
@@ -79,7 +79,11 @@ public class MongoDumpHashRegistryTests
         var expiryIndex = indexes.Single(index => index["name"] == "expiresAtUtc_ttl");
 
         await Assert.That(uniqueIndex["unique"].AsBoolean).IsTrue();
+        await Assert.That(uniqueIndex["key"].AsBsonDocument.Names.ToArray())
+            .IsEquivalentTo(new[] { "tenantId", "sha256" });
         await Assert.That(expiryIndex["expireAfterSeconds"].ToInt64()).IsEqualTo(0L);
+        await Assert.That(expiryIndex["key"].AsBsonDocument.Names.ToArray())
+            .IsEquivalentTo(new[] { "expiresAtUtc" });
     }
 
     [Test]
@@ -107,6 +111,25 @@ public class MongoDumpHashRegistryTests
         database = _client!.GetDatabase($"jobs-{Guid.NewGuid():N}");
         return new MongoDumpHashRegistry(database);
     }
+
+    [Test]
+    public async Task AnOlderRegistrationOfTheSameDump_DoesNotShortenTheNewerOne()
+    {
+        var registry = NewRegistry(out _);
+        await registry.RegisterAsync(Entry("tenant-a", "hash-1", "live.tar.gz"));
+
+        await registry.RegisterAsync(Entry("tenant-a", "hash-1", "backfill.tar.gz") with
+        {
+            DumpedAtUtc = DumpedAtUtc.AddDays(-30), ExpiresAtUtc = DumpedAtUtc.AddDays(335)
+        });
+
+        var entry = await registry.FindAsync("tenant-a", "hash-1");
+        await Assert.That(entry!.DumpedAtUtc).IsEqualTo(DumpedAtUtc);
+        await Assert.That(entry.ExpiresAtUtc).IsEqualTo(DumpedAtUtc.AddDays(365));
+    }
+
+    private static DateTime TruncateToMilliseconds(DateTime value) =>
+        new(value.Ticks - value.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
     private static DumpHashEntry Entry(string tenantId, string sha256, string fileName) =>
         new(tenantId, sha256, DumpedAtUtc, DumpedAtUtc.AddDays(365), fileName, 42, "job-1", DumpHashSources.Dump);

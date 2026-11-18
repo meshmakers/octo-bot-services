@@ -48,6 +48,9 @@ public partial class RestoreRepositoryNativeTests
         await _lifecycle.DidNotReceiveWithAnyArgs().DisableAsync(default(OctoObjectId));
         await _repository.DidNotReceiveWithAnyArgs().DeleteArchiveAsync(default(OctoObjectId));
         await Assert.That(await _env.Storage.FindRestoreStagingAsync(Tenant, "file-1")).IsNull();
+        await Assert.That(Directory.Exists(_env.ScratchDirectory)
+            ? Directory.EnumerateFiles(_env.ScratchDirectory).Count()
+            : 0).IsEqualTo(0);
     }
 
     private async Task RegisterStagedContainerAsync()

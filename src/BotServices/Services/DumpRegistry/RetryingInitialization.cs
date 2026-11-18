@@ -14,13 +14,14 @@ public sealed class RetryingInitialization(Func<Task> initialize)
     {
         lock (_gate)
         {
-            var needsNewRun = _current == null || _current.IsFaulted || _current.IsCanceled;
-            if (needsNewRun)
+            if (_current is { IsFaulted: false, IsCanceled: false } reusableRun)
             {
-                _current = initialize();
+                return reusableRun;
             }
 
-            return _current!;
+            var newRun = initialize();
+            _current = newRun;
+            return newRun;
         }
     }
 }

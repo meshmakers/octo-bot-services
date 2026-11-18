@@ -9,9 +9,18 @@ internal sealed class InMemoryDumpHashRegistry : IDumpHashRegistry
 
     public IReadOnlyCollection<DumpHashEntry> Entries => _entries.Values.ToList();
 
+    public int FailingRegistrations { get; set; }
+
     public Task RegisterAsync(DumpHashEntry entry, CancellationToken cancellationToken = default)
     {
-        _entries[(entry.TenantId.ToLowerInvariant(), entry.Sha256)] = entry;
+        if (FailingRegistrations > 0)
+        {
+            FailingRegistrations--;
+            throw new InvalidOperationException("registry not reachable");
+        }
+
+        var normalizedEntry = entry with { TenantId = entry.TenantId.ToLowerInvariant() };
+        _entries[(normalizedEntry.TenantId, entry.Sha256)] = normalizedEntry;
         return Task.CompletedTask;
     }
 
@@ -42,15 +51,17 @@ internal sealed class InMemoryDumpHashRegistry : IDumpHashRegistry
     private long RemoveWhere(string tenantId, Func<DumpHashEntry, bool> predicate)
     {
         var tenantKey = tenantId.ToLowerInvariant();
-        var matchingKeys = _entries.Where(pair => pair.Key.Tenant == tenantKey && predicate(pair.Value))
-            .Select(pair => pair.Key)
-            .ToList();
-        foreach (var key in matchingKeys)
+        var matchingEntries = _entries.Where(pair => pair.Key.Tenant == tenantKey && predicate(pair.Value)).ToList();
+        var removedCount = 0L;
+        foreach (var matchingEntry in matchingEntries)
         {
-            _entries.TryRemove(key, out _);
+            if (_entries.TryRemove(matchingEntry))
+            {
+                removedCount++;
+            }
         }
 
-        return matchingKeys.Count;
+        return removedCount;
     }
 }
 

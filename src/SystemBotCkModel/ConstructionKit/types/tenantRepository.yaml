@@ -41,7 +41,7 @@ types:
         valueCkRecordId: "${this}/RepositoryRestoreResult"
       errors:
         - { code: UPLOAD_NOT_FOUND, description: "No complete, non-empty upload with this id exists for the tenant; the parameter reason says which." }
-        - { code: RESTORE_FAILED, description: "The restore job failed; the parameter jobId names the job, system/v1/jobs shows its error. The parameter reason is archive-not-registered when the caller is not a system operator and the archive is not an unedited dump the platform produced for this tenant (nothing was restored)." }
+        - { code: RESTORE_FAILED, description: "The restore job failed; the parameter jobId names the job, system/v1/jobs shows its error. The parameter reason is archive-not-registered when the caller is not a system operator and the archive is not an unedited dump the platform produced for this tenant with a registration that has not expired (nothing was restored); an unchanged dump is refused once its registration expired." }
         - { code: RESTORE_INTERRUPTED, description: "The restore job was interrupted (the bot service stopped while it ran) and is not started again; the tenant database may be partly restored." }
       authorization:
         roles: [ TenantManagement ]

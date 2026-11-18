@@ -24,11 +24,20 @@ public partial class RestoreRepositoryJob
     {
         var copyPath = artifactStorage?.CreateScratchFilePath(VerifiedCopySuffix) ??
                        sourcePath + VerifiedCopySuffix + "-" + Guid.NewGuid().ToString("N");
-        await using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await using var target = new FileStream(copyPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920,
-            FileOptions.Asynchronous);
-        await source.CopyToAsync(target, ct);
+        try
+        {
+            await using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var target = new FileStream(copyPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                81920, FileOptions.Asynchronous);
+            await source.CopyToAsync(target, ct);
+        }
+        catch
+        {
+            DeleteJobOwnedFile(copyPath);
+            throw;
+        }
+
         return copyPath;
     }
 

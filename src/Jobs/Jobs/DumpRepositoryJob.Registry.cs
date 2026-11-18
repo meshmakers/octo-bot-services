@@ -6,15 +6,17 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
 public partial class DumpRepositoryJob
 {
+    private DateTime DumpStartTime() => (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+
     private async Task<string?> RegisterDumpAsync(string tenantId, string? jobResult, string? jobId,
-        CancellationToken ct)
+        DateTime dumpStartedAtUtc, CancellationToken ct)
     {
         if (jobResult == null || dumpHashRecorder == null)
         {
             return null;
         }
 
-        return await dumpHashRecorder.RecordAsync(tenantId, jobResult, jobId, ct);
+        return await dumpHashRecorder.RecordAsync(tenantId, jobResult, jobId, dumpStartedAtUtc, ct);
     }
 
     private void WriteDumpHash(PerformContext? performContext, string? sha256)

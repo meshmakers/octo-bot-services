@@ -11,7 +11,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Tests.DumpRegistry;
 public class DumpHashRecorderTests : IDisposable
 {
     private const string Tenant = "Tenant-1";
-    private static readonly DateTimeOffset Now = new(2026, 11, 18, 10, 0, 0, TimeSpan.Zero);
+    private static readonly DateTime DumpStartedAtUtc = new(2026, 11, 18, 9, 30, 0, DateTimeKind.Utc);
 
     private readonly ArtifactTestEnvironment _artifacts = new("k1");
     private readonly InMemoryDumpHashRegistry _registry = new();
@@ -30,7 +30,7 @@ public class DumpHashRecorderTests : IDisposable
         await Assert.That(stored.Encrypted).IsTrue();
 
         var recordedHash = await CreateRecorder().RecordAsync(Tenant, stored.ToResultReference(), "job-1",
-            CancellationToken.None);
+            DumpStartedAtUtc, CancellationToken.None);
 
         var expectedHash = Convert.ToHexStringLower(SHA256.HashData(_dumpContent));
         await Assert.That(recordedHash).IsEqualTo(expectedHash);
@@ -41,8 +41,31 @@ public class DumpHashRecorderTests : IDisposable
         await Assert.That(entry.FileName).IsEqualTo(stored.FileName);
         await Assert.That(entry.SizeBytes).IsEqualTo(_dumpContent.LongLength);
         await Assert.That(entry.Source).IsEqualTo(DumpHashSources.Dump);
-        await Assert.That(entry.DumpedAtUtc).IsEqualTo(Now.UtcDateTime);
-        await Assert.That(entry.ExpiresAtUtc).IsEqualTo(Now.UtcDateTime.AddDays(30));
+        await Assert.That(entry.DumpedAtUtc).IsEqualTo(DumpStartedAtUtc);
+        await Assert.That(entry.ExpiresAtUtc).IsEqualTo(DumpStartedAtUtc.AddDays(30));
+    }
+
+    [Test]
+    public async Task ARegistryWriteThatFailsOnce_IsTriedAgain()
+    {
+        var localPath = _artifacts.WriteFile("retry-dump.tar.gz", _dumpContent);
+        _registry.FailingRegistrations = 1;
+
+        await CreateRecorder(withArtifactStore: false).RecordAsync(Tenant, localPath, null, DumpStartedAtUtc,
+            CancellationToken.None);
+
+        await Assert.That(_registry.Entries.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ARegistryThatKeepsFailing_FailsTheRegistration()
+    {
+        var localPath = _artifacts.WriteFile("failing-dump.tar.gz", _dumpContent);
+        _registry.FailingRegistrations = 3;
+
+        await Assert.That(async () => await CreateRecorder(withArtifactStore: false).RecordAsync(Tenant, localPath,
+            null, DumpStartedAtUtc, CancellationToken.None)).Throws<InvalidOperationException>();
+        await Assert.That(_registry.Entries.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -51,7 +74,7 @@ public class DumpHashRecorderTests : IDisposable
         var localPath = _artifacts.WriteFile("local-dump.tar.gz", _dumpContent);
 
         var recordedHash = await CreateRecorder(withArtifactStore: false).RecordAsync(Tenant, localPath, null,
-            CancellationToken.None);
+            DumpStartedAtUtc, CancellationToken.None);
 
         await Assert.That(recordedHash).IsEqualTo(Convert.ToHexStringLower(SHA256.HashData(_dumpContent)));
         await Assert.That(_registry.Entries.Single().FileName).IsEqualTo("local-dump.tar.gz");
@@ -64,7 +87,7 @@ public class DumpHashRecorderTests : IDisposable
             .ToResultReference();
 
         await Assert.That(async () => await CreateRecorder().RecordAsync(Tenant, missingReference, "job-1",
-            CancellationToken.None)).Throws<JobFailedException>();
+            DumpStartedAtUtc, CancellationToken.None)).Throws<JobFailedException>();
         await Assert.That(_registry.Entries.Count).IsEqualTo(0);
     }
 
@@ -75,14 +98,14 @@ public class DumpHashRecorderTests : IDisposable
             "dump.tar.gz", _artifacts.WriteFile("dump", _dumpContent), ArtifactEncryption.IfConfigured);
 
         await Assert.That(async () => await CreateRecorder().RecordAsync(Tenant, stored.ToResultReference(), "job-1",
-            CancellationToken.None)).Throws<JobFailedException>();
+            DumpStartedAtUtc, CancellationToken.None)).Throws<JobFailedException>();
         await Assert.That(_registry.Entries.Count).IsEqualTo(0);
     }
 
     private DumpHashRecorder CreateRecorder(bool withArtifactStore = true)
     {
         var options = Options.Create(new DumpHashRegistryOptions { RetentionDays = 30 });
-        return new DumpHashRecorder(_registry, options, new FixedTimeProvider(Now),
-            NullLogger<DumpHashRecorder>.Instance, withArtifactStore ? _artifacts.Storage : null);
+        return new DumpHashRecorder(_registry, options, NullLogger<DumpHashRecorder>.Instance,
+            withArtifactStore ? _artifacts.Storage : null);
     }
 }

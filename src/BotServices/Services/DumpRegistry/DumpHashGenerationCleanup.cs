@@ -5,8 +5,8 @@ namespace Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
 
 /// <summary>
 ///     The setup of a tenant removes the registry entries of an earlier tenant with the same id (dumped before the current
-///     tenant was created). Cleanup only: reads already ignore them. Does nothing while the generation is unknown and
-///     never throws.
+///     tenant was created). Cleanup only: reads already ignore them. Does nothing while the generation is unknown; a
+///     failure is logged and answered with 0, only a cancellation of the caller is passed on.
 /// </summary>
 public sealed class DumpHashGenerationCleanup(
     ICkMethodOperationTenantGeneration generation,

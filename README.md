@@ -443,27 +443,35 @@ platform itself produced for the target tenant**:
 - **Registry.** Every dump that succeeds is registered right after it is stored, on both paths (REST `dump-repository` and the
   method `Dump-1`, format 1 and format 2): a streaming SHA-256 of the file exactly as the download serves it (the plaintext of an
   encrypted artifact), one entry per tenant and hash, in the collection `DumpHashRegistry` of the bot's job database
-  (`OctoSystemJobs`). Each entry holds the dump time, the expiry, the file name, the size, the job id and its writer (`dump` or
-  `backfill`). No API writes to it, so a tenant identity can only add entries by running real dumps of data it can already read.
-  `Dump-1` returns the hash as `sha256` (System.Bot 3.10.0). A dump whose registration fails fails its job.
+  (`OctoSystemJobs`). Each entry holds the dump time (the **start** of the dump, so a dump that began before a tenant with the
+  same id was created again never counts for the new tenant), the expiry, the file name, the size, the job id (only for `Dump-1`;
+  the REST dump has none) and its writer (`dump` or `backfill`). Registering the same hash again never moves its dump time or
+  expiry back. No API writes to it, so a tenant identity can only add entries by running real dumps of data it can already read.
+  `Dump-1` returns the hash as `sha256` (System.Bot 3.10.0). The registry write is tried three times; a dump whose registration
+  still fails fails its job, and the backfill registers the stored file at the next start.
 - **Check.** The gate (`restore-from-upload`, `Restore-1`) decides from the caller (`RestoreArchiveCheckPolicy`) and passes
   the decision to the job (`ArchiveRegistrationCheck`). For a tenant identity the job copies the upload into a job-owned file,
   hashes exactly those bytes right before the restore, and restores that copy; format 2 is then read from that file instead of
-  being streamed from the store. **Scratch space**: such a restore of a format 2 container needs the container plus its
-  extracted MongoDB blob on the scratch volume at the same time (the streaming path of an operator needs only the blob); size
-  the scratch volume for the largest tenant dump with archive data. Restore jobs enqueued without the decision (an older bot replica, a job queued before the
-  update) require a registered dump; a worker that does not know the new job signature fails the job.
+  being streamed from the store. **Scratch space**: such a restore of a format 2 container keeps the whole container on the
+  scratch volume while it extracts the MongoDB blob, so size the scratch volume for the largest format 2 container plus its
+  MongoDB blob; only an operator restore streamed from the store gets by with the blob alone. **Rollout**: restore jobs enqueued
+  without the decision (a job queued before the update, or by an older replica) require a registered dump, so an operator's
+  queued restore of an unregistered archive fails and is started again after the update; a worker that does not know the new
+  job signature fails the job without restoring anything. Roll the bot service out while no restore is running, or start
+  a failed restore again afterwards. A dump an older worker runs during the rollout is registered by the backfill at the next
+  start.
 - **Refusal.** One answer for an edited archive, an unknown archive, another tenant's dump and an expired entry, so the answer
   does not tell whether a hash exists: the REST job fails with
   `ARCHIVE_NOT_REGISTERED: the archive is not a dump this platform produced for this tenant. ...`, and `Restore-1` answers
   `RESTORE_FAILED` with `reason` `archive-not-registered` (a new declared error code would be a Major of System.Bot). Nothing is
   restored; the upload is consumed. The log names tenant, a 12-character hash prefix and the job.
 - **Dumps made before this version** are refused for tenant identities unless the backfill registered them. At every start the
-  service enqueues `IDumpHashBackfillJob`: it registers each tenant dump still held in the artifact store (category
-  `tenant-dumps`, which only the dump job writes) that has no entry yet, dated by the artifact, for tenants that still exist and
-  only while the retention has not run out. A dump file kept only outside the store needs a system operator to restore it.
+  service enqueues `IDumpHashBackfillJob` (up to three attempts): it registers each tenant dump still held in the artifact
+  store (category `tenant-dumps`, which only the dump job writes) that has no entry yet, dated by the artifact, for tenants that
+  still exist and only while the retention has not run out; a dump it cannot read or register is logged and skipped. A dump
+  file kept only outside the store needs a system operator to restore it.
   There is no transition period.
-- **Retention.** An entry admits a restore for `DumpHashRegistry:RetentionDays` (default 365) after the dump; a TTL index
+- **Retention.** An entry admits a restore for `DumpHashRegistry:RetentionDays` (default 365, at most 36500) after the dump; a TTL index
   removes it afterwards. Then only a system operator can restore that dump. Restoring the tenant's own older dump (a rollback)
   is allowed while the entry lives; the old key ids must stay in the key ring for its secrets to read.
 - **Tenant lifecycle.** Deleting a tenant removes its entries (`PosDeleteTenant` with the Deleting tombstone, like the

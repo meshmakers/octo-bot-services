@@ -9,4 +9,4 @@ attributes:
   description: "Relative path of the download of the dump file on the bot service, {tenantId}/v1/jobs/download?id={jobId}."
 - id: RepositoryDump.Sha256
   valueType: String
-  description: "SHA-256 (lower-case hex) of the dump file as the download serves it; the platform registered it for the tenant, so a tenant administrator can restore exactly this file."
+  description: "SHA-256 (lower-case hex) of the dump file as the download serves it, the bytes the platform registered for the tenant. A tenant administrator can restore exactly this file while its registration has not expired."

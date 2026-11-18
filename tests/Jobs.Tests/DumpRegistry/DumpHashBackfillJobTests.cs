@@ -36,8 +36,11 @@ public class DumpHashBackfillJobTests : IDisposable
     public async Task StoredDumpOfAnExistingTenant_IsRegisteredWithTheDownloadHash_DatedByTheArtifact()
     {
         var stored = await StoreDumpAsync(ExistingTenant, "old-dump.tar.gz");
+        var artifactInfo = await _artifacts.Storage.GetInfoAsync(ArtifactCategories.TenantDumps, ExistingTenant,
+            stored.FileName);
+        var storedAtUtc = artifactInfo!.CreatedAt.UtcDateTime;
 
-        var registeredCount = await BackfillJob().Run(null);
+        var registeredCount = await BackfillJob(DateTimeOffset.UtcNow.AddDays(3)).Run(null);
 
         await Assert.That(registeredCount).IsEqualTo(1);
         var entry = _registry.Entries.Single();
@@ -45,7 +48,8 @@ public class DumpHashBackfillJobTests : IDisposable
         await Assert.That(entry.FileName).IsEqualTo(stored.FileName);
         await Assert.That(entry.Source).IsEqualTo(DumpHashSources.Backfill);
         await Assert.That(entry.JobId).IsNull();
-        await Assert.That(entry.ExpiresAtUtc - entry.DumpedAtUtc).IsEqualTo(TimeSpan.FromDays(365));
+        await Assert.That(entry.DumpedAtUtc).IsEqualTo(storedAtUtc);
+        await Assert.That(entry.ExpiresAtUtc).IsEqualTo(storedAtUtc.AddDays(365));
     }
 
     [Test]
@@ -105,7 +109,7 @@ public class DumpHashBackfillJobTests : IDisposable
     {
         var options = Options.Create(new DumpHashRegistryOptions());
         TimeProvider clock = now == null ? TimeProvider.System : new FixedTimeProvider(now.Value);
-        var recorder = new DumpHashRecorder(_registry, options, clock, NullLogger<DumpHashRecorder>.Instance,
+        var recorder = new DumpHashRecorder(_registry, options, NullLogger<DumpHashRecorder>.Instance,
             _artifacts.Storage);
         return new DumpHashBackfillJob(_registry, recorder, _systemContext, options, clock,
             NullLogger<DumpHashBackfillJob>.Instance, _artifacts.Storage);

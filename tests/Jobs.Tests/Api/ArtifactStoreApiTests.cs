@@ -128,8 +128,10 @@ public class ArtifactStoreApiTests
         var parameters = job.Method.GetParameters();
         await Assert.That(parameters.Length).IsEqualTo(9);
         var overrideIndex = Array.FindIndex(parameters, p => p.Name == "overrideForeignOwnership");
+        var archiveCheckIndex = Array.FindIndex(parameters, p => p.Name == "archiveCheck");
         await Assert.That(overrideIndex).IsGreaterThanOrEqualTo(0);
         await Assert.That((bool)job.Args[overrideIndex]!).IsTrue();
+        await Assert.That(job.Args[archiveCheckIndex]).IsEqualTo(ArchiveRegistrationCheck.Required);
     }
 
     private static async Task SeedDumpJobAsync(JobsApiTestHost host, string tenantId, string result)

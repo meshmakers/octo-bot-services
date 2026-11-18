@@ -8,6 +8,7 @@ namespace Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
 /// <summary>
 ///     <see cref="IDumpHashRegistry" /> in the collection <see cref="CollectionName" /> of the bot's job database: unique
 ///     per tenant and hash, an index per tenant and file name, and a TTL index that removes an entry when it expires.
+///     Registering a hash again never moves its dump time or its expiry back.
 /// </summary>
 public sealed class MongoDumpHashRegistry : IDumpHashRegistry
 {
@@ -28,11 +29,12 @@ public sealed class MongoDumpHashRegistry : IDumpHashRegistry
     /// <inheritdoc />
     public async Task RegisterAsync(DumpHashEntry entry, CancellationToken cancellationToken = default)
     {
-        await _indexes.EnsureAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        await _indexes.EnsureAsync().WaitAsync(cancellationToken);
         var tenantKey = TenantKey(entry.TenantId);
         var update = Builders<DumpHashDocument>.Update
-            .Set(document => document.DumpedAtUtc, entry.DumpedAtUtc)
-            .Set(document => document.ExpiresAtUtc, entry.ExpiresAtUtc)
+            .Max(document => document.DumpedAtUtc, entry.DumpedAtUtc)
+            .Max(document => document.ExpiresAtUtc, entry.ExpiresAtUtc)
             .Set(document => document.FileName, entry.FileName)
             .Set(document => document.SizeBytes, entry.SizeBytes)
             .Set(document => document.JobId, entry.JobId)

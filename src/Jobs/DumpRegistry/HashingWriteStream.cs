@@ -36,12 +36,22 @@ internal sealed class HashingWriteStream : Stream
 
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled(cancellationToken);
+        }
+
         Write(buffer, offset, count);
         return Task.CompletedTask;
     }
 
     public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled(cancellationToken);
+        }
+
         Write(buffer.Span);
         return ValueTask.CompletedTask;
     }
@@ -50,7 +60,8 @@ internal sealed class HashingWriteStream : Stream
     {
     }
 
-    public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public override Task FlushAsync(CancellationToken cancellationToken) =>
+        cancellationToken.IsCancellationRequested ? Task.FromCanceled(cancellationToken) : Task.CompletedTask;
 
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 

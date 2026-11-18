@@ -36,9 +36,7 @@ public sealed class DumpHashBackfillJob(
         await foreach (var artifact in artifactStorage.ListCategoryAsync(ArtifactCategories.TenantDumps, ct))
         {
             var storedAtUtc = artifact.CreatedAt.UtcDateTime;
-            if (storedAtUtc <= oldestStillValidUtc ||
-                !await TenantExistsAsync(artifact.TenantId, existingTenants) ||
-                await registry.ContainsFileAsync(artifact.TenantId, artifact.FileName, ct))
+            if (storedAtUtc <= oldestStillValidUtc || !await TenantExistsAsync(artifact.TenantId, existingTenants))
             {
                 continue;
             }
@@ -58,6 +56,11 @@ public sealed class DumpHashBackfillJob(
     {
         try
         {
+            if (await registry.ContainsFileAsync(artifact.TenantId, artifact.FileName, ct))
+            {
+                return false;
+            }
+
             await recorder.RecordStoredDumpAsync(artifact.TenantId, artifact.FileName, storedAtUtc, ct);
             return true;
         }
