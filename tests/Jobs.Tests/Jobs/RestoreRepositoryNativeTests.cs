@@ -1,8 +1,8 @@
-using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
@@ -24,7 +24,7 @@ namespace Meshmakers.Octo.Backend.Jobs.Tests.Jobs;
 ///     AB#6969 / AB#6968 — the restore of a format 2 container (read as a stream, archive files copied byte for byte into
 ///     the staging area and loaded by the data store) and the rollup reconcile that follows a restore of archive data.
 /// </summary>
-public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
+public partial class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
 {
     private const string RtIdA = "665f00000000000000000e41";
     private const string RtIdB = "665f00000000000000000e42";

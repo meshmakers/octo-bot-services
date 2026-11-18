@@ -15,20 +15,20 @@ public sealed class MongoDumpHashRegistry : IDumpHashRegistry
     public const string CollectionName = "DumpHashRegistry";
 
     private readonly IMongoCollection<DumpHashDocument> _collection;
-    private readonly Lazy<Task> _indexes;
+    private readonly RetryingInitialization _indexes;
 
     /// <summary>Constructor.</summary>
     /// <param name="jobDatabase">The bot's job database.</param>
     public MongoDumpHashRegistry(IMongoDatabase jobDatabase)
     {
         _collection = jobDatabase.GetCollection<DumpHashDocument>(CollectionName);
-        _indexes = new Lazy<Task>(CreateIndexesAsync);
+        _indexes = new RetryingInitialization(CreateIndexesAsync);
     }
 
     /// <inheritdoc />
     public async Task RegisterAsync(DumpHashEntry entry, CancellationToken cancellationToken = default)
     {
-        await _indexes.Value;
+        await _indexes.EnsureAsync();
         var tenantKey = TenantKey(entry.TenantId);
         var update = Builders<DumpHashDocument>.Update
             .Set(document => document.DumpedAtUtc, entry.DumpedAtUtc)

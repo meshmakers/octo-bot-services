@@ -449,7 +449,9 @@ platform itself produced for the target tenant**:
 - **Check.** The gate (`restore-from-upload`, `Restore-1`) decides from the caller (`RestoreArchiveCheckPolicy`) and passes
   the decision to the job (`ArchiveRegistrationCheck`). For a tenant identity the job copies the upload into a job-owned file,
   hashes exactly those bytes right before the restore, and restores that copy; format 2 is then read from that file instead of
-  being streamed from the store. Restore jobs enqueued without the decision (an older bot replica, a job queued before the
+  being streamed from the store. **Scratch space**: such a restore of a format 2 container needs the container plus its
+  extracted MongoDB blob on the scratch volume at the same time (the streaming path of an operator needs only the blob); size
+  the scratch volume for the largest tenant dump with archive data. Restore jobs enqueued without the decision (an older bot replica, a job queued before the
   update) require a registered dump; a worker that does not know the new job signature fails the job.
 - **Refusal.** One answer for an edited archive, an unknown archive, another tenant's dump and an expired entry, so the answer
   does not tell whether a hash exists: the REST job fails with
@@ -466,7 +468,8 @@ platform itself produced for the target tenant**:
   is allowed while the entry lives; the old key ids must stay in the key ring for its secrets to read.
 - **Tenant lifecycle.** Deleting a tenant removes its entries (`PosDeleteTenant` with the Deleting tombstone, like the
   operation records). A tenant set up again with a reused id ignores the entries of the earlier tenant (every read compares
-  the dump time with the tenant's creation time) and its setup removes them (`DumpHashGenerationCleanup`).
+  the dump time with the tenant's creation time, when that time is known; a legacy tenant without a lifecycle record is not
+  filtered) and its setup removes them (`DumpHashGenerationCleanup`).
 - **Not covered.** The cluster's nightly MongoDB backup is not a dump of this service and is not registered (separate
   operations work). An operator endpoint that registers one reviewed archive for a tenant does not exist.
 - Tests: `DumpRegistry/*` (recorder, verifier, backfill, lifecycle), `Jobs/RestoreArchiveCheckJobTests` (round trip of an
