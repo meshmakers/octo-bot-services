@@ -469,10 +469,11 @@ platform itself produced for the target tenant**:
   service enqueues `IDumpHashBackfillJob` (up to three attempts): it registers each tenant dump still held in the artifact
   store (category `tenant-dumps`, which only the dump job writes) that has no entry yet, for tenants that still exist and only
   while the retention has not run out; a dump it cannot read or register is logged and skipped. The entry is dated by the
-  earliest time the dump can have started, read from the file name (a `.tar.gz` is named before mongodump starts, an
-  `.octobak.zip` after it, so one hour, the mongodump timeout, is taken off), never by the time it was stored, so a dump of an
-  earlier tenant with the same id stays filtered; a file whose name does not carry that time is not registered. A dump file
-  kept only outside the store needs a system operator to restore it.
+  start of the dump read from the file name, never by the time it was stored, so a dump of an earlier tenant with the same id
+  stays filtered. Only a MongoDB dump (`.tar.gz`) carries a safe start time: it is named before mongodump starts. An archive
+  container (`.octobak.zip`, a dump with archive data) is named after mongodump and the archive copy, which has no time limit,
+  so the backfill does not register it, nor a file whose name carries no start time; a system operator restores such a dump.
+  A dump file kept only outside the store needs a system operator as well.
   There is no transition period.
 - **Retention.** An entry admits a restore for `DumpHashRegistry:RetentionDays` (default 365, at most 36500) after the dump; a TTL index
   removes it afterwards. Then only a system operator can restore that dump. Restoring the tenant's own older dump (a rollback)

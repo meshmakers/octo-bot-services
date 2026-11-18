@@ -54,13 +54,12 @@ public class DumpHashBackfillJobTests : IDisposable
     }
 
     [Test]
-    public async Task ArchiveContainer_IsDatedTheMongoDumpTimeoutBeforeItsName()
+    public async Task ArchiveContainer_IsNotRegistered_BecauseItsNameCarriesNoSafeStartTime()
     {
         await StoreDumpAsync(ExistingTenant, DumpName(ExistingTenant, DumpNamedAtUtc, ".octobak.zip"));
 
-        await BackfillJob().Run(null);
-
-        await Assert.That(_registry.Entries.Single().DumpedAtUtc).IsEqualTo(DumpNamedAtUtc.AddHours(-1));
+        await Assert.That(await BackfillJob().Run(null)).IsEqualTo(0);
+        await Assert.That(_registry.Entries.Count).IsEqualTo(0);
     }
 
     [Test]
