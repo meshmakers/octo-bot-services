@@ -1,4 +1,5 @@
 using Hangfire;
+using Hangfire.Server;
 
 namespace Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 
@@ -30,9 +31,11 @@ public static class IndexUpgradeConstants
 ///     without a legacy index ends at once, an interrupted run is completed by the next one.
 /// </summary>
 /// <remarks>
-///     Retries: a job that cannot work now (global limit, CK import of the tenant, <c>index_update_lock</c> held,
-///     window closed while waiting) is scheduled again (<see cref="IndexUpgradeDeferAttribute" />) and never counts as
-///     a failure. A real failure is retried three times (1, 5, 15 minutes) and then stays <c>Failed</c>.
+///     Retries: a job that cannot work now (global limit, CK import of the tenant, <c>index_update_lock</c> held) is
+///     scheduled again (<see cref="IndexUpgradeDeferAttribute" />) and never counts as a failure. A job that finds the
+///     build window closed or switched off records <c>Deferred</c> and ends <c>Succeeded</c> in Hangfire: the next window
+///     sweep enqueues a new job for the tenant. A real failure is retried three times (1, 5, 15 minutes) and then stays
+///     <c>Failed</c>.
 /// </remarks>
 public interface IIndexUpgradeJob
 {
@@ -44,9 +47,11 @@ public interface IIndexUpgradeJob
     ///     one). Unlike the other bot jobs this is Hangfire's own type, so the job sees the server shutting down and
     ///     stops before the next collection; Hangfire then runs it again instead of leaving it in Processing.
     /// </param>
+    /// <param name="context">Hangfire's perform context (enqueue <c>null</c>): the id of the executing job for the record</param>
     [JobDisplayName("Upgrading the paging indexes of tenant '{0}'")]
     [Queue(IndexUpgradeConstants.Queue)]
     [AutomaticRetry(Attempts = 3, DelaysInSeconds = [60, 300, 900], OnAttemptsExceeded = AttemptsExceededAction.Fail)]
     [IndexUpgradeDefer]
-    Task UpgradeTenantAsync(string tenantId, string trigger, IJobCancellationToken? cancellationToken);
+    Task UpgradeTenantAsync(string tenantId, string trigger, IJobCancellationToken? cancellationToken,
+        PerformContext? context);
 }

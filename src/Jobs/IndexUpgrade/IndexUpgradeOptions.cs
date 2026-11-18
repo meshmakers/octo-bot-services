@@ -54,7 +54,7 @@ public class IndexUpgradeOptions
     public IndexUpgradeWindowOptions Window { get; set; } = new();
 
     /// <summary>
-    ///     How many tenants are rebuilt at the same time across all bot replicas. Default 1.
+    ///     How many tenants are rebuilt at the same time across all bot replicas. Default 1; 0 builds nothing.
     /// </summary>
     public int MaxConcurrent { get; set; } = 1;
 
@@ -81,4 +81,43 @@ public class IndexUpgradeOptions
 
     /// <summary>How often a running job checks for a yield request and the progress of its collections. Default 5 s.</summary>
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    ///     Replaces values the code cannot use by safe ones (registered as post-configuration): a <see cref="Schedule" />
+    ///     that names no member becomes <see cref="IndexUpgradeSchedule.Window" /> with the window off (nothing is built
+    ///     without a valid opt-in), a negative <see cref="MaxConcurrent" /> becomes 0 (no builds), durations outside their
+    ///     range return to their defaults. A value the configuration binder cannot convert at all (e.g. text for a
+    ///     number) still throws when the options are read; the readers at the start and in the CK import gate catch it.
+    /// </summary>
+    public void Normalize()
+    {
+        var defaults = new IndexUpgradeOptions();
+        if (!Enum.IsDefined(Schedule))
+        {
+            Schedule = IndexUpgradeSchedule.Window;
+            Window.Enabled = false;
+        }
+
+        MaxConcurrent = Math.Max(0, MaxConcurrent);
+        if (Window.MaxDuration <= TimeSpan.Zero || Window.MaxDuration > TimeSpan.FromDays(7))
+        {
+            Window.MaxDuration = defaults.Window.MaxDuration;
+        }
+
+        if (string.IsNullOrWhiteSpace(Window.Cron))
+        {
+            Window.Cron = defaults.Window.Cron;
+        }
+
+        StartDelay = StartDelay < TimeSpan.Zero ? defaults.StartDelay : StartDelay;
+        RetryDelay = RetryDelay <= TimeSpan.Zero ? defaults.RetryDelay : RetryDelay;
+        ImportWaitTimeout = ImportWaitTimeout < TimeSpan.Zero ? defaults.ImportWaitTimeout : ImportWaitTimeout;
+        PollInterval = PollInterval <= TimeSpan.Zero || PollInterval > TimeSpan.FromMinutes(10)
+            ? defaults.PollInterval
+            : PollInterval;
+    }
+
+    /// <summary>Whether this configuration builds at all (a valid opt-in and at least one slot).</summary>
+    public bool CanBuild => MaxConcurrent > 0 &&
+                            (Schedule == IndexUpgradeSchedule.Immediate || Window.Enabled);
 }

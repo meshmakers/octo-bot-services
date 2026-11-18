@@ -69,7 +69,7 @@ public class IndexUpgradeIntegrationTests
             var runs = new MongoIndexUpgradeRunStore(_mongo);
 
             // Clean run: the legacy index is replaced by the tiebreak index.
-            await NewJob(storage, runs).UpgradeTenantAsync(tenant.TenantId, "test", null);
+            await NewJob(storage, runs).UpgradeTenantAsync(tenant.TenantId, "test", null, null);
             var afterClean = await DescribeAsync(collection);
             await Assert.That(afterClean).Contains(i => i.Keys.SequenceEqual(TiebreakKeys));
             await Assert.That(afterClean).DoesNotContain(i => i.Keys.SequenceEqual(LegacyKeys));
@@ -79,7 +79,7 @@ public class IndexUpgradeIntegrationTests
             await Assert.That(record.CollectionsUpgraded).Contains(collection.CollectionNamespace.CollectionName);
 
             // Re-run: nothing to do, the indexes stay as they are.
-            await NewJob(storage, runs).UpgradeTenantAsync(tenant.TenantId, "test", null);
+            await NewJob(storage, runs).UpgradeTenantAsync(tenant.TenantId, "test", null, null);
             await Assert.That((await runs.GetAsync(tenant.TenantId))!.Status)
                 .IsEqualTo(IndexUpgradeRunStatus.NothingToDo);
             await Assert.That(await DescribeAsync(collection)).IsEquivalentTo(afterClean);
@@ -89,7 +89,7 @@ public class IndexUpgradeIntegrationTests
             await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
                 new BsonDocument { { "ckTypeId", 1 }, { FieldPath, 1 }, { "_id", 1 }, { "rtState", 1 } },
                 new CreateIndexOptions { Name = legacyName + "_id" }));
-            await NewJob(storage, runs).UpgradeTenantAsync(tenant.TenantId, "test", null);
+            await NewJob(storage, runs).UpgradeTenantAsync(tenant.TenantId, "test", null, null);
 
             await Assert.That(await DescribeAsync(collection)).IsEquivalentTo(afterClean);
         });
@@ -110,7 +110,7 @@ public class IndexUpgradeIntegrationTests
                 new CreateIndexOptions { Name = "NotManaged_1" }));
             var runs = new MongoIndexUpgradeRunStore(_mongo);
 
-            await NewJob(NewStorage(), runs).UpgradeTenantAsync(tenant.TenantId, "test", null);
+            await NewJob(NewStorage(), runs).UpgradeTenantAsync(tenant.TenantId, "test", null, null);
 
             var record = await runs.GetAsync(tenant.TenantId);
             await Assert.That(record!.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
@@ -180,7 +180,7 @@ public class IndexUpgradeIntegrationTests
     public async Task TwoServersOnOneStorage_TwoTenantsDue_NeverTwoRebuilds_TheWaitingOneIsScheduledNotFailed()
     {
         var storage = NewStorage();
-        var engine = new SlowFakeEngine(TimeSpan.FromSeconds(2));
+        var engine = new SlowFakeEngine(TimeSpan.FromMilliseconds(500)) { HoldFirstBuild = true };
         var systemContext = engine.SystemContextFor("tenant-1", "tenant-2");
         var options = new IndexUpgradeOptions
         {
@@ -199,6 +199,17 @@ public class IndexUpgradeIntegrationTests
         using (NewServer(storage, "replica-a", NewFakeJob()))
         using (NewServer(storage, "replica-b", NewFakeJob()))
         {
+            try
+            {
+                // The first build holds until the other tenant's job was deferred, so the contention is certain.
+                await engine.Started.Task.WaitAsync(TimeSpan.FromMinutes(1));
+                await WaitForHistoryAsync(storage, [job1, job2], ScheduledState.StateName, TimeSpan.FromMinutes(1));
+            }
+            finally
+            {
+                engine.ReleaseFirstBuild();
+            }
+
             await WaitForStateAsync(storage, job1, SucceededState.StateName, TimeSpan.FromMinutes(2));
             await WaitForStateAsync(storage, job2, SucceededState.StateName, TimeSpan.FromMinutes(2));
         }
@@ -236,9 +247,10 @@ public class IndexUpgradeIntegrationTests
         IIndexUpgradeJob NewFakeJob() => new IndexUpgradeJob(NullLogger<IndexUpgradeJob>.Instance, systemContext,
             engine, coordination, runs, Options.Create(options));
 
-        var first = NewServer(storage, "replica-old", NewFakeJob());
-        await engine.Started.Task.WaitAsync(TimeSpan.FromMinutes(1));
-        first.Dispose(); // rolling update: the server shuts down, the job sees the shutdown token
+        using (NewServer(storage, "replica-old", NewFakeJob()))
+        {
+            await engine.Started.Task.WaitAsync(TimeSpan.FromMinutes(1));
+        } // rolling update: the server shuts down, the job sees the shutdown token
 
         await Assert.That(runs.Statuses).Contains(IndexUpgradeRunStatus.Interrupted);
 
@@ -278,6 +290,23 @@ public class IndexUpgradeIntegrationTests
             ShutdownTimeout = TimeSpan.FromSeconds(30),
             Activator = new SingleJobActivator(job)
         }, storage);
+
+    private static async Task WaitForHistoryAsync(JobStorage storage, string[] jobIds, string state, TimeSpan timeout)
+    {
+        var until = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < until)
+        {
+            var monitoring = storage.GetMonitoringApi();
+            if (jobIds.Any(id => monitoring.JobDetails(id).History.Any(h => h.StateName == state)))
+            {
+                return;
+            }
+
+            await Task.Delay(200);
+        }
+
+        throw new TimeoutException($"None of the jobs {string.Join(", ", jobIds)} was {state}");
+    }
 
     private static async Task WaitForStateAsync(JobStorage storage, string jobId, string state, TimeSpan timeout)
     {
@@ -418,7 +447,15 @@ public class IndexUpgradeIntegrationTests
         private int _running;
         private int _maxConcurrent;
 
+        private readonly TaskCompletionSource _releaseFirst = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _builds;
+
         public TimeSpan BuildTime { get; set; } = buildTime;
+
+        /// <summary>The first build waits for <see cref="ReleaseFirstBuild" /> (bounded) before it ends.</summary>
+        public bool HoldFirstBuild { get; init; }
+
+        public void ReleaseFirstBuild() => _releaseFirst.TrySetResult();
         public int MaxConcurrent => _maxConcurrent;
         public ConcurrentBag<string> Upgraded { get; } = [];
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -450,6 +487,11 @@ public class IndexUpgradeIntegrationTests
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (HoldFirstBuild && Interlocked.Increment(ref _builds) == 1)
+                {
+                    await _releaseFirst.Task.WaitAsync(TimeSpan.FromMinutes(1), cancellationToken);
+                }
+
                 await Task.Delay(BuildTime, cancellationToken);
                 _legacy[tenantId] = false;
                 Upgraded.Add(tenantId);

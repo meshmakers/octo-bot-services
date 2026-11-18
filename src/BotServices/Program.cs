@@ -379,7 +379,8 @@ try
         options.ServerName = $"{Environment.MachineName}:{IndexUpgradeConstants.Queue}";
         options.Queues = [IndexUpgradeConstants.Queue];
         options.WorkerCount = 1;
-        options.SchedulePollingInterval = TimeSpan.FromSeconds(15);
+        // Workers only: the full server above already runs the delayed and recurring schedulers for every queue.
+        options.IsLightweightServer = true;
     });
 
     // AB#5539: sweep runs a crashed/killed process left in Running are marked Failed after startup.
@@ -516,12 +517,6 @@ try
         job => job.RunAllTenants(systemTenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, null, null,
             BotCancellationToken.Null),
         Cron.Never());
-
-    // AB#9118: after-deploy sweep (Immediate) or the build window (Window); only job storage writes, never a build.
-    IndexUpgradeStartup.Apply(app.Services.GetRequiredService<IOptions<IndexUpgradeOptions>>().Value,
-        app.Services.GetRequiredService<IRecurringJobManager>(), app.Services.GetRequiredService<IBackgroundJobClient>(),
-        app.Services.GetRequiredService<IIndexUpgradeCoordination>(),
-        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(IndexUpgradeStartup)));
 
     await app.RunAsync();
 }

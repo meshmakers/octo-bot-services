@@ -24,7 +24,7 @@ public class HangfireIndexUpgradeCoordination : IIndexUpgradeCoordination
     internal const string TenantResourcePrefix = "octo:index-upgrade:tenant:";
     internal const string EnqueueResourcePrefix = "octo:index-upgrade:enqueue:";
     internal const string JobHashPrefix = "octo:index-upgrade:job:";
-    internal const string YieldHashPrefix = "octo:index-upgrade:yield:";
+    internal const string YieldHashPrefix = "octo:index-upgrade:yield:"; // a set: one item per waiting CK import
     internal const string WindowHash = "octo:index-upgrade:window";
     internal static readonly TimeSpan EnqueueLockTimeout = TimeSpan.FromSeconds(30);
 
@@ -59,7 +59,7 @@ public class HangfireIndexUpgradeCoordination : IIndexUpgradeCoordination
     /// <inheritdoc />
     public IDisposable? TryAcquireGlobalSlot(int maxConcurrent)
     {
-        for (var slot = 0; slot < Math.Max(1, maxConcurrent); slot++)
+        for (var slot = 0; slot < maxConcurrent; slot++)
         {
             var held = Acquire(SlotResourcePrefix + slot.ToString(CultureInfo.InvariantCulture), SlotAttemptTimeout);
             if (held != null)
@@ -104,28 +104,60 @@ public class HangfireIndexUpgradeCoordination : IIndexUpgradeCoordination
     }
 
     /// <inheritdoc />
-    public void RequestYield(string tenantId)
+    public void RequestYield(string tenantId, string requestId)
     {
+        // One set item per import: "<requestId>|<time>". A renewal replaces only the item of this import.
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        var key = YieldHashPrefix + Key(tenantId);
         using var connection = _storage().GetConnection();
-        SetHash(connection, YieldHashPrefix + Key(tenantId), "at",
-            _time.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+        var own = connection.GetAllItemsFromSet(key).Where(i => i.StartsWith(requestId + "|", StringComparison.Ordinal))
+            .ToList();
+        using var transaction = connection.CreateWriteTransaction();
+        foreach (var item in own)
+        {
+            transaction.RemoveFromSet(key, item);
+        }
+
+        transaction.AddToSet(key,
+            requestId + "|" + _time.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+        transaction.Commit();
     }
 
     /// <inheritdoc />
     public bool IsYieldRequested(string tenantId)
     {
         using var connection = _storage().GetConnection();
-        var at = ParseTime(GetHashValue(connection, YieldHashPrefix + Key(tenantId), "at"));
-        return at != null &&
-               _time.GetUtcNow().UtcDateTime - at.Value < IIndexUpgradeCoordination.YieldRequestLifetime;
+        var now = _time.GetUtcNow().UtcDateTime;
+        return connection.GetAllItemsFromSet(YieldHashPrefix + Key(tenantId))
+            .Select(i => ParseTime(i[(i.IndexOf('|') + 1)..]))
+            .Any(at => at != null && now - at.Value < IIndexUpgradeCoordination.YieldRequestLifetime);
     }
 
     /// <inheritdoc />
-    public void ClearYield(string tenantId)
+    public void ClearYield(string tenantId, string requestId)
     {
+        // Removes only the items of this import; the requests of other imports stay. Stale items of crashed imports
+        // no longer count after YieldRequestLifetime and are removed by the next import that clears.
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        var key = YieldHashPrefix + Key(tenantId);
         using var connection = _storage().GetConnection();
+        var now = _time.GetUtcNow().UtcDateTime;
+        var remove = connection.GetAllItemsFromSet(key).Where(i =>
+                i.StartsWith(requestId + "|", StringComparison.Ordinal) ||
+                !(ParseTime(i[(i.IndexOf('|') + 1)..]) is { } at &&
+                  now - at < IIndexUpgradeCoordination.YieldRequestLifetime))
+            .ToList();
+        if (remove.Count == 0)
+        {
+            return;
+        }
+
         using var transaction = connection.CreateWriteTransaction();
-        transaction.RemoveHash(YieldHashPrefix + Key(tenantId));
+        foreach (var item in remove)
+        {
+            transaction.RemoveFromSet(key, item);
+        }
+
         transaction.Commit();
     }
 
@@ -144,10 +176,30 @@ public class HangfireIndexUpgradeCoordination : IIndexUpgradeCoordination
             closesAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
     }
 
-    private HangfireDistributedLockOwner? Acquire(string resource, TimeSpan timeout)
+    private IDisposable? Acquire(string resource, TimeSpan timeout)
     {
         var owner = new HangfireDistributedLockOwner(_storage, resource, timeout, "octo-index-upgrade-lock");
-        return owner.Start() ? owner : null;
+        return owner.Start() ? new QuietRelease(owner) : null;
+    }
+
+    /// <summary>
+    ///     Releases a lease and swallows a failed release: the lock then expires with its lifetime. A failed delete must
+    ///     not replace the outcome of the CK import or upgrade that held it (a completed batch import would be retried
+    ///     after its cache keys are gone, a deferral would turn into an ordinary failure).
+    /// </summary>
+    private sealed class QuietRelease(IDisposable inner) : IDisposable
+    {
+        public void Dispose()
+        {
+            try
+            {
+                inner.Dispose();
+            }
+            catch (Exception)
+            {
+                // The lock expires (Hangfire.Mongo DistributedLockLifetime).
+            }
+        }
     }
 
     private static void SetHash(IStorageConnection connection, string key, string field, string value)

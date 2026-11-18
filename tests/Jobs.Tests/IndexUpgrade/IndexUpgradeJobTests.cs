@@ -47,7 +47,7 @@ public class IndexUpgradeJobTests
     [Test]
     public async Task TenantInTheNewShape_EndsAtOnce_WithoutCallingTheEngine()
     {
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         await _tenant.DidNotReceiveWithAnyArgs().UpgradeTiebreakIndexesAsync(default!, default);
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.NothingToDo);
@@ -60,7 +60,7 @@ public class IndexUpgradeJobTests
         _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
         _indexes.AddLegacy(DatabaseName, "RtEntity_B", "B_1", "attributes.code");
 
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         await _tenant.Received(1).UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>());
         var record = _runs.Last[TenantId];
@@ -77,9 +77,9 @@ public class IndexUpgradeJobTests
     public async Task SecondRun_AfterAnUpgrade_BuildsNothing()
     {
         _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         await _tenant.Received(1).UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>());
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.NothingToDo);
@@ -92,7 +92,7 @@ public class IndexUpgradeJobTests
         using var other = _coordination.TryAcquireGlobalSlot(1);
 
         var deferred = await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() =>
-            NewJob().UpgradeTenantAsync(TenantId, "test", null));
+            NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
 
         await Assert.That(deferred!.Delay).IsEqualTo(_options.RetryDelay);
         await Assert.That(deferred.Message).Contains("MaxConcurrent");
@@ -106,7 +106,7 @@ public class IndexUpgradeJobTests
         _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
         using var import = _coordination.TryAcquireTenant(TenantId, TimeSpan.Zero);
 
-        await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() => NewJob().UpgradeTenantAsync(TenantId, "test", null));
+        await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() => NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
 
         await _tenant.DidNotReceiveWithAnyArgs().UpgradeTiebreakIndexesAsync(default!, default);
     }
@@ -122,7 +122,7 @@ public class IndexUpgradeJobTests
                 "Could not acquire distributed lock 'index_update_lock' after 90 seconds. Lock has no expiry time set"));
 
         var deferred = await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() =>
-            NewJob().UpgradeTenantAsync(TenantId, "test", null));
+            NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
 
         await Assert.That(deferred!.Delay).IsEqualTo(_options.RetryDelay);
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Deferred);
@@ -136,7 +136,7 @@ public class IndexUpgradeJobTests
         _tenant.UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>())
             .Returns<Task>(_ => throw new InvalidOperationException("boom"));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => NewJob().UpgradeTenantAsync(TenantId, "test", null));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
 
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Failed);
         await Assert.That(_runs.Last[TenantId].Error).IsEqualTo("boom");
@@ -156,7 +156,7 @@ public class IndexUpgradeJobTests
                 return Task.CompletedTask;
             });
 
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         var record = _runs.Last[TenantId];
         await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
@@ -185,12 +185,13 @@ public class IndexUpgradeJobTests
             }
         };
 
-        var upgrade = NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        var upgrade = NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
         await firstCollectionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         var importEntered = gate.EnterAsync(TenantId, CancellationToken.None);
         await WaitUntilAsync(() => _coordination.IsYieldRequested(TenantId));
-        await Task.Delay(300); // the job's watcher (poll 20 ms) sees the request
+        // The job's watcher sees the request and cancels the engine's token while collection A still builds.
+        await _engine.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(importEntered.IsCompleted).IsFalse(); // the import waits for the running collection
         releaseFirstCollection.SetResult();
 
@@ -204,12 +205,12 @@ public class IndexUpgradeJobTests
         using (await importEntered.WaitAsync(TimeSpan.FromSeconds(10)))
         {
             await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() =>
-                NewJob().UpgradeTenantAsync(TenantId, "test", null));
+                NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
         }
 
         // After the import the upgrade continues with the rest.
         _engine.BeforeCollection = (_, _) => Task.CompletedTask;
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Succeeded);
         await Assert.That(_runs.Last[TenantId].CollectionsUpgraded).IsEquivalentTo(new[] { "RtEntity_B", "RtEntity_C" });
@@ -234,11 +235,11 @@ public class IndexUpgradeJobTests
         var token = Substitute.For<IJobCancellationToken>();
         token.ShutdownToken.Returns(shutdown.Token);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => NewJob().UpgradeTenantAsync(TenantId, "test", token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => NewJob().UpgradeTenantAsync(TenantId, "test", token, null));
 
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Interrupted);
         // Hangfire runs the job again; the re-run completes the rest only.
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
         await Assert.That(_runs.Last[TenantId].CollectionsUpgraded).IsEquivalentTo(new[] { "RtEntity_B" });
     }
 
@@ -250,7 +251,7 @@ public class IndexUpgradeJobTests
         _options.Window.Enabled = false;
         _coordination.WindowClosesAt = DateTime.UtcNow.AddHours(1);
 
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         await _tenant.DidNotReceiveWithAnyArgs().UpgradeTiebreakIndexesAsync(default!, default);
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Deferred);
@@ -265,7 +266,7 @@ public class IndexUpgradeJobTests
         _options.Window.Enabled = true;
         _coordination.WindowClosesAt = DateTime.UtcNow.AddMinutes(-1);
 
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         await _tenant.DidNotReceiveWithAnyArgs().UpgradeTiebreakIndexesAsync(default!, default);
         await Assert.That(_runs.Last[TenantId].Error).Contains("closed");
@@ -278,16 +279,17 @@ public class IndexUpgradeJobTests
         _indexes.AddLegacy(DatabaseName, "RtEntity_B", "B_1", "attributes.name");
         _options.Schedule = IndexUpgradeSchedule.Window;
         _options.Window.Enabled = true;
-        _coordination.WindowClosesAt = DateTime.UtcNow.AddMilliseconds(300);
+        _coordination.WindowClosesAt = DateTime.UtcNow.AddSeconds(2);
         _engine.BeforeCollection = async (collection, _) =>
         {
             if (collection == "RtEntity_A")
             {
-                await Task.Delay(600); // the build of A outlasts the window
+                // The build of A outlasts the window: the job's timer cancels the engine's token meanwhile.
+                await _engine.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
             }
         };
 
-        await NewJob().UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
 
         await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Deferred);
         await Assert.That(_runs.Last[TenantId].Error).Contains("next window");
@@ -295,11 +297,51 @@ public class IndexUpgradeJobTests
     }
 
     [Test]
+    public async Task WindowSwitchedOff_RecordsTheLegacyCountAsUnknown()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        _options.Schedule = IndexUpgradeSchedule.Window;
+        _options.Window.Enabled = false;
+
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        await Assert.That(_runs.Last[TenantId].LegacyIndexesAfter).IsNull();
+        await Assert.That(_indexes.ReadCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task MaxConcurrentZero_BuildsNothing()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        _options.MaxConcurrent = 0;
+
+        // Ends (no retry loop while switched off) without a build.
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Deferred);
+        await Assert.That(_runs.Last[TenantId].Error).Contains("switched off");
+        await _tenant.DidNotReceiveWithAnyArgs().UpgradeTiebreakIndexesAsync(default!, default);
+    }
+
+    [Test]
+    public async Task SlotHeld_ResolvesAndInspectsNothing()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        using var other = _coordination.TryAcquireGlobalSlot(1);
+
+        await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() =>
+            NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
+
+        await _systemContext.DidNotReceiveWithAnyArgs().TryFindTenantContextAsync(default!);
+        await Assert.That(_indexes.ReadCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task UnknownTenant_EndsWithoutWork()
     {
         _systemContext.TryFindTenantContextAsync("gone").Returns((ITenantContext?)null);
 
-        await NewJob().UpgradeTenantAsync("gone", "test", null);
+        await NewJob().UpgradeTenantAsync("gone", "test", null, null);
 
         await Assert.That(_runs.Last).IsEmpty();
     }
@@ -312,7 +354,7 @@ public class IndexUpgradeJobTests
         store.SaveAsync(Arg.Any<IndexUpgradeRunRecord>(), Arg.Any<CancellationToken>())
             .Returns<Task>(_ => throw new InvalidOperationException("system database down"));
 
-        await NewJob(store).UpgradeTenantAsync(TenantId, "test", null);
+        await NewJob(store).UpgradeTenantAsync(TenantId, "test", null, null);
 
         await Assert.That(_indexes.PendingCollections(DatabaseName)).IsEmpty();
     }
@@ -323,6 +365,7 @@ public class IndexUpgradeJobTests
 
     private async Task FakeEngineAsync(CancellationToken cancellationToken)
     {
+        await using var signal = cancellationToken.Register(() => _engine.Cancelled.TrySetResult());
         foreach (var collection in _indexes.PendingCollections(DatabaseName))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -349,5 +392,8 @@ public class IndexUpgradeJobTests
     {
         /// <summary>Runs before the engine works on a collection (the collection name is passed).</summary>
         public Func<string, CancellationToken, Task> BeforeCollection { get; set; } = (_, _) => Task.CompletedTask;
+
+        /// <summary>Set when the job cancels the engine's token (yield, window, shutdown).</summary>
+        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

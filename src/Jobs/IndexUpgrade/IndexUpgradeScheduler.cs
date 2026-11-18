@@ -1,4 +1,5 @@
 using Hangfire;
+using Hangfire.Server;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -41,9 +42,9 @@ public class IndexUpgradeScheduler(
         var result = coordination.EnqueueOnce(tenantId,
             () => delay > TimeSpan.Zero
                 ? backgroundJobClient.Schedule<IIndexUpgradeJob>(
-                    job => job.UpgradeTenantAsync(tenantId, trigger, JobCancellationToken.Null), delay.Value)
+                    job => job.UpgradeTenantAsync(tenantId, trigger, JobCancellationToken.Null, null), delay.Value)
                 : backgroundJobClient.Enqueue<IIndexUpgradeJob>(job =>
-                    job.UpgradeTenantAsync(tenantId, trigger, JobCancellationToken.Null)));
+                    job.UpgradeTenantAsync(tenantId, trigger, JobCancellationToken.Null, null)));
         if (result.Created)
         {
             logger.LogInformation("Index upgrade of tenant '{TenantId}' enqueued as job {JobId} ({Trigger})", tenantId,
@@ -64,9 +65,15 @@ public class IndexUpgradeScheduler(
         try
         {
             var settings = options.Value;
-            if (settings.Schedule == IndexUpgradeSchedule.Window &&
-                !(settings.Window.Enabled && coordination.GetWindowClosesAt() is { } closesAt &&
-                  closesAt > _time.GetUtcNow().UtcDateTime))
+            if (!settings.CanBuild)
+            {
+                logger.LogInformation(
+                    "Tenant '{TenantId}' created or attached: the index upgrade is switched off", tenantId);
+                return;
+            }
+
+            if (settings.Schedule != IndexUpgradeSchedule.Immediate &&
+                !(coordination.GetWindowClosesAt() is { } closesAt && closesAt > _time.GetUtcNow().UtcDateTime))
             {
                 logger.LogInformation(
                     "Tenant '{TenantId}' created or attached: its index upgrade waits for the next build window",
@@ -92,12 +99,19 @@ public class IndexUpgradeScheduler(
 /// </summary>
 public interface IIndexUpgradeSweepJob
 {
-    /// <summary>Runs the sweep.</summary>
+    /// <summary>
+    ///     Runs the sweep. A tenant whose index list could not be read fails the run after every other tenant was
+    ///     checked, so Hangfire retries it (tenants already enqueued are not enqueued twice).
+    /// </summary>
     /// <param name="trigger"><see cref="IndexUpgradeConstants.TriggerAfterDeploy" /> or <see cref="IndexUpgradeConstants.TriggerWindow" /></param>
     /// <param name="cancellationToken">Hangfire's shutdown token</param>
+    /// <param name="context">
+    ///     Hangfire's perform context (enqueue <c>null</c>): the window opens at the creation time of this job, the
+    ///     occurrence of the recurring job, so a retry of the sweep never opens a later window.
+    /// </param>
     [JobDisplayName("Looking for tenants whose paging indexes need the upgrade ({0})")]
     [AutomaticRetry(Attempts = 3, DelaysInSeconds = [60, 300, 900], OnAttemptsExceeded = AttemptsExceededAction.Fail)]
-    Task RunAsync(string trigger, IJobCancellationToken? cancellationToken);
+    Task RunAsync(string trigger, IJobCancellationToken? cancellationToken, PerformContext? context);
 }
 
 /// <inheritdoc />
@@ -113,34 +127,42 @@ public class IndexUpgradeSweepJob(
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
     /// <inheritdoc />
-    public async Task RunAsync(string trigger, IJobCancellationToken? cancellationToken)
+    public async Task RunAsync(string trigger, IJobCancellationToken? cancellationToken, PerformContext? context)
     {
         var settings = options.Value;
         var token = cancellationToken?.ShutdownToken ?? CancellationToken.None;
-        if (settings.Schedule == IndexUpgradeSchedule.Window)
+        if (!settings.CanBuild)
         {
-            if (!settings.Window.Enabled)
+            logger.LogInformation(
+                "Index upgrade sweep ({Trigger}) skipped: the upgrade builds nothing (Schedule {Schedule}, " +
+                "Window:Enabled {WindowEnabled}, MaxConcurrent {MaxConcurrent})",
+                trigger, settings.Schedule, settings.Window.Enabled, settings.MaxConcurrent);
+            return;
+        }
+
+        if (settings.Schedule != IndexUpgradeSchedule.Immediate && trigger == IndexUpgradeConstants.TriggerWindow)
+        {
+            // The window belongs to the occurrence of the recurring job (the creation time of this job), not to the time
+            // of this attempt: a retry inside the window keeps its end, a retry after it opens nothing.
+            var now = _time.GetUtcNow().UtcDateTime;
+            var opensAt = context?.BackgroundJob?.CreatedAt ?? now;
+            var closesAt = opensAt + settings.Window.MaxDuration;
+            if (closesAt <= now)
             {
                 logger.LogInformation(
-                    "Index upgrade sweep ({Trigger}) skipped: the build window is switched off (IndexUpgrade:Window:Enabled)",
-                    trigger);
+                    "Index upgrade sweep ({Trigger}) skipped: its window ({OpensAt:O} - {ClosesAt:O}) is over",
+                    trigger, opensAt, closesAt);
                 return;
             }
 
-            if (trigger == IndexUpgradeConstants.TriggerWindow)
+            if (coordination.GetWindowClosesAt() is { } open && open >= closesAt)
             {
-                // A retry of this sweep (or a second trigger) inside an open window never extends it.
-                var now = _time.GetUtcNow().UtcDateTime;
-                if (coordination.GetWindowClosesAt() is { } open && open > now)
-                {
-                    logger.LogInformation("Index upgrade build window is open until {ClosesAt:O}", open);
-                }
-                else
-                {
-                    var closesAt = now + settings.Window.MaxDuration;
-                    coordination.OpenWindow(closesAt);
-                    logger.LogInformation("Index upgrade build window opened until {ClosesAt:O}", closesAt);
-                }
+                logger.LogInformation("Index upgrade build window is open until {ClosesAt:O}", open);
+            }
+            else
+            {
+                coordination.OpenWindow(closesAt);
+                logger.LogInformation("Index upgrade build window opened until {ClosesAt:O}", closesAt);
             }
         }
 
@@ -192,5 +214,10 @@ public class IndexUpgradeSweepJob(
             "Index upgrade sweep ({Trigger}) done: {TenantCount} tenant(s) checked, {DueCount} with legacy indexes, " +
             "{EnqueuedCount} job(s) enqueued, {FailedCount} not checked",
             trigger, tenants.Count, due, enqueued, failed);
+        if (failed > 0)
+        {
+            throw new InvalidOperationException(
+                $"Index upgrade sweep ({trigger}): {failed} tenant(s) could not be checked; the sweep is retried.");
+        }
     }
 }

@@ -108,7 +108,8 @@ public static class ServiceCollectionExtensions
     /// <summary>
     ///     Adds the paging index upgrade (AB#9118): the per-tenant job, the sweep, the scheduler, the CK import gate and
     ///     their shared state in the Hangfire job storage. Binds <see cref="IndexUpgradeOptions" /> from
-    ///     <see cref="IndexUpgradeOptions.SectionName" />. The host also needs a Hangfire server for
+    ///     <see cref="IndexUpgradeOptions.SectionName" /> (normalized, <see cref="IndexUpgradeOptions.Normalize" />) and
+    ///     registers the start-up registration of the sweep. The host also needs a Hangfire server for
     ///     <see cref="IndexUpgradeConstants.Queue" />.
     /// </summary>
     /// <param name="services">The service collection</param>
@@ -117,7 +118,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddOctoIndexUpgrade(this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddOptions<IndexUpgradeOptions>().Bind(configuration.GetSection(IndexUpgradeOptions.SectionName));
+        services.AddOptions<IndexUpgradeOptions>().Bind(configuration.GetSection(IndexUpgradeOptions.SectionName))
+            .PostConfigure(options => options.Normalize());
         services.AddSingleton<IIndexUpgradeMongoClient, IndexUpgradeMongoClient>();
         services.AddSingleton<ITenantIndexInspector, TenantIndexInspector>();
         services.AddSingleton<IIndexUpgradeRunStore, MongoIndexUpgradeRunStore>();
@@ -126,6 +128,8 @@ public static class ServiceCollectionExtensions
         services.AddTransient<ICkImportIndexUpgradeGate, CkImportIndexUpgradeGate>();
         services.AddTransient<IIndexUpgradeJob, IndexUpgradeJob>();
         services.AddTransient<IIndexUpgradeSweepJob, IndexUpgradeSweepJob>();
+        // After-deploy sweep or build window, registered in the background (never delays the start).
+        services.AddHostedService<IndexUpgradeStartupService>();
         return services;
     }
 

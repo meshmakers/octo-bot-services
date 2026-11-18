@@ -11,50 +11,65 @@ they had before AB#8960.
 
 `IIndexUpgradeJob.UpgradeTenantAsync(tenantId, trigger)` (queue `index-upgrade`, `src/Jobs/IndexUpgrade/IndexUpgradeJob.cs`):
 
-1. **Window** (Window schedule only): the window must be enabled and open, otherwise the run ends `Deferred` without a build.
+1. **Switched off or outside the window**: with `MaxConcurrent` 0, or (Window schedule) a window that is not enabled or not
+   open, the run records `Deferred` (number of legacy indexes unknown) without a build and ends `Succeeded` in Hangfire;
+   the next sweep enqueues a new job.
 2. **Global slot**: at most `IndexUpgrade:MaxConcurrent` tenants (default 1) are rebuilt at the same time across all
-   replicas. A run that finds every slot held ends `Scheduled` again after `RetryDelay` (logged at Debug; it reads no
-   index list while it waits).
+   replicas. A run that finds every slot held ends `Scheduled` again after `RetryDelay` (logged at Debug). It neither
+   resolves the tenant nor reads an index list while it waits.
 3. **CK import first**: when a CK import of the tenant waits or runs (tenant lease, see below), the run ends `Scheduled`.
-4. **Legacy indexes by their keys** (`LegacyIndexShape`): not unique, no text index, first key `ckTypeId`, an `rtState`
-   key, no `_id` key. The index name is never looked at: an upgraded index may carry a hashed name
+4. **Tenant and legacy indexes by their keys** (`LegacyIndexShape`): not unique, no text index, first key `ckTypeId`, an
+   `rtState` key, no `_id` key. The index name is never looked at: an upgraded index may carry a hashed name
    `{Type}_{n}_id_<hash>`. No legacy index: the run ends at once (`NothingToDo`), no index is built.
 5. **Build**: `UpgradeTiebreakIndexesAsync` under the tenant's `index_update_lock`, collection by collection, the new
    index first, the legacy one dropped after it. The job's token stops the engine **before the next collection** (an
    index build already started finishes) when the service shuts down, the window closes, or a CK import of the tenant
-   asks to go first.
-6. **Check**: the legacy indexes are read again. Left over without a cancellation means `Incomplete` (warning with the
-   list, no retry): the engine upgrades only the collections of models that are `Available`, and it logs (does not throw)
-   an index it cannot build. A retry changes neither; the next sweep looks again. Seen in the local check: collections of
-   models that are not Available (e.g. `RtEntity_SystemStreamDataArchive` in a tenant without the StreamData model in
-   state Available) keep their legacy indexes until the model is repaired. Such a tenant gets a job after every deploy
-   and in every window; the run costs no index build.
+   asks to go first. The window end is checked once more right before the engine is called.
+6. **Check**: one final read of the legacy indexes gives the count and the names. Left over without a cancellation means
+   `Incomplete` (warning with the list, no retry of this job; the next sweep looks again). Two causes:
+   - a model that is not `Available`: the engine does not select its collections; seen in the local check (e.g.
+     `RtEntity_SystemStreamDataArchive` in a tenant without the StreamData model in state Available). Repair the model
+     first. Such a tenant gets a job after every deploy and in every window; the run costs no index build;
+   - an index build of an `Available` model that failed: the engine logs the error and keeps the legacy index. If the
+     cause was transient, a later sweep succeeds.
 
 A run is never a failure because it cannot work now: `IndexUpgradeDeferredException` + `IndexUpgradeDeferAttribute`
-(state election filter, order 0, before `AutomaticRetry`) turn it into `Scheduled`: the job never enters `Failed`, the failed
-counter stays as it is, and no retry is used up. Like `AutomaticRetry`, Hangfire lists the elected-away state in the job
-history of the dashboard (a `Failed` line with `IndexUpgradeDeferredException` and the reason, followed by `Scheduled`). Real failures are retried three times
-(1, 5, 15 min) and then stay `Failed` with the error. A failing job never stops the service or fails a health check.
+(state election filter, order 0, before `AutomaticRetry`) turn it into `Scheduled`: the job never enters `Failed`, the
+failed counter stays as it is, and no retry is used up. Like `AutomaticRetry`, Hangfire lists the elected-away state in the
+job history of the dashboard (a `Failed` line with `IndexUpgradeDeferredException` and the reason, followed by
+`Scheduled`). Real failures are retried three times (1, 5, 15 min) and then stay `Failed` with the error. A failing job
+never stops the service or fails a health check. Status writes and the index reads after the engine call are bounded
+(4 s each, together below Hangfire's 15 s shutdown timeout), so a stalled MongoDB never keeps the leases or lets the host
+stop before the run is recorded. If the final read fails, the last observation of the progress log stands in (and the
+record says so).
 
 ### Triggers
 
 | Trigger | Where | When |
 | --- | --- | --- |
-| `after-deploy` | `IndexUpgradeStartup.Apply` (Program.cs) schedules `IIndexUpgradeSweepJob` | Immediate schedule: `StartDelay` (default 5 min) after a service start; replicas that start together share one sweep (deduplicated like a tenant job) |
-| `window` | recurring job `index-upgrade-window` at `Window:Cron` | Window schedule with `Window:Enabled = true`; opens the window for `Window:MaxDuration` and sweeps. A retry of the sweep inside an open window does not extend it; triggering the recurring job by hand outside a window opens one now |
+| `after-deploy` | `IndexUpgradeStartupService` (background service) schedules `IIndexUpgradeSweepJob` | Immediate schedule: `StartDelay` (default 5 min) after a service start; replicas that start together share one sweep (deduplicated like a tenant job) |
+| `window` | recurring job `index-upgrade-window` at `Window:Cron` | Window schedule with `Window:Enabled = true`; opens the window from the occurrence of the recurring job (the creation time of the sweep job) for `Window:MaxDuration` and sweeps. A retry of the sweep keeps that end, a retry after it opens nothing; triggering the recurring job by hand opens a window from now |
 | `tenant-created` | `TenantManagementConsumer` on `PosCreateTenant` | a tenant was created or attached; a restore and a copy attach as well. The job is scheduled `StartDelay` later, so that the services set the tenant up (embedded CK imports) before the rebuild takes `index_update_lock`. Window schedule: only while a window is open, otherwise the next window picks the tenant up |
 
 The sweep reads the index list of every tenant (system tenant and every registry row) and enqueues a job only for a tenant
-that still has a legacy index; tenants already upgraded cost one `listIndexes` per collection and no job. The start of
-the service only writes to the job storage: no tenant is read and nothing is built while the service starts, and tenant
-context loads and requests never run the build.
+that still has a legacy index; tenants already upgraded cost one `listIndexes` per collection and no job. A tenant whose
+index list could not be read fails the sweep after all other tenants were checked, so Hangfire retries it (a retry reads
+every tenant again; tenants whose job is still active are not enqueued twice, tenants whose job ended get a new one, which
+builds only what is left).
+
+The start of the service never waits for the upgrade: the registration runs in a background service (retried with a
+growing pause while the job storage refuses it), it only writes to the job storage, no tenant is read and nothing is built
+while the service starts, and tenant context loads and requests never run the build. A configuration that builds nothing
+(Window with the window off, or `MaxConcurrent` 0) registers nothing.
 
 ### One job per tenant across replicas
 
-`PosCreateTenant` arrives on every replica, and every replica runs the after-deploy sweep. `IIndexUpgradeCoordination.EnqueueOnce`
-takes a short Hangfire distributed lock per tenant, looks at the job remembered for the tenant (hash
-`octo:index-upgrade:job:<tenant>`) and enqueues only when that job is not `Enqueued`, `Scheduled`, `Awaiting` or `Processing`.
-A finished job does not block the next one (a restore brings legacy indexes back).
+`PosCreateTenant` arrives on every replica, and every replica runs the after-deploy registration.
+`IIndexUpgradeCoordination.EnqueueOnce` takes a short Hangfire distributed lock per tenant, looks at the job remembered for
+the tenant (hash `octo:index-upgrade:job:<tenant>`) and enqueues only when that job is not `Enqueued`, `Scheduled`,
+`Awaiting` or `Processing`. A finished job does not block the next one (a restore brings legacy indexes back). If a replica
+stops between creating the job and remembering its id, a second job can follow; both are idempotent and serialize on the
+slot and the tenant lease, the second ends `NothingToDo`.
 
 ### Global limit: own lease, not `DisableConcurrentExecution`
 
@@ -63,9 +78,14 @@ A finished job does not block the next one (a restore brings legacy indexes back
 tenant would end as a failed job, retry after retry. The global limit is therefore an own lease: the slots
 `octo:index-upgrade:slot:0..N-1` are Hangfire distributed locks of the shared MongoDB job storage, taken without waiting
 (`HangfireDistributedLockOwner`, held on one thread because the Hangfire.Mongo lock is thread-affine, AB#5539). Hangfire.Mongo
-keeps a held lock alive with a heartbeat; after a killed pod it expires. A run that gets no slot is `Scheduled` again and
-holds no worker while it waits. Each replica runs a Hangfire server of its own for the queue `index-upgrade` with one worker,
-so a long rebuild never takes a worker of the other jobs.
+keeps a held lock alive with a heartbeat; after a killed pod it expires. A failed release is swallowed (the lock expires),
+so it never changes the outcome of the import or upgrade that held it. A run that gets no slot is `Scheduled` again and
+holds no worker while it waits. Each replica runs a lightweight Hangfire server (workers only, the full server schedules)
+for the queue `index-upgrade` with one worker, so a long rebuild never takes a worker of the other jobs.
+
+Limit of the lease: Hangfire.Mongo releases a lock by its resource name. A process that stalls longer than the lock
+lifetime (30 s) while holding a slot can lose it to another replica and later delete that replica's lock, so for that time
+two tenants may build at once. Each tenant stays protected by its own `index_update_lock` in the engine.
 
 ### CK imports go first (AC "no clash with CK import")
 
@@ -73,23 +93,23 @@ The engine holds the tenant's `index_update_lock` for a whole upgrade run; a CK 
 (`RepositoryDistributedLockService`) and then fails. So:
 
 - **CK import jobs of this service** (`ImportModelJob.ImportCkAsync` / `ImportCkBatchAsync`) enter `ICkImportIndexUpgradeGate`
-  first: they set a yield request for the tenant (renewed every 5 s, valid 60 s) and wait for the tenant lease
-  (`octo:index-upgrade:tenant:<tenant>`). A running upgrade sees the request within `PollInterval`, stops before its next
-  collection, ends `Deferred` and is `Scheduled` again (30 s); the import runs; then the upgrade continues with the
-  collections left. After `ImportWaitTimeout` (default 30 min) the import runs anyway and may meet the 90 s lock wait of
-  the engine (then its retries). The wait holds a worker of the default queue and, like every CK import job, does not see
-  a shutdown. CK imports of one tenant through this service now run one after the other. While the upgrade cannot build
-  (Window schedule with the window off, the production default) the gate does nothing.
+  first: each import sets its own yield request for the tenant (renewed with every attempt, valid 60 s) and waits for the
+  tenant lease (`octo:index-upgrade:tenant:<tenant>`). A running upgrade sees a request within `PollInterval` (the yield
+  check runs apart from the progress log), stops before its next collection, records `Deferred` and is `Scheduled` again
+  (30 s); the import runs; then the upgrade continues with the collections left. After `ImportWaitTimeout` (default 30 min)
+  the import runs anyway and may meet the 90 s lock wait of the engine (then its retries). The wait holds a worker of the
+  default queue and, like every CK import job, does not see a shutdown. CK imports of one tenant through this service now
+  run one after the other (a batch holds the tenant once for all its models). While the upgrade builds nothing, or its
+  configuration cannot be read, the gate does nothing.
 - **The upgrade waits for a CK import**: while the tenant lease is held or a yield request is set, the upgrade does not
   start. When `index_update_lock` is held by someone else (an embedded import or `UpdateIndexesAsync` of another service), the
   engine's `TimeoutException` after 90 s makes the run `Scheduled` again after `RetryDelay`.
 - **Remaining risk** (accepted, Odin 2026-11-18, option A): the **embedded** CK model imports of the other services at their
   tenant setup (asset repository, communication controller, …; after a deploy that raises a model version, or right after
-  an attach) do not go
-  through this gate. Meeting a running rebuild they time out after 90 s, and the service retries the tenant setup
-  (`TenantSetupRetryTracker`, AB#7249, 30 s doubling to 5 min) until the rebuild of the current collection ended; the
-  `TenantSetup` health check turns `Degraded` after 10 minutes. `StartDelay` (5 min) lets those imports finish before the
-  after-deploy sweep starts and before the job of a created or attached tenant runs. The engine fix (release
+  an attach) do not go through this gate. Meeting a running rebuild they time out after 90 s, and the service retries the
+  tenant setup (`TenantSetupRetryTracker`, AB#7249, 30 s doubling to 5 min) until the rebuild of the current collection
+  ended; the `TenantSetup` health check turns `Degraded` after 10 minutes. `StartDelay` (5 min) lets those imports finish
+  before the after-deploy sweep starts and before the job of a created or attached tenant runs. The engine fix (release
   `index_update_lock` between collections) is AB#9302.
 
 ### Restart during a job
@@ -100,21 +120,29 @@ the job. A killed pod leaves it `Processing` until Hangfire.Mongo's sliding invi
 leases expire with the lock lifetime. The next run completes the collections left: a re-run skips upgraded collections and
 completes interrupted ones, and the engine never drops an index before its replacement exists.
 
+**Rolling update from a version without the upgrade:** an older replica that shares the job storage cannot load the job
+types of the upgrade. If it runs the delayed after-deploy sweep, Hangfire moves the sweep to `Failed` (no data is touched);
+the next start of a new replica schedules it again. Switch `Schedule=Immediate` on only for a deployment in which every
+replica runs this version, or accept that the first sweep may need the next start.
+
 ## Last-run record and logs
 
-One document per tenant in the **system database**, collection `IndexUpgradeRuns` (`_id` = tenant id in lower case): job id,
-trigger, status (`Running`, `Succeeded`, `NothingToDo`, `Deferred`, `Interrupted`, `Incomplete`, `Failed`), start, end, duration, legacy
-indexes before and after, collections upgraded, error. Status only: nothing reads it to decide whether to build. The
-status endpoint of AB#9301 reads it.
+One document per tenant in the **system database**, collection `IndexUpgradeRuns` (`_id` = tenant id in lower case): job id
+(of the executing Hangfire job), trigger, status (`Running`, `Succeeded`, `NothingToDo`, `Deferred`, `Interrupted`,
+`Incomplete`, `Failed`, stored as text), start, end, duration, legacy indexes before and after (empty = not read),
+collections upgraded (only collections whose replacement index was seen), error. Status only: nothing reads it to decide
+whether to build. The status endpoint of AB#9301 reads it. A tenant that never needed a job has no record.
 
 Structured logs (Dash0, service `octo-bot-services`):
 
 - per collection: `Index upgrade of tenant '{TenantId}': collection '{Collection}' index '{LegacyIndexName}' {LegacyKeys}
-  replaced by '{NewIndexName}' {NewKeys} ({DurationMs} ms)` - the duration is the time since the previous collection
-  finished (precision `PollInterval`);
+  replaced by '{NewIndexName}' {NewKeys} (seen {SinceLastMs} ms after the previous collection)` - the time since the
+  previous observation that found a collection done, shared by all collections found in the same observation (precision
+  `PollInterval`);
 - per run: `Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): {CollectionsUpgraded}
   collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}`;
-- per sweep: `Index upgrade sweep ({Trigger}) done: … checked, … with legacy indexes, … job(s) enqueued`.
+- per sweep: `Index upgrade sweep ({Trigger}) done: … checked, … with legacy indexes, … job(s) enqueued, … not checked`;
+- at the start: `Index upgrade: Immediate schedule, …`, `Window schedule, …` or `switched off …`.
 
 ## Configuration
 
@@ -126,13 +154,17 @@ Section `IndexUpgrade` (environment `OCTO_INDEXUPGRADE__*`):
 | `Window:Enabled` | `false` | the window opens only when set |
 | `Window:Cron` | `0 1 * * *` | when the window opens (Hangfire cron, UTC) |
 | `Window:MaxDuration` | `04:00:00` | how long it stays open; no collection starts after it closed |
-| `MaxConcurrent` | `1` | tenants rebuilt at the same time across all replicas |
+| `MaxConcurrent` | `1` | tenants rebuilt at the same time across all replicas; `0` builds nothing |
 | `StartDelay` | `00:05:00` | after-deploy sweep after the service start (Immediate); delay of a job for a created or attached tenant |
 | `RetryDelay` | `00:05:00` | next try of a deferred run |
-| `ImportWaitTimeout` | `00:30:00` | how long a CK import waits for the upgrade to stop |
-| `PollInterval` | `00:00:05` | how often a running job checks yield requests and progress |
+| `ImportWaitTimeout` | `00:30:00` | how long a CK import waits for the upgrade to stop; `0` = do not wait |
+| `PollInterval` | `00:00:05` | how often a running job checks yield requests and progress (up to 10 min) |
 
-The code defaults are the production setting, so a cluster without values builds nothing.
+The code defaults are the production setting, so a cluster without values builds nothing. Values the code cannot use are
+made safe (`IndexUpgradeOptions.Normalize`): a `Schedule` that names no member becomes `Window` with the window off, a
+negative `MaxConcurrent` 0, durations out of range their defaults. A value the configuration binder cannot convert at all
+(text for a number, an unknown schedule name) leaves the upgrade off with an error in the log; the service and its CK
+imports run as before.
 
 | Environment | Values |
 | --- | --- |
@@ -155,21 +187,28 @@ separate change.
    outside a window is picked up by the next window; a run that did not finish continues in the next window.
 4. **Verify**: per tenant, no CK Ascending index without `_id` is left:
    `db.getCollectionNames().forEach(c => db[c].getIndexes().filter(i => !i.unique && Object.keys(i.key)[0] == "ckTypeId"
-   && "rtState" in i.key && !("_id" in i.key)).forEach(i => print(c, i.name)))` prints nothing; the run record says
-   `Succeeded` or `NothingToDo`; the Hangfire dashboard (`/ui/jobs`, queue `index-upgrade`) has no failed job.
-5. **Switch off**: `OCTO_INDEXUPGRADE__WINDOW__ENABLED=false` and roll out; the recurring job `index-upgrade-window` is
-   removed at the start, pending jobs end `Deferred` without a build. In an emergency delete the pending jobs of queue
-   `index-upgrade` in the dashboard; a rebuild in progress finishes its current collection after the next restart.
+   && "rtState" in i.key && !("_id" in i.key) && !("_fts" in i.key)).forEach(i => print(c, i.name)))` prints nothing. If
+   the tenant has a run record, it says `Succeeded` or `NothingToDo` (a tenant that was clean already has none); the Hangfire
+   dashboard (`/ui/jobs`, queue `index-upgrade`) has no failed job.
+5. **Switch off**: first stop new builds - `OCTO_INDEXUPGRADE__WINDOW__ENABLED=false` (or `OCTO_INDEXUPGRADE__MAXCONCURRENT=0`,
+   which also stops an Immediate schedule) - and roll the bot service out: the recurring job `index-upgrade-window` is
+   removed at the start, pending jobs end without a build. Deleting pending jobs in the dashboard alone does not stop the
+   upgrade: the next sweep enqueues them again. A rebuild in progress finishes its current collection; the rollout stops it
+   before the next one.
 
 ## Tests
 
-- Unit (`tests/Jobs.Tests/IndexUpgrade`): shape by keys incl. hashed names; deferral filter before `AutomaticRetry`; job:
-  nothing to do, upgrade, re-run, global slot held, tenant lease held, `index_update_lock` timeout, engine failure, legacy
-  indexes the engine does not upgrade (`Incomplete`), CK import during the upgrade (stops before the next collection, import runs, upgrade continues), shutdown
-  (`Interrupted`, re-run completes), window off / closed / closing during the run; scheduler: two replicas receive
-  `PosCreateTenant` -> one job, window rules, enqueue failure does not fail the consumer; sweep; import gate; startup.
+- Unit (`tests/Jobs.Tests/IndexUpgrade`): shape by keys incl. hashed names and key order; deferral filter before
+  `AutomaticRetry` and its exact deadline; options made safe; job: nothing to do, upgrade, re-run, global slot held (no
+  resolve, no inspection), `MaxConcurrent` 0, tenant lease held, `index_update_lock` timeout, engine failure, legacy indexes
+  the engine does not upgrade (`Incomplete`), CK import during the upgrade (stops before the next collection, import runs,
+  upgrade continues), shutdown (`Interrupted`, re-run completes), window off / closed / closing during the run; scheduler:
+  two replicas receive `PosCreateTenant` -> one job, window rules, enqueue failure does not fail the consumer; sweep (two
+  overlapping sweeps, window from the occurrence, retry after the window, unreadable tenant retried); import gate (two
+  imports, configuration that cannot be read, upgrade off); start-up registration.
 - Integration (`tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests`, Docker): real engine clean run, re-run and a run
   stopped after the build end in the same indexes; a legacy index in a collection the engine does not manage -> `Incomplete`,
   the managed collection upgraded; attach of a tenant with legacy indexes -> `PosCreateTenant` -> job on a real
-  Hangfire.Mongo storage -> new keys; two Hangfire servers on one storage with two tenants due -> never two rebuilds, the
-  waiting job `Scheduled`, never `Failed`; a server stopped during a job -> `Interrupted`, another server completes it.
+  Hangfire.Mongo storage -> new keys; two Hangfire servers on one storage with two tenants due (the first build held until
+  the other job was deferred) -> never two rebuilds, the waiting job `Scheduled`, never `Failed`; a server stopped during a
+  job -> `Interrupted`, another server completes it.

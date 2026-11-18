@@ -1,6 +1,8 @@
 using Hangfire;
 using Hangfire.Common;
+using Hangfire.Server;
 using Hangfire.States;
+using Hangfire.Storage;
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
@@ -114,6 +116,8 @@ public class IndexUpgradeSchedulingTests
             NullLogger<IndexUpgradeScheduler>.Instance);
 
         await Consumer(scheduler).ConsumeAsync(Context(new PosCreateTenant("tenant-a", Guid.NewGuid(), DateTime.UtcNow)));
+
+        coordination.Received(1).EnqueueOnce("tenant-a", Arg.Any<Func<string>>());
     }
 
     [Test]
@@ -124,7 +128,7 @@ public class IndexUpgradeSchedulingTests
         indexes.AddLegacy("db-b", "RtEntity_B", "B_1", "attributes.name");
         var systemContext = SystemWithTenants(("a", "db-a"), ("b", "db-b"));
 
-        await Sweep(systemContext, indexes).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null);
+        await Sweep(systemContext, indexes).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null);
 
         await Assert.That(_created.Select(j => (string)j.Args[0])).IsEquivalentTo(new[] { "system", "b" });
         await Assert.That(_created.Select(j => (string)j.Args[1]).Distinct())
@@ -136,11 +140,16 @@ public class IndexUpgradeSchedulingTests
     {
         var indexes = new FakeTenantIndexes();
         indexes.AddLegacy("db-a", "RtEntity_A", "A_1", "attributes.name");
+        // Both sweeps hold at their reading of db-a until both are there, so both reach the enqueue together.
+        var barrier = new BarrierInspector(indexes, "db-a", 2);
         var systemContext = SystemWithTenants(("a", "db-a"));
 
-        await Task.WhenAll(Sweep(systemContext, indexes).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null),
-            Sweep(systemContext, indexes).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null));
+        await Task.WhenAll(
+            Task.Run(() => Sweep(systemContext, barrier).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null)),
+            Task.Run(() => Sweep(systemContext, barrier).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null)))
+            .WaitAsync(TimeSpan.FromSeconds(30));
 
+        await Assert.That(barrier.Arrived).IsEqualTo(2);
         await Assert.That(_created).Count().IsEqualTo(1);
     }
 
@@ -151,7 +160,7 @@ public class IndexUpgradeSchedulingTests
         var indexes = new FakeTenantIndexes();
         indexes.AddLegacy("db-a", "RtEntity_A", "A_1", "attributes.name");
 
-        await Sweep(SystemWithTenants(("a", "db-a")), indexes).RunAsync(IndexUpgradeConstants.TriggerWindow, null);
+        await Sweep(SystemWithTenants(("a", "db-a")), indexes).RunAsync(IndexUpgradeConstants.TriggerWindow, null, null);
 
         await Assert.That(indexes.ReadCount).IsEqualTo(0);
         await Assert.That(_created).IsEmpty();
@@ -166,25 +175,45 @@ public class IndexUpgradeSchedulingTests
         _options.Window.MaxDuration = TimeSpan.FromHours(3);
         var indexes = new FakeTenantIndexes();
         indexes.AddLegacy("db-a", "RtEntity_A", "A_1", "attributes.name");
+        var clock = new FixedTimeProvider(new DateTimeOffset(2026, 11, 18, 1, 0, 0, TimeSpan.Zero));
 
-        await Sweep(SystemWithTenants(("a", "db-a")), indexes).RunAsync(IndexUpgradeConstants.TriggerWindow, null);
+        await Sweep(SystemWithTenants(("a", "db-a")), indexes, clock)
+            .RunAsync(IndexUpgradeConstants.TriggerWindow, null, null);
 
-        await Assert.That(_coordination.WindowClosesAt).IsNotNull();
-        await Assert.That(_coordination.WindowClosesAt!.Value).IsGreaterThan(DateTime.UtcNow.AddHours(2.9));
+        await Assert.That(_coordination.WindowClosesAt).IsEqualTo(new DateTime(2026, 11, 18, 4, 0, 0, DateTimeKind.Utc));
         await Assert.That(_created).Count().IsEqualTo(1);
     }
 
     [Test]
     public async Task Sweep_RetriedInsideAnOpenWindow_DoesNotExtendIt()
     {
+        // The 01:00 occurrence failed and Hangfire retries it at 04:30: the window still ends at 05:00.
         _options.Schedule = IndexUpgradeSchedule.Window;
         _options.Window.Enabled = true;
-        var open = DateTime.UtcNow.AddMinutes(30);
-        _coordination.WindowClosesAt = open;
+        var occurrence = new DateTime(2026, 11, 18, 1, 0, 0, DateTimeKind.Utc);
+        var clock = new FixedTimeProvider(new DateTimeOffset(occurrence.AddHours(3.5)));
 
-        await Sweep(SystemWithTenants(), new FakeTenantIndexes()).RunAsync(IndexUpgradeConstants.TriggerWindow, null);
+        await Sweep(SystemWithTenants(), new FakeTenantIndexes(), clock)
+            .RunAsync(IndexUpgradeConstants.TriggerWindow, null, Context(occurrence));
 
-        await Assert.That(_coordination.WindowClosesAt).IsEqualTo(open);
+        await Assert.That(_coordination.WindowClosesAt).IsEqualTo(occurrence.AddHours(4));
+    }
+
+    [Test]
+    public async Task Sweep_RetriedAfterItsWindow_OpensNoWindowAndEnqueuesNothing()
+    {
+        _options.Schedule = IndexUpgradeSchedule.Window;
+        _options.Window.Enabled = true;
+        var indexes = new FakeTenantIndexes();
+        indexes.AddLegacy("db-a", "RtEntity_A", "A_1", "attributes.name");
+        var occurrence = new DateTime(2026, 11, 18, 1, 0, 0, DateTimeKind.Utc);
+        var clock = new FixedTimeProvider(new DateTimeOffset(occurrence.AddHours(5)));
+
+        await Sweep(SystemWithTenants(("a", "db-a")), indexes, clock)
+            .RunAsync(IndexUpgradeConstants.TriggerWindow, null, Context(occurrence));
+
+        await Assert.That(_coordination.WindowClosesAt).IsNull();
+        await Assert.That(_created).IsEmpty();
     }
 
     [Test]
@@ -197,9 +226,12 @@ public class IndexUpgradeSchedulingTests
             .Returns([new LegacyIndex("RtEntity_B", "B_1", ["ckTypeId", "a", "rtState"])]);
         indexes.FindLegacyIndexesAsync("db-system", null, Arg.Any<CancellationToken>()).Returns([]);
 
-        await Sweep(SystemWithTenants(("a", "db-a"), ("b", "db-b")), indexes)
-            .RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null);
+        // The run checks every tenant, then fails so that Hangfire retries the unreadable one.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Sweep(SystemWithTenants(("a", "db-a"), ("b", "db-b")), indexes)
+                .RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null));
 
+        await indexes.Received(1).FindLegacyIndexesAsync("db-a", null, Arg.Any<CancellationToken>());
         await Assert.That(_created.Select(j => (string)j.Args[0])).IsEquivalentTo(new[] { "b" });
     }
 
@@ -216,7 +248,7 @@ public class IndexUpgradeSchedulingTests
             return Task.FromResult(held);
         });
         var cache = Substitute.For<IDistributedCacheService>();
-        cache.GetCacheStreamByIdAsync("tenant-1", "key-1").Returns(_ => new CacheStream
+        cache.GetCacheStreamByIdAsync("tenant-1", Arg.Any<string>()).Returns(_ => new CacheStream
             { Stream = new MemoryStream("{}"u8.ToArray()), ContentType = "application/json", FileName = "k.json" });
         var command = Substitute.For<IImportCkModelCommand>();
         command.ImportAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken?>())
@@ -230,17 +262,57 @@ public class IndexUpgradeSchedulingTests
             [TimeSpan.Zero, TimeSpan.Zero], gate);
 
         await job.ImportCkAsync("tenant-1", "key-1", null);
-        await job.ImportCkBatchAsync("tenant-1", ["key-1"], null);
+        await job.ImportCkBatchAsync("tenant-1", ["key-1", "key-2"], null);
 
-        await Assert.That(string.Join(",", steps)).IsEqualTo("entered,imported,released,entered,imported,released");
+        // One hold around the single import, one hold around the whole batch.
+        await Assert.That(string.Join(",", steps))
+            .IsEqualTo("entered,imported,released,entered,imported,imported,released");
     }
 
     private IndexUpgradeScheduler Scheduler() =>
         new(_jobClient, _coordination, Options.Create(_options), NullLogger<IndexUpgradeScheduler>.Instance);
 
-    private IndexUpgradeSweepJob Sweep(ISystemContext systemContext, ITenantIndexInspector inspector) =>
+    private IndexUpgradeSweepJob Sweep(ISystemContext systemContext, ITenantIndexInspector inspector,
+        TimeProvider? clock = null) =>
         new(systemContext, inspector, Scheduler(), _coordination, Options.Create(_options),
-            NullLogger<IndexUpgradeSweepJob>.Instance);
+            NullLogger<IndexUpgradeSweepJob>.Instance, clock);
+
+    /// <summary>A perform context of a job created at <paramref name="createdAt" /> (the recurring occurrence).</summary>
+    private static PerformContext Context(DateTime createdAt) =>
+        new(Substitute.For<JobStorage>(), Substitute.For<IStorageConnection>(),
+            new BackgroundJob("sweep-1", Job.FromExpression<IIndexUpgradeSweepJob>(j =>
+                j.RunAsync(IndexUpgradeConstants.TriggerWindow, null, null)), createdAt),
+            Substitute.For<IJobCancellationToken>());
+
+    /// <summary>Holds the reading of one database until <c>parties</c> callers wait there, then lets all through.</summary>
+    private sealed class BarrierInspector(ITenantIndexInspector inner, string databaseName, int parties)
+        : ITenantIndexInspector
+    {
+        private readonly TaskCompletionSource _all = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _arrived;
+
+        public int Arrived => Volatile.Read(ref _arrived);
+
+        public async Task<IReadOnlyList<LegacyIndex>> FindLegacyIndexesAsync(string database,
+            IReadOnlyCollection<string>? collectionNames = null, CancellationToken cancellationToken = default)
+        {
+            if (database == databaseName && Interlocked.Increment(ref _arrived) >= parties)
+            {
+                _all.TrySetResult();
+            }
+
+            if (database == databaseName)
+            {
+                await _all.Task.WaitAsync(TimeSpan.FromSeconds(20), cancellationToken);
+            }
+
+            return await inner.FindLegacyIndexesAsync(database, collectionNames, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<(string Name, IReadOnlyList<string> Keys)>> ListIndexesAsync(string database,
+            string collectionName, CancellationToken cancellationToken = default) =>
+            inner.ListIndexesAsync(database, collectionName, cancellationToken);
+    }
 
     private static ISystemContext SystemWithTenants(params (string TenantId, string DatabaseName)[] tenants)
     {

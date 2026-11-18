@@ -12,7 +12,7 @@ internal sealed class InMemoryIndexUpgradeCoordination(TimeProvider? timeProvide
     private readonly HashSet<int> _slots = [];
     private readonly HashSet<string> _tenants = [];
     private readonly Dictionary<string, string> _jobs = new();
-    private readonly Dictionary<string, DateTime> _yield = new();
+    private readonly Dictionary<string, Dictionary<string, DateTime>> _yield = new();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
     public HashSet<string> ActiveJobs { get; } = [];
@@ -23,7 +23,7 @@ internal sealed class InMemoryIndexUpgradeCoordination(TimeProvider? timeProvide
     {
         lock (_gate)
         {
-            for (var slot = 0; slot < Math.Max(1, maxConcurrent); slot++)
+            for (var slot = 0; slot < maxConcurrent; slot++)
             {
                 if (_slots.Add(slot))
                 {
@@ -95,11 +95,16 @@ internal sealed class InMemoryIndexUpgradeCoordination(TimeProvider? timeProvide
         }
     }
 
-    public void RequestYield(string tenantId)
+    public void RequestYield(string tenantId, string requestId)
     {
         lock (_gate)
         {
-            _yield[Key(tenantId)] = _time.GetUtcNow().UtcDateTime;
+            if (!_yield.TryGetValue(Key(tenantId), out var requests))
+            {
+                _yield[Key(tenantId)] = requests = new Dictionary<string, DateTime>();
+            }
+
+            requests[requestId] = _time.GetUtcNow().UtcDateTime;
         }
     }
 
@@ -107,16 +112,20 @@ internal sealed class InMemoryIndexUpgradeCoordination(TimeProvider? timeProvide
     {
         lock (_gate)
         {
-            return _yield.TryGetValue(Key(tenantId), out var at) &&
-                   _time.GetUtcNow().UtcDateTime - at < IIndexUpgradeCoordination.YieldRequestLifetime;
+            var now = _time.GetUtcNow().UtcDateTime;
+            return _yield.TryGetValue(Key(tenantId), out var requests) &&
+                   requests.Values.Any(at => now - at < IIndexUpgradeCoordination.YieldRequestLifetime);
         }
     }
 
-    public void ClearYield(string tenantId)
+    public void ClearYield(string tenantId, string requestId)
     {
         lock (_gate)
         {
-            _yield.Remove(Key(tenantId));
+            if (_yield.TryGetValue(Key(tenantId), out var requests))
+            {
+                requests.Remove(requestId);
+            }
         }
     }
 
@@ -156,6 +165,7 @@ internal sealed class FakeTenantIndexes : ITenantIndexInspector
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, List<LegacyIndex>> _legacy = new();
+    private readonly List<(string Database, string Collection, string Name, IReadOnlyList<string> Keys)> _upgraded = [];
 
     public int ReadCount { get; private set; }
 
@@ -185,7 +195,13 @@ internal sealed class FakeTenantIndexes : ITenantIndexInspector
     {
         lock (_gate)
         {
-            _legacy.GetValueOrDefault(databaseName, []).RemoveAll(i => i.CollectionName == collection);
+            var list = _legacy.GetValueOrDefault(databaseName, []);
+            foreach (var index in list.Where(i => i.CollectionName == collection))
+            {
+                _upgraded.Add((databaseName, collection, index.IndexName + "_id", LegacyIndexShape.TiebreakKeysOf(index.Keys)));
+            }
+
+            list.RemoveAll(i => i.CollectionName == collection);
         }
     }
 
@@ -202,8 +218,24 @@ internal sealed class FakeTenantIndexes : ITenantIndexInspector
     }
 
     public Task<IReadOnlyList<(string Name, IReadOnlyList<string> Keys)>> ListIndexesAsync(string databaseName,
-        string collectionName, CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<(string Name, IReadOnlyList<string> Keys)>>([]);
+        string collectionName, CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<(string Name, IReadOnlyList<string> Keys)> result = _upgraded
+                .Where(u => u.Database == databaseName && u.Collection == collectionName)
+                .Select(u => (u.Name, u.Keys)).ToList();
+            return Task.FromResult(result);
+        }
+    }
+}
+
+/// <summary>A clock that stands still at <see cref="Now" /> until a test moves it.</summary>
+internal sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+{
+    public DateTimeOffset Now { get; set; } = now;
+
+    public override DateTimeOffset GetUtcNow() => Now;
 }
 
 /// <summary>Keeps the last record per tenant and every record written.</summary>

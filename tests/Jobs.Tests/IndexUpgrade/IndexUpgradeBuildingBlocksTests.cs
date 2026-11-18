@@ -65,20 +65,25 @@ public class IndexUpgradeBuildingBlocksTests
     [Test]
     public async Task TiebreakKeys_PutIdRightBeforeRtState()
     {
-        await Assert.That(LegacyIndexShape.TiebreakKeysOf(["ckTypeId", "a", "b", "rtState"]))
-            .IsEquivalentTo(new[] { "ckTypeId", "a", "b", "_id", "rtState" });
+        var keys = LegacyIndexShape.TiebreakKeysOf(["ckTypeId", "a", "b", "rtState"]);
+
+        await Assert.That(keys.SequenceEqual(["ckTypeId", "a", "b", "_id", "rtState"])).IsTrue();
     }
 
     [Test]
     public async Task DeferFilter_TurnsADeferralIntoScheduled_AndLeavesOtherFailuresAlone()
     {
-        var deferred = Elect(new FailedState(new IndexUpgradeDeferredException("busy", TimeSpan.FromMinutes(2))));
+        var delay = TimeSpan.FromMinutes(2);
+        var before = DateTime.UtcNow;
+        var deferred = Elect(new FailedState(new IndexUpgradeDeferredException("busy", delay)));
+        var after = DateTime.UtcNow;
         var failed = Elect(new FailedState(new InvalidOperationException("boom")));
 
         await Assert.That(deferred).IsTypeOf<ScheduledState>();
         var scheduled = (ScheduledState)deferred;
         await Assert.That(scheduled.Reason).IsEqualTo("busy");
-        await Assert.That(scheduled.EnqueueAt).IsGreaterThan(DateTime.UtcNow.AddSeconds(100));
+        await Assert.That(scheduled.EnqueueAt).IsGreaterThanOrEqualTo(before + delay - TimeSpan.FromMilliseconds(1));
+        await Assert.That(scheduled.EnqueueAt).IsLessThanOrEqualTo(after + delay + TimeSpan.FromMilliseconds(1));
         await Assert.That(failed).IsTypeOf<FailedState>();
     }
 
@@ -144,7 +149,8 @@ public class IndexUpgradeBuildingBlocksTests
     public async Task ImportGate_CoordinationFailure_LetsTheImportRun()
     {
         var coordination = Substitute.For<IIndexUpgradeCoordination>();
-        coordination.When(c => c.RequestYield(Arg.Any<string>())).Do(_ => throw new InvalidOperationException("down"));
+        coordination.When(c => c.RequestYield(Arg.Any<string>(), Arg.Any<string>()))
+            .Do(_ => throw new InvalidOperationException("down"));
         var gate = new CkImportIndexUpgradeGate(coordination,
             Options.Create(new IndexUpgradeOptions { Schedule = IndexUpgradeSchedule.Immediate }),
             NullLogger<CkImportIndexUpgradeGate>.Instance);
@@ -168,6 +174,39 @@ public class IndexUpgradeBuildingBlocksTests
     }
 
     [Test]
+    public async Task ImportGate_ConfigurationThatCannotBeRead_LetsTheImportRun()
+    {
+        var options = Substitute.For<IOptions<IndexUpgradeOptions>>();
+        options.Value.Returns(_ => throw new InvalidOperationException("Failed to convert 'one' to Int32"));
+        var gate = new CkImportIndexUpgradeGate(Substitute.For<IIndexUpgradeCoordination>(), options,
+            NullLogger<CkImportIndexUpgradeGate>.Instance);
+
+        using var held = await gate.EnterAsync("t1", CancellationToken.None);
+
+        await Assert.That(held).IsNotNull();
+    }
+
+    [Test]
+    public async Task ImportGate_TwoImportsWait_TheFirstGivingUpLeavesTheSecondRequest()
+    {
+        var coordination = new InMemoryIndexUpgradeCoordination();
+        using var upgrade = coordination.TryAcquireTenant("t1", TimeSpan.Zero);
+        var giveUpSoon = NewGate(coordination, TimeSpan.FromMilliseconds(300));
+        var waitLong = NewGate(coordination, TimeSpan.FromMinutes(5));
+        using var cancel = new CancellationTokenSource();
+
+        var second = waitLong.EnterAsync("t1", cancel.Token);
+        using (await giveUpSoon.EnterAsync("t1", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30)))
+        {
+        }
+
+        await Assert.That(coordination.IsYieldRequested("t1")).IsTrue();
+        await cancel.CancelAsync();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => second);
+        await Assert.That(coordination.IsYieldRequested("t1")).IsFalse();
+    }
+
+    [Test]
     public async Task Startup_TwoReplicasStartingTogether_ScheduleOneSweep()
     {
         var coordination = new InMemoryIndexUpgradeCoordination();
@@ -175,9 +214,9 @@ public class IndexUpgradeBuildingBlocksTests
         client.Create(Arg.Any<Job>(), Arg.Any<IState>()).Returns("sweep-1");
         var options = new IndexUpgradeOptions { Schedule = IndexUpgradeSchedule.Immediate };
 
-        IndexUpgradeStartup.Apply(options, Substitute.For<IRecurringJobManager>(), client, coordination,
+        IndexUpgradeStartup.Apply(Options.Create(options), Substitute.For<IRecurringJobManager>(), client, coordination,
             NullLogger.Instance);
-        IndexUpgradeStartup.Apply(options, Substitute.For<IRecurringJobManager>(), client, coordination,
+        IndexUpgradeStartup.Apply(Options.Create(options), Substitute.For<IRecurringJobManager>(), client, coordination,
             NullLogger.Instance);
 
         client.Received(1).Create(Arg.Any<Job>(), Arg.Any<IState>());
@@ -193,13 +232,19 @@ public class IndexUpgradeBuildingBlocksTests
         var options = new IndexUpgradeOptions
             { Schedule = IndexUpgradeSchedule.Immediate, StartDelay = TimeSpan.FromMinutes(5) };
 
-        IndexUpgradeStartup.Apply(options, recurring, client, new InMemoryIndexUpgradeCoordination(), NullLogger.Instance);
+        var before = DateTime.UtcNow;
+        IndexUpgradeStartup.Apply(Options.Create(options), recurring, client, new InMemoryIndexUpgradeCoordination(),
+            NullLogger.Instance);
+        var after = DateTime.UtcNow;
 
         recurring.Received(1).RemoveIfExists(IndexUpgradeConstants.WindowRecurringJobId);
         client.Received(1).Create(
             Arg.Is<Job>(j => j.Type == typeof(IIndexUpgradeSweepJob) &&
                              (string)j.Args[0] == IndexUpgradeConstants.TriggerAfterDeploy),
             Arg.Is<IState>(s => s is ScheduledState));
+        var scheduled = (ScheduledState)client.ReceivedCalls().Single().GetArguments()[1]!;
+        await Assert.That(scheduled.EnqueueAt).IsGreaterThanOrEqualTo(before + options.StartDelay - TimeSpan.FromMilliseconds(1));
+        await Assert.That(scheduled.EnqueueAt).IsLessThanOrEqualTo(after + options.StartDelay + TimeSpan.FromMilliseconds(1));
         await Task.CompletedTask;
     }
 
@@ -211,7 +256,8 @@ public class IndexUpgradeBuildingBlocksTests
         var options = new IndexUpgradeOptions
             { Schedule = IndexUpgradeSchedule.Window, Window = { Enabled = true, Cron = "0 2 * * *" } };
 
-        IndexUpgradeStartup.Apply(options, recurring, client, new InMemoryIndexUpgradeCoordination(), NullLogger.Instance);
+        IndexUpgradeStartup.Apply(Options.Create(options), recurring, client, new InMemoryIndexUpgradeCoordination(),
+            NullLogger.Instance);
 
         recurring.Received(1).AddOrUpdate(IndexUpgradeConstants.WindowRecurringJobId, Arg.Any<Job>(), "0 2 * * *",
             Arg.Any<RecurringJobOptions>());
@@ -226,8 +272,8 @@ public class IndexUpgradeBuildingBlocksTests
         var recurring = Substitute.For<IRecurringJobManager>();
         var client = Substitute.For<IBackgroundJobClient>();
 
-        IndexUpgradeStartup.Apply(new IndexUpgradeOptions(), recurring, client, new InMemoryIndexUpgradeCoordination(),
-            NullLogger.Instance);
+        IndexUpgradeStartup.Apply(Options.Create(new IndexUpgradeOptions()), recurring, client,
+            new InMemoryIndexUpgradeCoordination(), NullLogger.Instance);
 
         recurring.Received(1).RemoveIfExists(IndexUpgradeConstants.WindowRecurringJobId);
         recurring.DidNotReceiveWithAnyArgs().AddOrUpdate(default!, default!, default!, default!);
@@ -241,10 +287,48 @@ public class IndexUpgradeBuildingBlocksTests
         var recurring = Substitute.For<IRecurringJobManager>();
         recurring.When(r => r.RemoveIfExists(Arg.Any<string>())).Do(_ => throw new InvalidOperationException("down"));
 
-        IndexUpgradeStartup.Apply(new IndexUpgradeOptions(), recurring, Substitute.For<IBackgroundJobClient>(),
-            new InMemoryIndexUpgradeCoordination(), NullLogger.Instance);
+        var options = new IndexUpgradeOptions { Schedule = IndexUpgradeSchedule.Immediate };
 
-        await Task.CompletedTask;
+        var registered = IndexUpgradeStartup.Apply(Options.Create(options), recurring,
+            Substitute.For<IBackgroundJobClient>(), new InMemoryIndexUpgradeCoordination(), NullLogger.Instance);
+
+        await Assert.That(registered).IsFalse(); // the background service tries again
+    }
+
+    [Test]
+    public async Task Startup_ConfigurationThatCannotBeRead_DoesNotStopTheService_AndRegistersNothing()
+    {
+        var options = Substitute.For<IOptions<IndexUpgradeOptions>>();
+        options.Value.Returns(_ => throw new InvalidOperationException("Failed to convert 'Imediate'"));
+        var recurring = Substitute.For<IRecurringJobManager>();
+        var client = Substitute.For<IBackgroundJobClient>();
+
+        var done = IndexUpgradeStartup.Apply(options, recurring, client, new InMemoryIndexUpgradeCoordination(),
+            NullLogger.Instance);
+
+        await Assert.That(done).IsTrue();
+        await Assert.That(recurring.ReceivedCalls()).IsEmpty();
+        await Assert.That(client.ReceivedCalls()).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(7)]
+    [Arguments(-1)]
+    public async Task Options_ValuesOutsideTheirRange_BecomeSafe(int schedule)
+    {
+        var options = new IndexUpgradeOptions
+        {
+            Schedule = (IndexUpgradeSchedule)schedule, Window = { Enabled = true }, MaxConcurrent = -2,
+            PollInterval = TimeSpan.FromMilliseconds(-2)
+        };
+
+        options.Normalize();
+
+        await Assert.That(options.Schedule).IsEqualTo(IndexUpgradeSchedule.Window);
+        await Assert.That(options.Window.Enabled).IsFalse();
+        await Assert.That(options.MaxConcurrent).IsEqualTo(0);
+        await Assert.That(options.PollInterval).IsEqualTo(TimeSpan.FromSeconds(5));
+        await Assert.That(options.CanBuild).IsFalse();
     }
 
     private static CkImportIndexUpgradeGate NewGate(IIndexUpgradeCoordination coordination,
@@ -260,7 +344,7 @@ public class IndexUpgradeBuildingBlocksTests
         var storage = Substitute.For<JobStorage>();
         var connection = Substitute.For<IStorageConnection>();
         var transaction = Substitute.For<IWriteOnlyTransaction>();
-        var job = new BackgroundJob("1", Job.FromExpression<IIndexUpgradeJob>(j => j.UpgradeTenantAsync("t", "x", null)),
+        var job = new BackgroundJob("1", Job.FromExpression<IIndexUpgradeJob>(j => j.UpgradeTenantAsync("t", "x", null, null)),
             DateTime.UtcNow);
         var apply = new ApplyStateContext(storage, connection, transaction, job, candidate, ProcessingState.StateName);
         var context = new ElectStateContext(apply);

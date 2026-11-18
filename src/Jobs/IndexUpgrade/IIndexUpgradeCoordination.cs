@@ -15,7 +15,9 @@ public interface IIndexUpgradeCoordination
 
     /// <summary>
     ///     Takes one of <paramref name="maxConcurrent" /> global slots without waiting. Null when all are held, i.e. as
-    ///     many tenants are being rebuilt by any replica.
+    ///     many tenants are being rebuilt by any replica, and always for <paramref name="maxConcurrent" /> 0 or less (no
+    ///     builds). A failure to release a held slot is swallowed (the lock expires), so it never changes the outcome of
+    ///     the run that held it.
     /// </summary>
     IDisposable? TryAcquireGlobalSlot(int maxConcurrent);
 
@@ -35,14 +37,17 @@ public interface IIndexUpgradeCoordination
     /// <summary>The id of the job last enqueued for the tenant, null when there was none.</summary>
     string? GetJobId(string tenantId);
 
-    /// <summary>A CK import of the tenant asks a running upgrade to stop before its next collection.</summary>
-    void RequestYield(string tenantId);
+    /// <summary>
+    ///     The CK import <paramref name="requestId" /> asks a running upgrade of the tenant to stop before its next
+    ///     collection (renewed while it waits). Every import keeps its own request.
+    /// </summary>
+    void RequestYield(string tenantId, string requestId);
 
-    /// <summary>True while a CK import asked within <see cref="YieldRequestLifetime" />.</summary>
+    /// <summary>True while any CK import of the tenant asked within <see cref="YieldRequestLifetime" />.</summary>
     bool IsYieldRequested(string tenantId);
 
-    /// <summary>The CK import is done (or gave up).</summary>
-    void ClearYield(string tenantId);
+    /// <summary>The CK import <paramref name="requestId" /> is done (or gave up); the requests of other imports stay.</summary>
+    void ClearYield(string tenantId, string requestId);
 
     /// <summary>The end of the current build window (Window schedule), null when no window was opened.</summary>
     DateTime? GetWindowClosesAt();

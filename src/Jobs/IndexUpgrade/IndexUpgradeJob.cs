@@ -1,4 +1,5 @@
 using Hangfire;
+using Hangfire.Server;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
@@ -12,11 +13,12 @@ namespace Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 ///     <c>docs/index-upgrade.md</c>.
 /// </summary>
 /// <remarks>
-///     Order of the checks, each before anything is built: build window (Window schedule), legacy indexes by their keys
-///     (none: done), a global slot (<see cref="IndexUpgradeOptions.MaxConcurrent" /> across all replicas), no CK import
-///     of the tenant asking to go first, the tenant lease. Then the engine upgrades collection by collection under the
-///     tenant's <c>index_update_lock</c>; the job's token stops it before the next collection when the service shuts
-///     down, the window closes or a CK import of the tenant asks to go first.
+///     Order of the checks, each before anything is built: switched off (<c>MaxConcurrent</c> 0), build window (Window
+///     schedule), a global slot
+///     (<see cref="IndexUpgradeOptions.MaxConcurrent" /> across all replicas), no CK import of the tenant asking to go
+///     first, the tenant lease, the tenant context, the legacy indexes by their keys (none: done). Then the engine
+///     upgrades collection by collection under the tenant's <c>index_update_lock</c>; the job's token stops it before the
+///     next collection when the service shuts down, the window closes or a CK import of the tenant asks to go first.
 /// </remarks>
 public class IndexUpgradeJob(
     ILogger<IndexUpgradeJob> logger,
@@ -30,11 +32,19 @@ public class IndexUpgradeJob(
     /// <summary>How soon a run that gave way to a CK import tries again.</summary>
     internal static readonly TimeSpan AfterYieldDelay = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    ///     Upper bound of a status write and of each index read after the engine call. The three steps after a shutdown
+    ///     (final progress read, remaining read, status write) stay below Hangfire's shutdown timeout of 15 s, so a stalled
+    ///     MongoDB never keeps the leases or lets the host stop before the run is recorded <c>Interrupted</c>.
+    /// </summary>
+    internal static readonly TimeSpan BookkeepingTimeout = TimeSpan.FromSeconds(4);
+
     private const string IndexUpdateLockName = "index_update_lock";
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
     /// <inheritdoc />
-    public async Task UpgradeTenantAsync(string tenantId, string trigger, IJobCancellationToken? cancellationToken)
+    public async Task UpgradeTenantAsync(string tenantId, string trigger, IJobCancellationToken? cancellationToken,
+        PerformContext? context)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         var settings = options.Value;
@@ -43,35 +53,37 @@ public class IndexUpgradeJob(
         var record = new IndexUpgradeRunRecord
         {
             TenantId = tenantId,
-            JobId = TryGetJobId(tenantId),
+            JobId = context?.BackgroundJob?.Id ?? TryGetJobId(tenantId),
             Trigger = trigger,
             Status = IndexUpgradeRunStatus.Running,
             StartedAt = Now()
         };
 
+        if (settings.MaxConcurrent <= 0)
+        {
+            // Switched off: the job ends (no retry loop); the next sweep after switching on enqueues the tenant again.
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred,
+                "The upgrade is switched off (IndexUpgrade:MaxConcurrent = 0).", null);
+            return;
+        }
+
         DateTime? windowClosesAt = null;
-        if (settings.Schedule == IndexUpgradeSchedule.Window)
+        if (settings.Schedule != IndexUpgradeSchedule.Immediate)
         {
             windowClosesAt = settings.Window.Enabled ? coordination.GetWindowClosesAt() : null;
             if (windowClosesAt == null || Now() >= windowClosesAt)
             {
+                // Nothing was inspected: the number of legacy indexes is unknown, not zero.
                 await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred,
                     settings.Window.Enabled
                         ? "The build window is closed; the tenant is picked up by the next window."
-                        : "The build window is switched off (IndexUpgrade:Window:Enabled = false).", 0);
+                        : "The build window is switched off (IndexUpgrade:Window:Enabled = false).", null);
                 return;
             }
         }
 
-        var tenantContext = await FindTenantContextAsync(tenantId);
-        if (tenantContext == null)
-        {
-            logger.LogInformation("Index upgrade of tenant '{TenantId}' skipped: the tenant does not exist (any more)",
-                tenantId);
-            return;
-        }
-
-        // Leases first, inspection after: a tenant that waits for a slot costs no index listing per retry.
+        // Leases before the tenant is resolved or inspected: a tenant that waits for a slot costs no resolve and no
+        // index listing per retry, and nothing of this run touches the tenant's indexes outside the limit.
         using var slot = coordination.TryAcquireGlobalSlot(settings.MaxConcurrent);
         if (slot == null)
         {
@@ -93,6 +105,14 @@ public class IndexUpgradeJob(
                 LogLevel.Debug);
         }
 
+        var tenantContext = await FindTenantContextAsync(tenantId);
+        if (tenantContext == null)
+        {
+            logger.LogInformation("Index upgrade of tenant '{TenantId}' skipped: the tenant does not exist (any more)",
+                tenantId);
+            return;
+        }
+
         var before = await inspector.FindLegacyIndexesAsync(tenantContext.DatabaseName, null, shutdown);
         record.LegacyIndexesBefore = before.Count;
         if (before.Count == 0)
@@ -108,22 +128,33 @@ public class IndexUpgradeJob(
             tenantContext.DatabaseName);
         await SaveAsync(record);
 
-        var progress = new IndexUpgradeProgress(inspector, logger, tenantId, tenantContext.DatabaseName, before);
+        // The window may have closed during the inspection and the record write; a timer of zero would cancel only
+        // asynchronously, after the engine may have started a collection.
+        if (windowClosesAt != null && Now() >= windowClosesAt)
+        {
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred,
+                "The build window closed; the rest follows in the next window.", before.Count);
+            return;
+        }
+
+        var progress = new IndexUpgradeProgress(inspector, logger, tenantId, tenantContext.DatabaseName, before, _time);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         if (windowClosesAt != null)
         {
-            var left = windowClosesAt.Value - Now();
-            stop.CancelAfter(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+            var untilClose = windowClosesAt.Value - Now();
+            stop.CancelAfter(untilClose > TimeSpan.Zero ? untilClose : TimeSpan.Zero);
         }
 
-        var yielded = false;
+        var yielded = 0;
         using var watcherStop = new CancellationTokenSource();
-        var watcher = WatchAsync(tenantId, progress, settings.PollInterval, () =>
+        // Two watchers: a slow index listing of the progress log never delays the reaction to a yield request.
+        var yieldWatcher = WatchYieldAsync(tenantId, settings.PollInterval, () =>
         {
-            yielded = true;
-            // ReSharper disable once AccessToDisposedClosure - the watcher ends before stop is disposed
+            Interlocked.Exchange(ref yielded, 1);
+            // ReSharper disable once AccessToDisposedClosure - the watcher is joined before stop is disposed
             stop.Cancel();
         }, watcherStop.Token);
+        var progressWatcher = WatchProgressAsync(progress, settings.PollInterval, watcherStop.Token);
 
         Exception? failure = null;
         try
@@ -138,11 +169,20 @@ public class IndexUpgradeJob(
         finally
         {
             await watcherStop.CancelAsync();
-            await watcher;
+            await Task.WhenAll(yieldWatcher, progressWatcher);
         }
 
-        await progress.CheckAsync(CancellationToken.None);
-        var after = await RemainingAsync(tenantContext.DatabaseName, before, progress);
+        // One final observation for the progress log, the count and the names of what is left.
+        using (var bounded = new CancellationTokenSource(BookkeepingTimeout))
+        {
+            await progress.CheckAsync(bounded.Token);
+        }
+
+        // If the final read fails, the last observation of the progress log stands in (named as such).
+        var left = await RemainingAsync(tenantContext.DatabaseName, before);
+        var leftFromProgress = left == null;
+        left ??= progress.Pending;
+        var leftCount = (int?)left.Count;
         record.CollectionsUpgraded = progress.Done.ToList();
 
         if (failure is OperationCanceledException)
@@ -150,70 +190,88 @@ public class IndexUpgradeJob(
             if (shutdown.IsCancellationRequested)
             {
                 await EndAsync(record, clock, IndexUpgradeRunStatus.Interrupted,
-                    "The service stopped; Hangfire runs the job again.", after);
+                    "The service stopped; Hangfire runs the job again.", leftCount);
                 ExceptionDispatchInfo.Capture(failure).Throw();
                 return;
             }
 
-            if (yielded)
+            if (Volatile.Read(ref yielded) == 1)
             {
-                await DeferAsync(record, clock, after, "Gave way to a CK import of the tenant", AfterYieldDelay);
+                await DeferAsync(record, clock, leftCount, "Gave way to a CK import of the tenant", AfterYieldDelay);
             }
 
             if (windowClosesAt != null && Now() >= windowClosesAt)
             {
                 await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred,
-                    "The build window closed; the rest follows in the next window.", after);
+                    "The build window closed; the rest follows in the next window.", leftCount);
                 return;
             }
         }
 
         if (failure is TimeoutException timeout && timeout.Message.Contains(IndexUpdateLockName))
         {
-            await DeferAsync(record, clock, after,
+            // The engine's RepositoryDistributedLockService throws a plain TimeoutException naming the lock; there is no
+            // typed signal to match.
+            await DeferAsync(record, clock, leftCount,
                 "The tenant's index_update_lock is held (CK import or index update)", settings.RetryDelay);
         }
 
         if (failure != null)
         {
-            await EndAsync(record, clock, IndexUpgradeRunStatus.Failed, failure.Message, after);
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Failed, failure.Message, leftCount);
             ExceptionDispatchInfo.Capture(failure).Throw();
             return;
         }
 
-        if (after > 0)
+        if (left.Count > 0)
         {
-            // The engine upgrades only the collections of models that are Available and logs (does not throw) an index
-            // it cannot build. A retry changes neither, so the run ends Incomplete, not Failed (found in the local
-            // stack check: collections of models that are not Available keep their legacy indexes).
-            var message = $"{after} legacy index(es) are left that the engine did not upgrade (model not Available, " +
-                          "or the index build failed - see the engine's warnings): " +
-                          string.Join(", ", progress.Remaining.Select(i => $"{i.CollectionName}.{i.IndexName}"));
-            await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete, message, after, LogLevel.Warning);
+            // The engine upgrades only the collections of models that are Available, and it logs (does not throw) an
+            // index it cannot build. A retry of this job changes neither; the next sweep looks again. Found in the local
+            // stack check: collections of models that are not Available keep their legacy indexes.
+            var message = $"{left.Count} legacy index(es) are left that the engine did not upgrade (model not " +
+                          "Available, or the index build failed - see the engine's warnings)" +
+                          (leftFromProgress ? " [last observation of the progress log; the final read failed]" : "") +
+                          ": " + string.Join(", ", left.Select(i => $"{i.CollectionName}.{i.IndexName}"));
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete, message, leftCount, LogLevel.Warning);
             return;
         }
 
-        await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, 0);
+        await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded,
+            leftFromProgress ? "The final read failed; the progress log saw every collection upgraded." : null, 0);
     }
 
-    private async Task WatchAsync(string tenantId, IndexUpgradeProgress progress, TimeSpan interval, Action yield,
+    private async Task WatchYieldAsync(string tenantId, TimeSpan interval, Action yield,
         CancellationToken cancellationToken)
     {
-        var asked = false;
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(interval, _time, cancellationToken);
-                if (!asked && SafeIsYieldRequested(tenantId))
+                if (SafeIsYieldRequested(tenantId))
                 {
-                    asked = true;
                     logger.LogInformation(
                         "Index upgrade of tenant '{TenantId}': a CK import asks to go first; stopping before the next collection",
                         tenantId);
                     yield();
+                    return;
                 }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The run ended.
+        }
+    }
 
+    private async Task WatchProgressAsync(IndexUpgradeProgress progress, TimeSpan interval,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(interval, _time, cancellationToken);
                 await progress.CheckAsync(cancellationToken);
             }
         }
@@ -236,18 +294,19 @@ public class IndexUpgradeJob(
         }
     }
 
-    private async Task<int> RemainingAsync(string databaseName, IReadOnlyList<LegacyIndex> before,
-        IndexUpgradeProgress progress)
+    /// <summary>The legacy indexes left in the collections of the run; null when they cannot be read.</summary>
+    private async Task<IReadOnlyList<LegacyIndex>?> RemainingAsync(string databaseName, IReadOnlyList<LegacyIndex> before)
     {
         try
         {
+            using var bounded = new CancellationTokenSource(BookkeepingTimeout);
             var collections = before.Select(i => i.CollectionName).Distinct().ToList();
-            return (await inspector.FindLegacyIndexesAsync(databaseName, collections, CancellationToken.None)).Count;
+            return await inspector.FindLegacyIndexesAsync(databaseName, collections, bounded.Token);
         }
         catch (Exception e)
         {
-            logger.LogWarning(e, "Could not count the legacy indexes left in database '{DatabaseName}'", databaseName);
-            return progress.Remaining.Count;
+            logger.LogWarning(e, "Could not read the legacy indexes left in database '{DatabaseName}'", databaseName);
+            return null;
         }
     }
 
@@ -291,7 +350,8 @@ public class IndexUpgradeJob(
     {
         try
         {
-            await runStore.SaveAsync(record, CancellationToken.None);
+            using var bounded = new CancellationTokenSource(BookkeepingTimeout);
+            await runStore.SaveAsync(record, bounded.Token);
         }
         catch (Exception e)
         {

@@ -299,25 +299,31 @@ start on A, job on a third), `Jobs.Tests/Services/SharedUploadStoreTests`. Detai
 
 ## Paging index upgrade per tenant (AB#9118)
 
-`src/Jobs/IndexUpgrade`: one idempotent Hangfire job per tenant (`IIndexUpgradeJob`, queue `index-upgrade`, own Hangfire server
-with one worker) calls `ITenantContext.UpgradeTiebreakIndexesAsync` (engine-mongodb AB#8960). Full description, configuration per
-environment and prod rollout: `docs/index-upgrade.md`. Rules:
+`src/Jobs/IndexUpgrade`: one idempotent Hangfire job per tenant (`IIndexUpgradeJob`, queue `index-upgrade`, own lightweight
+Hangfire server with one worker) calls `ITenantContext.UpgradeTiebreakIndexesAsync` (engine-mongodb AB#8960). Full description,
+configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
 
 - **Shape by index keys only** (`LegacyIndexShape`): legacy = not unique, no `_fts`, first key `ckTypeId`, an `rtState` key, no `_id`.
   Never decide by the name (hashed names `{Type}_{n}_id_<hash>` exist). No marker decides anything; the last-run record
-  (system database, `IndexUpgradeRuns`) is status only.
-- **Triggers**: after-deploy sweep (`IndexUpgradeStartup`, Immediate, after `StartDelay`), window sweep (recurring
-  `index-upgrade-window`, Window schedule), `PosCreateTenant` in `TenantManagementConsumer` (create and attach; restore and copy attach).
-  Every replica triggers; `IIndexUpgradeCoordination.EnqueueOnce` keeps one pending or running job per tenant.
-- **Global limit = own lease** (`HangfireIndexUpgradeCoordination` slots on Hangfire distributed locks), not
-  `DisableConcurrentExecution`: its lock timeout fails waiting jobs during hours-long builds. A run that cannot work now throws
-  `IndexUpgradeDeferredException`; `IndexUpgradeDeferAttribute` (order 0, before `AutomaticRetry`) makes it `Scheduled`, never `Failed`.
-- **CK imports go first**: `ImportModelJob` CK imports enter `ICkImportIndexUpgradeGate` (yield request + tenant lease); a running upgrade
-  stops before its next collection and is rescheduled. Embedded CK imports of other services do not pass the gate (90 s lock wait in
-  the engine, then `TenantSetupRetryTracker`); documented remaining risk.
+  (system database, `IndexUpgradeRuns`, status as text) is status only.
+- **Triggers**: after-deploy sweep (`IndexUpgradeStartupService` in the background, Immediate, after `StartDelay`, one sweep for all
+  replicas), window sweep (recurring `index-upgrade-window`, window from the occurrence = `PerformContext.BackgroundJob.CreatedAt`),
+  `PosCreateTenant` in `TenantManagementConsumer` (create and attach; restore and copy attach; scheduled after `StartDelay`). Every
+  replica triggers; `IIndexUpgradeCoordination.EnqueueOnce` keeps one pending or running job per tenant.
+- **Global limit = own lease** (`HangfireIndexUpgradeCoordination` slots on Hangfire distributed locks, failed releases swallowed), not
+  `DisableConcurrentExecution`: its lock timeout fails waiting jobs during hours-long builds. Leases are taken before the tenant is
+  resolved or inspected. A run that cannot work now throws `IndexUpgradeDeferredException`; `IndexUpgradeDeferAttribute` (order 0,
+  before `AutomaticRetry`) makes it `Scheduled`, never `Failed`.
+- **Incomplete, not Failed**: legacy indexes the engine does not upgrade (collections of models that are not Available, a build the
+  engine logged as failed) end the run `Incomplete` (warning, no retry) - found in the local stack check.
+- **CK imports go first**: `ImportModelJob` CK imports enter `ICkImportIndexUpgradeGate` (own yield request per import + tenant lease);
+  a running upgrade stops before its next collection and is rescheduled. Embedded CK imports of other services do not pass the gate
+  (90 s lock wait in the engine, then `TenantSetupRetryTracker`); documented remaining risk, engine fix AB#9302.
 - **Cancellation**: the job takes Hangfire's `IJobCancellationToken` (the bot's `IBotCancellationToken` is never filled by Hangfire), so a
-  shutdown stops it before the next collection and Hangfire requeues it.
+  shutdown stops it before the next collection and Hangfire requeues it. Status writes and final reads are bounded (10 s).
+- **Configuration never stops the service**: `IndexUpgradeOptions.Normalize` (post-configure) makes out-of-range values safe; a value the
+  binder cannot convert is caught by the start-up registration and the import gate (upgrade off, imports as before).
 - **Code defaults = production** (`Schedule = Window`, `Window:Enabled = false`): nothing is built without deployment values; test-2 and
-  staging-1 set `OCTO_INDEXUPGRADE__SCHEDULE=Immediate`.
+  staging-1 set `OCTO_INDEXUPGRADE__SCHEDULE=Immediate`. `MaxConcurrent = 0` switches the upgrade off in every schedule.
 - Tests: `tests/Jobs.Tests/IndexUpgrade/*` (unit), `tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests` (Docker: real engine,
-  attach, two Hangfire servers on one storage, server stopped during a job).
+  unmanaged collection, attach, two Hangfire servers on one storage, server stopped during a job).

@@ -26,7 +26,7 @@ public class CkImportIndexUpgradeGate(
     ILogger<CkImportIndexUpgradeGate> logger,
     TimeProvider? timeProvider = null) : ICkImportIndexUpgradeGate
 {
-    /// <summary>How long one attempt to take the tenant lease waits; the yield request is renewed after each.</summary>
+    /// <summary>How long one attempt to take the tenant lease waits at most; the yield request is renewed after each.</summary>
     internal static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(5);
 
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
@@ -35,25 +35,45 @@ public class CkImportIndexUpgradeGate(
     public async Task<IDisposable> EnterAsync(string tenantId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-        var settings = options.Value;
-        if (settings.Schedule == IndexUpgradeSchedule.Window && !settings.Window.Enabled)
-        {
-            // No upgrade builds (production default until the go): nothing to wait for, no storage writes.
-            return NoHold.Instance;
-        }
-
+        var requestId = Guid.NewGuid().ToString("N");
         var started = _time.GetTimestamp();
         var waitLogged = false;
         try
         {
+            // Read inside the try: a configuration value the binder cannot convert must not fail the CK import.
+            var settings = options.Value;
+            if (!settings.CanBuild)
+            {
+                // No upgrade builds (production default until the go): nothing to wait for, no storage writes.
+                return NoHold.Instance;
+            }
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                coordination.RequestYield(tenantId);
-                var lease = await Task.Run(() => coordination.TryAcquireTenant(tenantId, AttemptTimeout),
-                    cancellationToken);
+                var budget = settings.ImportWaitTimeout - _time.GetElapsedTime(started);
+                if (budget <= TimeSpan.Zero)
+                {
+                    logger.LogWarning(
+                        "CK import of tenant '{TenantId}' stopped waiting for the index upgrade after {Timeout}; it runs now " +
+                        "and waits for the tenant's index_update_lock in the engine",
+                        tenantId, settings.ImportWaitTimeout);
+                    Clear(tenantId, requestId);
+                    return NoHold.Instance;
+                }
+
+                coordination.RequestYield(tenantId, requestId);
+                var attempt = budget < AttemptTimeout ? budget : AttemptTimeout;
+                var lease = await Task.Run(() => coordination.TryAcquireTenant(tenantId, attempt), cancellationToken);
                 if (lease != null)
                 {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        // The caller gave up while the attempt ran: do not hand out the lease.
+                        lease.Dispose();
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+
                     if (waitLogged)
                     {
                         logger.LogInformation(
@@ -61,7 +81,7 @@ public class CkImportIndexUpgradeGate(
                             tenantId, (long)_time.GetElapsedTime(started).TotalMilliseconds);
                     }
 
-                    return new Held(this, tenantId, lease);
+                    return new Held(this, tenantId, requestId, lease);
                 }
 
                 if (!waitLogged)
@@ -71,38 +91,29 @@ public class CkImportIndexUpgradeGate(
                         tenantId);
                     waitLogged = true;
                 }
-
-                if (_time.GetElapsedTime(started) >= options.Value.ImportWaitTimeout)
-                {
-                    logger.LogWarning(
-                        "CK import of tenant '{TenantId}' stopped waiting for the index upgrade after {Timeout}; it runs now " +
-                        "and waits for the tenant's index_update_lock in the engine",
-                        tenantId, options.Value.ImportWaitTimeout);
-                    Clear(tenantId);
-                    return NoHold.Instance;
-                }
             }
         }
         catch (OperationCanceledException)
         {
-            Clear(tenantId);
+            Clear(tenantId, requestId);
             throw;
         }
         catch (Exception e)
         {
-            // The coordination is a courtesy to the import: if the job storage cannot be reached, import as before.
+            // The coordination is a courtesy to the import: if the job storage cannot be reached or the configuration
+            // cannot be read, import as before.
             logger.LogWarning(e, "CK import of tenant '{TenantId}': could not coordinate with the index upgrade",
                 tenantId);
-            Clear(tenantId);
+            Clear(tenantId, requestId);
             return NoHold.Instance;
         }
     }
 
-    private void Clear(string tenantId)
+    private void Clear(string tenantId, string requestId)
     {
         try
         {
-            coordination.ClearYield(tenantId);
+            coordination.ClearYield(tenantId, requestId);
         }
         catch (Exception e)
         {
@@ -111,7 +122,8 @@ public class CkImportIndexUpgradeGate(
         }
     }
 
-    private sealed class Held(CkImportIndexUpgradeGate gate, string tenantId, IDisposable lease) : IDisposable
+    private sealed class Held(CkImportIndexUpgradeGate gate, string tenantId, string requestId, IDisposable lease)
+        : IDisposable
     {
         private int _disposed;
 
@@ -122,7 +134,7 @@ public class CkImportIndexUpgradeGate(
                 return;
             }
 
-            gate.Clear(tenantId);
+            gate.Clear(tenantId, requestId);
             lease.Dispose();
         }
     }

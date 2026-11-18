@@ -61,7 +61,9 @@ internal sealed class IndexUpgradeMongoClient : IIndexUpgradeMongoClient
         // Parse, not the string ctor: DatabaseHost may be "host:port" (MongoDB.Driver 3.11.1 host validation).
         if (configuration.DatabaseHost.Contains(','))
         {
-            builder.Servers = configuration.DatabaseHost.Split(',').Select(MongoServerAddress.Parse);
+            builder.Servers = configuration.DatabaseHost
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(MongoServerAddress.Parse);
         }
         else
         {
