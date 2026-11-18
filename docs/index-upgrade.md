@@ -155,11 +155,11 @@ Section `IndexUpgrade` (environment `OCTO_INDEXUPGRADE__*`):
 | --- | --- | --- |
 | `Schedule` | `Window` | `Immediate` or `Window` |
 | `Window:Enabled` | `false` | the window opens only when set |
-| `Window:Cron` | `0 1 * * *` | when the window opens (Hangfire cron, UTC); an invalid value removes the window job (error in the log, an older trigger is removed) - no window opens until the value is fixed |
+| `Window:Cron` | `0 1 * * *` | when the window opens (Hangfire cron, UTC). Omitted: the default. Set to blank: the window is off. An expression Hangfire rejects removes the window job (error in the log, an older trigger is removed) - no window opens until the value is fixed |
 | `Window:MaxDuration` | `04:00:00` | how long it stays open; no collection starts after it closed |
 | `MaxConcurrent` | `1` | tenants rebuilt at the same time across all replicas; `0` builds nothing |
 | `StartDelay` | `00:05:00` | after-deploy sweep after the service start (Immediate); delay of a job for a created or attached tenant (up to 30 days) |
-| `RetryDelay` | `00:05:00` | next try of a deferred run |
+| `RetryDelay` | `00:05:00` | next try of a deferred run (up to 1 day) |
 | `ImportWaitTimeout` | `00:30:00` | how long a CK import waits for the upgrade to stop; `0` = do not wait |
 | `PollInterval` | `00:00:05` | how often a running job checks yield requests and progress (up to 10 min) |
 
@@ -190,8 +190,9 @@ separate change.
    outside a window is picked up by the next window; a run that did not finish continues in the next window.
 4. **Verify**: per tenant, no CK Ascending index without `_id` is left:
    `db.getCollectionNames().forEach(c => db[c].getIndexes().filter(i => !i.unique && Object.keys(i.key)[0] == "ckTypeId"
-   && "rtState" in i.key && !("_id" in i.key) && !("_fts" in i.key)).forEach(i => print(c, i.name)))` prints nothing. If
-   the tenant has a run record, it says `Succeeded` or `NothingToDo` (a tenant that was clean already has none). In the
+   && "rtState" in i.key && !("_id" in i.key) && !("_fts" in i.key)).forEach(i => print(c, i.name)))` prints nothing -
+   this live check decides. The run record is a hint only: a tenant that was clean already has none, and a record left
+   `Running` or missing after a failed status write is a bookkeeping matter (the next sweep skips a clean tenant). In the
    Hangfire dashboard (`/ui/jobs`, queue `index-upgrade`) look into failed jobs of the rollout that are not resolved; an
    older `Failed` entry whose tenant a later window completed (the index check above passes) needs nothing.
 5. **Switch off**: first stop new builds - `OCTO_INDEXUPGRADE__WINDOW__ENABLED=false` (or `OCTO_INDEXUPGRADE__MAXCONCURRENT=0`,
@@ -209,7 +210,9 @@ separate change.
   upgrade continues), shutdown (`Interrupted`, re-run completes), window off / closed / closing during the run; scheduler:
   two replicas receive `PosCreateTenant` -> one job, window rules, enqueue failure does not fail the consumer; sweep (two
   overlapping sweeps, window from the occurrence, retry after the window, unreadable tenant retried); import gate (two
-  imports, configuration that cannot be read, upgrade off); start-up registration.
+  imports, configuration that cannot be read, upgrade off); start-up registration; wiring (`IndexUpgradeWiringTests`: the
+  host registrations give `ImportModelJob` its gate and `TenantManagementConsumer` its scheduler, `Program.cs` calls
+  `AddOctoIndexUpgrade`).
 - Integration (`tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests`, Docker): real engine clean run, re-run and a run
   stopped after the build end in the same indexes; a legacy index in a collection the engine does not manage -> `Incomplete`,
   the managed collection upgraded; attach of a tenant with legacy indexes -> `PosCreateTenant` -> job on a real

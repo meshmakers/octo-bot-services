@@ -328,5 +328,7 @@ configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
   binder cannot convert is caught by the start-up registration and the import gate (upgrade off, imports as before).
 - **Code defaults = production** (`Schedule = Window`, `Window:Enabled = false`): nothing is built without deployment values; test-2 and
   staging-1 set `OCTO_INDEXUPGRADE__SCHEDULE=Immediate`. `MaxConcurrent = 0` switches the upgrade off in every schedule.
-- Tests: `tests/Jobs.Tests/IndexUpgrade/*` (unit), `tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests` (Docker: real engine,
+- Tests: `tests/Jobs.Tests/IndexUpgrade/*` (unit; `IndexUpgradeWiringTests` pins that the host registrations give `ImportModelJob`
+  its gate and `TenantManagementConsumer` its scheduler - both are optional constructor parameters),
+  `tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests` (Docker: real engine,
   unmanaged collection, attach, two Hangfire servers on one storage, server stopped during a job).

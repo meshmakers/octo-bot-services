@@ -190,35 +190,51 @@ public class IndexUpgradeJobTests
 
         using var importCancel = new CancellationTokenSource();
         var importEntered = gate.EnterAsync(TenantId, importCancel.Token);
+        var importHandled = false;
         try
         {
-            await WaitUntilAsync(() => _coordination.IsYieldRequested(TenantId));
-            // The job's watcher sees the request and cancels the engine's token while collection A still builds.
-            await _engine.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.That(importEntered.IsCompleted).IsFalse(); // the import waits for the running collection
-        }
-        catch
-        {
-            await importCancel.CancelAsync();
-            await Task.WhenAny(importEntered);
-            throw;
+            try
+            {
+                await WaitUntilAsync(() => _coordination.IsYieldRequested(TenantId));
+                // The job's watcher sees the request and cancels the engine's token while collection A still builds.
+                await _engine.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await Assert.That(importEntered.IsCompleted).IsFalse(); // the import waits for the running collection
+            }
+            finally
+            {
+                releaseFirstCollection.TrySetResult();
+            }
+
+            var deferred = await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() => upgrade);
+            await Assert.That(deferred!.Delay).IsEqualTo(IndexUpgradeJob.AfterYieldDelay);
+            await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Deferred);
+            await Assert.That(_runs.Last[TenantId].CollectionsUpgraded).IsEquivalentTo(new[] { "RtEntity_A" });
+            await Assert.That(_indexes.PendingCollections(DatabaseName))
+                .IsEquivalentTo(new[] { "RtEntity_B", "RtEntity_C" });
+
+            // The import gets the tenant and runs; meanwhile the upgrade is deferred again.
+            importHandled = true;
+            using (await importEntered.WaitAsync(TimeSpan.FromSeconds(10)))
+            {
+                await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() =>
+                    NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
+            }
         }
         finally
         {
-            releaseFirstCollection.TrySetResult();
-        }
-
-        var deferred = await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() => upgrade);
-        await Assert.That(deferred!.Delay).IsEqualTo(IndexUpgradeJob.AfterYieldDelay);
-        await Assert.That(_runs.Last[TenantId].Status).IsEqualTo(IndexUpgradeRunStatus.Deferred);
-        await Assert.That(_runs.Last[TenantId].CollectionsUpgraded).IsEquivalentTo(new[] { "RtEntity_A" });
-        await Assert.That(_indexes.PendingCollections(DatabaseName)).IsEquivalentTo(new[] { "RtEntity_B", "RtEntity_C" });
-
-        // The import gets the tenant and runs; meanwhile the upgrade is deferred again.
-        using (await importEntered.WaitAsync(TimeSpan.FromSeconds(10)))
-        {
-            await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() =>
-                NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
+            if (!importHandled)
+            {
+                // A failed assertion: stop the import and release a lease it may hold.
+                await importCancel.CancelAsync();
+                try
+                {
+                    (await importEntered).Dispose();
+                }
+                catch (OperationCanceledException)
+                {
+                    // The import stopped waiting.
+                }
+            }
         }
 
         // After the import the upgrade continues with the rest.

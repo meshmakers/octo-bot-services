@@ -166,17 +166,33 @@ public class IndexUpgradeBuildingBlocksTests
     public async Task Startup_InvalidCron_RemovesTheWindowJob_AndBuildsNothing()
     {
         var recurring = Substitute.For<IRecurringJobManager>();
-        recurring.When(r => r.AddOrUpdate(Arg.Any<string>(), Arg.Any<Job>(), Arg.Any<string>(),
+        recurring.When(r => r.AddOrUpdate(Arg.Any<string>(), Arg.Any<Job>(), "not-a-cron",
                 Arg.Any<RecurringJobOptions>()))
-            .Do(_ => throw new ArgumentException("CRON expression is invalid"));
+            .Do(_ => throw new ArgumentException("CRON expression is invalid", "cronExpression"));
+        var client = Substitute.For<IBackgroundJobClient>();
         var options = new IndexUpgradeOptions
             { Schedule = IndexUpgradeSchedule.Window, Window = { Enabled = true, Cron = "not-a-cron" } };
 
-        var done = IndexUpgradeStartup.Apply(Options.Create(options), recurring, Substitute.For<IBackgroundJobClient>(),
+        var done = IndexUpgradeStartup.Apply(Options.Create(options), recurring, client,
             new InMemoryIndexUpgradeCoordination(), NullLogger.Instance);
 
         await Assert.That(done).IsTrue();
+        recurring.Received(1).AddOrUpdate(IndexUpgradeConstants.WindowRecurringJobId, Arg.Any<Job>(), "not-a-cron",
+            Arg.Any<RecurringJobOptions>());
         recurring.Received(1).RemoveIfExists(IndexUpgradeConstants.WindowRecurringJobId);
+        await Assert.That(client.ReceivedCalls()).IsEmpty();
+    }
+
+    [Test]
+    public async Task Options_BlankCron_SwitchesTheWindowOff()
+    {
+        var options = new IndexUpgradeOptions
+            { Schedule = IndexUpgradeSchedule.Window, Window = { Enabled = true, Cron = "  " } };
+
+        options.Normalize();
+
+        await Assert.That(options.Window.Enabled).IsFalse();
+        await Assert.That(options.CanBuild).IsFalse();
     }
 
     [Test]
@@ -338,7 +354,7 @@ public class IndexUpgradeBuildingBlocksTests
         var options = new IndexUpgradeOptions
         {
             Schedule = (IndexUpgradeSchedule)schedule, Window = { Enabled = true }, MaxConcurrent = -2,
-            PollInterval = TimeSpan.FromMilliseconds(-2)
+            PollInterval = TimeSpan.FromMilliseconds(-2), RetryDelay = TimeSpan.MaxValue
         };
 
         options.Normalize();
@@ -347,6 +363,7 @@ public class IndexUpgradeBuildingBlocksTests
         await Assert.That(options.Window.Enabled).IsFalse();
         await Assert.That(options.MaxConcurrent).IsEqualTo(0);
         await Assert.That(options.PollInterval).IsEqualTo(TimeSpan.FromSeconds(5));
+        await Assert.That(options.RetryDelay).IsEqualTo(TimeSpan.FromMinutes(5));
         await Assert.That(options.CanBuild).IsFalse();
     }
 

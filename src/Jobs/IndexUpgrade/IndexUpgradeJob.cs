@@ -157,6 +157,7 @@ public class IndexUpgradeJob(
         var progressWatcher = WatchProgressAsync(progress, settings.PollInterval, watcherStop.Token);
 
         Exception? failure = null;
+        var windowClosed = false;
         try
         {
             using var adminSession = await tenantContext.GetAdminSessionAsync();
@@ -168,6 +169,9 @@ public class IndexUpgradeJob(
         }
         finally
         {
+            // Read when the engine call ended: a timer that fires during the reads below does not turn another failure
+            // into a window close.
+            windowClosed = windowTimer.IsCancellationRequested;
             await watcherStop.CancelAsync();
             await Task.WhenAll(yieldWatcher, progressWatcher);
         }
@@ -200,7 +204,7 @@ public class IndexUpgradeJob(
                 await DeferAsync(record, clock, leftCount, "Gave way to a CK import of the tenant", AfterYieldDelay);
             }
 
-            if (windowTimer.IsCancellationRequested && leftCount != 0)
+            if (windowClosed && leftCount != 0)
             {
                 await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred,
                     "The build window closed; the rest follows in the next window.", leftCount);
@@ -216,7 +220,7 @@ public class IndexUpgradeJob(
                 "The tenant's index_update_lock is held (CK import or index update)", settings.RetryDelay);
         }
 
-        if (failure is OperationCanceledException && windowTimer.IsCancellationRequested && leftCount == 0)
+        if (failure is OperationCanceledException && windowClosed && leftCount == 0)
         {
             // The window closed while the engine finished the last collection: nothing is left, the run succeeded.
             failure = null;

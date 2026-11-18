@@ -85,8 +85,9 @@ public class IndexUpgradeOptions
     /// <summary>
     ///     Replaces values the code cannot use by safe ones (registered as post-configuration): a <see cref="Schedule" />
     ///     that names no member becomes <see cref="IndexUpgradeSchedule.Window" /> with the window off (nothing is built
-    ///     without a valid opt-in), a negative <see cref="MaxConcurrent" /> becomes 0 (no builds), durations outside their
-    ///     range return to their defaults. A value the configuration binder cannot convert at all (e.g. text for a
+    ///     without a valid opt-in), a blank <see cref="IndexUpgradeWindowOptions.Cron" /> switches the window off, a
+    ///     negative <see cref="MaxConcurrent" /> becomes 0 (no builds), durations outside their range return to their
+    ///     defaults. A value the configuration binder cannot convert at all (e.g. text for a
     ///     number) still throws when the options are read; the readers at the start and in the CK import gate catch it.
     /// </summary>
     public void Normalize()
@@ -106,11 +107,13 @@ public class IndexUpgradeOptions
 
         if (string.IsNullOrWhiteSpace(Window.Cron))
         {
+            // Set explicitly to blank: no schedule was given, so no window opens (an omitted value keeps the default).
             Window.Cron = defaults.Window.Cron;
+            Window.Enabled = false;
         }
 
         StartDelay = StartDelay < TimeSpan.Zero || StartDelay > TimeSpan.FromDays(30) ? defaults.StartDelay : StartDelay;
-        RetryDelay = RetryDelay <= TimeSpan.Zero ? defaults.RetryDelay : RetryDelay;
+        RetryDelay = RetryDelay <= TimeSpan.Zero || RetryDelay > TimeSpan.FromDays(1) ? defaults.RetryDelay : RetryDelay;
         ImportWaitTimeout = ImportWaitTimeout < TimeSpan.Zero ? defaults.ImportWaitTimeout : ImportWaitTimeout;
         PollInterval = PollInterval <= TimeSpan.Zero || PollInterval > TimeSpan.FromMinutes(10)
             ? defaults.PollInterval

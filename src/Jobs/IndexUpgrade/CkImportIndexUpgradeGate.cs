@@ -29,6 +29,9 @@ public class CkImportIndexUpgradeGate(
     /// <summary>How long one attempt to take the tenant lease waits at most; the yield request is renewed after each.</summary>
     internal static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>The shortest lock wait of the job storage (<see cref="HangfireIndexUpgradeCoordination" />).</summary>
+    internal static readonly TimeSpan MinimumAttempt = HangfireIndexUpgradeCoordination.SlotAttemptTimeout;
+
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
     /// <inheritdoc />
@@ -64,9 +67,15 @@ public class CkImportIndexUpgradeGate(
 
                 coordination.RequestYield(tenantId, requestId);
                 budget = settings.ImportWaitTimeout - _time.GetElapsedTime(started);
-                if (budget <= TimeSpan.Zero)
+                if (budget < MinimumAttempt)
                 {
-                    continue; // the check at the top of the loop ends the wait
+                    // An attempt would take at least the storage's minimum lock wait and overrun the budget.
+                    logger.LogWarning(
+                        "CK import of tenant '{TenantId}' stopped waiting for the index upgrade after {Timeout}; it runs now " +
+                        "and waits for the tenant's index_update_lock in the engine",
+                        tenantId, settings.ImportWaitTimeout);
+                    Clear(tenantId, requestId);
+                    return NoHold.Instance;
                 }
 
                 var attempt = budget < AttemptTimeout ? budget : AttemptTimeout;
