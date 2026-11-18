@@ -188,12 +188,25 @@ public class IndexUpgradeJobTests
         var upgrade = NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
         await firstCollectionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-        var importEntered = gate.EnterAsync(TenantId, CancellationToken.None);
-        await WaitUntilAsync(() => _coordination.IsYieldRequested(TenantId));
-        // The job's watcher sees the request and cancels the engine's token while collection A still builds.
-        await _engine.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        await Assert.That(importEntered.IsCompleted).IsFalse(); // the import waits for the running collection
-        releaseFirstCollection.SetResult();
+        using var importCancel = new CancellationTokenSource();
+        var importEntered = gate.EnterAsync(TenantId, importCancel.Token);
+        try
+        {
+            await WaitUntilAsync(() => _coordination.IsYieldRequested(TenantId));
+            // The job's watcher sees the request and cancels the engine's token while collection A still builds.
+            await _engine.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(importEntered.IsCompleted).IsFalse(); // the import waits for the running collection
+        }
+        catch
+        {
+            await importCancel.CancelAsync();
+            await Task.WhenAny(importEntered);
+            throw;
+        }
+        finally
+        {
+            releaseFirstCollection.TrySetResult();
+        }
 
         var deferred = await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() => upgrade);
         await Assert.That(deferred!.Delay).IsEqualTo(IndexUpgradeJob.AfterYieldDelay);
@@ -334,6 +347,20 @@ public class IndexUpgradeJobTests
 
         await _systemContext.DidNotReceiveWithAnyArgs().TryFindTenantContextAsync(default!);
         await Assert.That(_indexes.ReadCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task FinalReadFails_RunIsNotReportedAsSuccess()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        _indexes.FailCollectionReads = true;
+
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        var record = _runs.Last[TenantId];
+        await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
+        await Assert.That(record.LegacyIndexesAfter).IsNull();
+        await Assert.That(record.Error).Contains("not verified");
     }
 
     [Test]

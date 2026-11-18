@@ -16,7 +16,10 @@ public interface ITenantIndexInspector
     Task<IReadOnlyList<LegacyIndex>> FindLegacyIndexesAsync(string databaseName,
         IReadOnlyCollection<string>? collectionNames = null, CancellationToken cancellationToken = default);
 
-    /// <summary>The indexes (name and keys) of one collection.</summary>
+    /// <summary>
+    ///     The indexes (name and keys) of one collection, without indexes that carry a collation: the engine never
+    ///     builds a CK index with one, so such an index is never the replacement of a legacy index.
+    /// </summary>
     Task<IReadOnlyList<(string Name, IReadOnlyList<string> Keys)>> ListIndexesAsync(string databaseName,
         string collectionName, CancellationToken cancellationToken = default);
 }
@@ -46,7 +49,8 @@ internal sealed class TenantIndexInspector(IIndexUpgradeMongoClient client) : IT
         string collectionName, CancellationToken cancellationToken = default)
     {
         var indexes = await ListIndexDocumentsAsync(client.GetDatabase(databaseName), collectionName, cancellationToken);
-        return indexes.Select(i => (i["name"].AsString, LegacyIndexShape.KeysOf(i))).ToList();
+        return indexes.Where(i => !i.Contains("collation"))
+            .Select(i => (i["name"].AsString, LegacyIndexShape.KeysOf(i))).ToList();
     }
 
     private static async Task<List<string>> ListCollectionNamesAsync(IMongoDatabase database,

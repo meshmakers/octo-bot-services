@@ -39,9 +39,6 @@ internal sealed class IndexUpgradeProgress
     /// </summary>
     public IReadOnlyList<string> Done => _done;
 
-    /// <summary>The legacy indexes of the collections not seen done yet (the last observation).</summary>
-    public IReadOnlyList<LegacyIndex> Pending => _pending.Values.SelectMany(i => i).ToList();
-
     /// <summary>
     ///     Looks at the pending collections once and logs the ones that are done. Never throws for a read failure (the
     ///     log is diagnostics; the run's result is decided by the final check).
@@ -73,9 +70,10 @@ internal sealed class IndexUpgradeProgress
             return;
         }
 
+        // One elapsed value per observation; the reference point moves only when a replacement was confirmed.
         var now = _time.GetTimestamp();
         var sinceLast = (long)_time.GetElapsedTime(_lastDetection, now).TotalMilliseconds;
-        _lastDetection = now;
+        var confirmed = false;
         foreach (var collection in finished)
         {
             var replaced = await LogDoneAsync(collection, _pending[collection], sinceLast, cancellationToken);
@@ -88,9 +86,15 @@ internal sealed class IndexUpgradeProgress
             if (replaced.Value)
             {
                 _done.Add(collection);
+                confirmed = true;
             }
 
             _pending.Remove(collection);
+        }
+
+        if (confirmed)
+        {
+            _lastDetection = now;
         }
     }
 

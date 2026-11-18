@@ -65,10 +65,10 @@ public sealed class IndexUpgradeRunRecord
     /// <summary>Duration in milliseconds; null while running.</summary>
     public long? DurationMs { get; set; }
 
-    /// <summary>Legacy indexes found before the run.</summary>
-    public int LegacyIndexesBefore { get; set; }
+    /// <summary>Legacy indexes found before the run; null when the run ended before it looked.</summary>
+    public int? LegacyIndexesBefore { get; set; }
 
-    /// <summary>Legacy indexes left after the run.</summary>
+    /// <summary>Legacy indexes left after the run; null when they were not read (or the final read failed).</summary>
     public int? LegacyIndexesAfter { get; set; }
 
     /// <summary>The collections whose legacy indexes the run replaced.</summary>

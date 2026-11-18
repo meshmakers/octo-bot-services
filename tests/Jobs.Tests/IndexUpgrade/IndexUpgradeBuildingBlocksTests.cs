@@ -158,6 +158,25 @@ public class IndexUpgradeBuildingBlocksTests
         using var held = await gate.EnterAsync("t1", CancellationToken.None);
 
         await Assert.That(held).IsNotNull();
+        coordination.Received(1).RequestYield("t1", Arg.Any<string>());
+        coordination.DidNotReceiveWithAnyArgs().TryAcquireTenant(default!, default);
+    }
+
+    [Test]
+    public async Task Startup_InvalidCron_RemovesTheWindowJob_AndBuildsNothing()
+    {
+        var recurring = Substitute.For<IRecurringJobManager>();
+        recurring.When(r => r.AddOrUpdate(Arg.Any<string>(), Arg.Any<Job>(), Arg.Any<string>(),
+                Arg.Any<RecurringJobOptions>()))
+            .Do(_ => throw new ArgumentException("CRON expression is invalid"));
+        var options = new IndexUpgradeOptions
+            { Schedule = IndexUpgradeSchedule.Window, Window = { Enabled = true, Cron = "not-a-cron" } };
+
+        var done = IndexUpgradeStartup.Apply(Options.Create(options), recurring, Substitute.For<IBackgroundJobClient>(),
+            new InMemoryIndexUpgradeCoordination(), NullLogger.Instance);
+
+        await Assert.That(done).IsTrue();
+        recurring.Received(1).RemoveIfExists(IndexUpgradeConstants.WindowRecurringJobId);
     }
 
     [Test]

@@ -169,6 +169,9 @@ internal sealed class FakeTenantIndexes : ITenantIndexInspector
 
     public int ReadCount { get; private set; }
 
+    /// <summary>Reads of chosen collections (progress, final check) fail; the full listing still works.</summary>
+    public bool FailCollectionReads { get; set; }
+
     public void AddLegacy(string databaseName, string collection, string indexName, params string[] attributeKeys)
     {
         lock (_gate)
@@ -211,6 +214,11 @@ internal sealed class FakeTenantIndexes : ITenantIndexInspector
         lock (_gate)
         {
             ReadCount++;
+            if (FailCollectionReads && collectionNames != null)
+            {
+                throw new TimeoutException("listIndexes timed out");
+            }
+
             IReadOnlyList<LegacyIndex> result = _legacy.GetValueOrDefault(databaseName, [])
                 .Where(i => collectionNames == null || collectionNames.Contains(i.CollectionName)).ToList();
             return Task.FromResult(result);

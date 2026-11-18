@@ -39,9 +39,10 @@ failed counter stays as it is, and no retry is used up. Like `AutomaticRetry`, H
 job history of the dashboard (a `Failed` line with `IndexUpgradeDeferredException` and the reason, followed by
 `Scheduled`). Real failures are retried three times (1, 5, 15 min) and then stay `Failed` with the error. A failing job
 never stops the service or fails a health check. Status writes and the index reads after the engine call are bounded
-(4 s each, together below Hangfire's 15 s shutdown timeout), so a stalled MongoDB never keeps the leases or lets the host
-stop before the run is recorded. If the final read fails, the last observation of the progress log stands in (and the
-record says so).
+(4 s each, together below Hangfire's 15 s shutdown timeout), so a stalled MongoDB never keeps the leases. The bound limits
+the attempt, it does not guarantee the write: during a MongoDB stall the final record can be missing or stale. If the final
+read fails while the engine returned normally, the run ends `Incomplete` ("not verified", legacy indexes after unknown),
+never `Succeeded`.
 
 ### Triggers
 
@@ -67,7 +68,8 @@ while the service starts, and tenant context loads and requests never run the bu
 `PosCreateTenant` arrives on every replica, and every replica runs the after-deploy registration.
 `IIndexUpgradeCoordination.EnqueueOnce` takes a short Hangfire distributed lock per tenant, looks at the job remembered for
 the tenant (hash `octo:index-upgrade:job:<tenant>`) and enqueues only when that job is not `Enqueued`, `Scheduled`,
-`Awaiting` or `Processing`. A finished job does not block the next one (a restore brings legacy indexes back). If a replica
+`Awaiting` or `Processing` - once its job id is recorded. A finished job does not block the next one (a restore brings legacy
+indexes back). If a replica
 stops between creating the job and remembering its id, a second job can follow; both are idempotent and serialize on the
 slot and the tenant lease, the second ends `NothingToDo`.
 
@@ -129,7 +131,8 @@ replica runs this version, or accept that the first sweep may need the next star
 
 One document per tenant in the **system database**, collection `IndexUpgradeRuns` (`_id` = tenant id in lower case): job id
 (of the executing Hangfire job), trigger, status (`Running`, `Succeeded`, `NothingToDo`, `Deferred`, `Interrupted`,
-`Incomplete`, `Failed`, stored as text), start, end, duration, legacy indexes before and after (empty = not read),
+`Incomplete`, `Failed`, stored as text), start, end, duration, legacy indexes before and after (empty = not read, e.g. a
+run that ended at the window or a lease),
 collections upgraded (only collections whose replacement index was seen), error. Status only: nothing reads it to decide
 whether to build. The status endpoint of AB#9301 reads it. A tenant that never needed a job has no record.
 
@@ -152,10 +155,10 @@ Section `IndexUpgrade` (environment `OCTO_INDEXUPGRADE__*`):
 | --- | --- | --- |
 | `Schedule` | `Window` | `Immediate` or `Window` |
 | `Window:Enabled` | `false` | the window opens only when set |
-| `Window:Cron` | `0 1 * * *` | when the window opens (Hangfire cron, UTC) |
+| `Window:Cron` | `0 1 * * *` | when the window opens (Hangfire cron, UTC); an invalid value switches the window off (error in the log, an older trigger is removed) |
 | `Window:MaxDuration` | `04:00:00` | how long it stays open; no collection starts after it closed |
 | `MaxConcurrent` | `1` | tenants rebuilt at the same time across all replicas; `0` builds nothing |
-| `StartDelay` | `00:05:00` | after-deploy sweep after the service start (Immediate); delay of a job for a created or attached tenant |
+| `StartDelay` | `00:05:00` | after-deploy sweep after the service start (Immediate); delay of a job for a created or attached tenant (up to 30 days) |
 | `RetryDelay` | `00:05:00` | next try of a deferred run |
 | `ImportWaitTimeout` | `00:30:00` | how long a CK import waits for the upgrade to stop; `0` = do not wait |
 | `PollInterval` | `00:00:05` | how often a running job checks yield requests and progress (up to 10 min) |
@@ -188,8 +191,9 @@ separate change.
 4. **Verify**: per tenant, no CK Ascending index without `_id` is left:
    `db.getCollectionNames().forEach(c => db[c].getIndexes().filter(i => !i.unique && Object.keys(i.key)[0] == "ckTypeId"
    && "rtState" in i.key && !("_id" in i.key) && !("_fts" in i.key)).forEach(i => print(c, i.name)))` prints nothing. If
-   the tenant has a run record, it says `Succeeded` or `NothingToDo` (a tenant that was clean already has none); the Hangfire
-   dashboard (`/ui/jobs`, queue `index-upgrade`) has no failed job.
+   the tenant has a run record, it says `Succeeded` or `NothingToDo` (a tenant that was clean already has none). In the
+   Hangfire dashboard (`/ui/jobs`, queue `index-upgrade`) look into failed jobs of the rollout that are not resolved; an
+   older `Failed` entry whose tenant a later window completed (the index check above passes) needs nothing.
 5. **Switch off**: first stop new builds - `OCTO_INDEXUPGRADE__WINDOW__ENABLED=false` (or `OCTO_INDEXUPGRADE__MAXCONCURRENT=0`,
    which also stops an Immediate schedule) - and roll the bot service out: the recurring job `index-upgrade-window` is
    removed at the start, pending jobs end without a build. Deleting pending jobs in the dashboard alone does not stop the

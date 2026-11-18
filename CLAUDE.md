@@ -309,7 +309,8 @@ configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
 - **Triggers**: after-deploy sweep (`IndexUpgradeStartupService` in the background, Immediate, after `StartDelay`, one sweep for all
   replicas), window sweep (recurring `index-upgrade-window`, window from the occurrence = `PerformContext.BackgroundJob.CreatedAt`),
   `PosCreateTenant` in `TenantManagementConsumer` (create and attach; restore and copy attach; scheduled after `StartDelay`). Every
-  replica triggers; `IIndexUpgradeCoordination.EnqueueOnce` keeps one pending or running job per tenant.
+  replica triggers; `IIndexUpgradeCoordination.EnqueueOnce` keeps one pending or running job per tenant once its job id is recorded
+  (a replica stopping between creating the job and recording the id can leave a second job; the leases serialize the two).
 - **Global limit = own lease** (`HangfireIndexUpgradeCoordination` slots on Hangfire distributed locks, failed releases swallowed), not
   `DisableConcurrentExecution`: its lock timeout fails waiting jobs during hours-long builds. Leases are taken before the tenant is
   resolved or inspected. A run that cannot work now throws `IndexUpgradeDeferredException`; `IndexUpgradeDeferAttribute` (order 0,
@@ -320,7 +321,8 @@ configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
   a running upgrade stops before its next collection and is rescheduled. Embedded CK imports of other services do not pass the gate
   (90 s lock wait in the engine, then `TenantSetupRetryTracker`); documented remaining risk, engine fix AB#9302.
 - **Cancellation**: the job takes Hangfire's `IJobCancellationToken` (the bot's `IBotCancellationToken` is never filled by Hangfire), so a
-  shutdown stops it before the next collection and Hangfire requeues it. Status writes and final reads are bounded (10 s).
+  shutdown stops it before the next collection and Hangfire requeues it. Status writes and final reads are bounded (4 s each, together below
+  Hangfire's 15 s shutdown timeout).
 - **Configuration never stops the service**: `IndexUpgradeOptions.Normalize` (post-configure) makes out-of-range values safe; a value the
   binder cannot convert is caught by the start-up registration and the import gate (upgrade off, imports as before).
 - **Code defaults = production** (`Schedule = Window`, `Window:Enabled = false`): nothing is built without deployment values; test-2 and

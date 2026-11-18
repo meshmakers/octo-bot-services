@@ -63,6 +63,12 @@ public class CkImportIndexUpgradeGate(
                 }
 
                 coordination.RequestYield(tenantId, requestId);
+                budget = settings.ImportWaitTimeout - _time.GetElapsedTime(started);
+                if (budget <= TimeSpan.Zero)
+                {
+                    continue; // the check at the top of the loop ends the wait
+                }
+
                 var attempt = budget < AttemptTimeout ? budget : AttemptTimeout;
                 var lease = await Task.Run(() => coordination.TryAcquireTenant(tenantId, attempt), cancellationToken);
                 if (lease != null)

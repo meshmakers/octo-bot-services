@@ -109,7 +109,7 @@ public class IndexUpgradeOptions
             Window.Cron = defaults.Window.Cron;
         }
 
-        StartDelay = StartDelay < TimeSpan.Zero ? defaults.StartDelay : StartDelay;
+        StartDelay = StartDelay < TimeSpan.Zero || StartDelay > TimeSpan.FromDays(30) ? defaults.StartDelay : StartDelay;
         RetryDelay = RetryDelay <= TimeSpan.Zero ? defaults.RetryDelay : RetryDelay;
         ImportWaitTimeout = ImportWaitTimeout < TimeSpan.Zero ? defaults.ImportWaitTimeout : ImportWaitTimeout;
         PollInterval = PollInterval <= TimeSpan.Zero || PollInterval > TimeSpan.FromMinutes(10)

@@ -42,9 +42,23 @@ public static class IndexUpgradeStartup
         {
             if (options.Schedule != IndexUpgradeSchedule.Immediate && options.CanBuild)
             {
-                recurringJobManager.AddOrUpdate<IIndexUpgradeSweepJob>(IndexUpgradeConstants.WindowRecurringJobId,
-                    job => job.RunAsync(IndexUpgradeConstants.TriggerWindow, JobCancellationToken.Null, null),
-                    options.Window.Cron);
+                try
+                {
+                    recurringJobManager.AddOrUpdate<IIndexUpgradeSweepJob>(IndexUpgradeConstants.WindowRecurringJobId,
+                        job => job.RunAsync(IndexUpgradeConstants.TriggerWindow, JobCancellationToken.Null, null),
+                        options.Window.Cron);
+                }
+                catch (ArgumentException e)
+                {
+                    // An invalid cron: Hangfire refuses the update and would keep an older trigger. Remove it, so no
+                    // window opens on a schedule nobody configured any more.
+                    recurringJobManager.RemoveIfExists(IndexUpgradeConstants.WindowRecurringJobId);
+                    logger.LogError(e,
+                        "Index upgrade: IndexUpgrade:Window:Cron '{Cron}' is invalid; the build window is switched off",
+                        options.Window.Cron);
+                    return true;
+                }
+
                 logger.LogInformation(
                     "Index upgrade: Window schedule, the build window opens at '{Cron}' (UTC) for {MaxDuration}",
                     options.Window.Cron, options.Window.MaxDuration);

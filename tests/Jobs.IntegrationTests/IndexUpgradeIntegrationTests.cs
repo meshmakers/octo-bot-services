@@ -222,6 +222,15 @@ public class IndexUpgradeIntegrationTests
         await Assert.That(monitoring.FailedCount()).IsEqualTo(0);
         var history = new[] { job1, job2 }.SelectMany(id => monitoring.JobDetails(id).History).ToList();
         await Assert.That(history.Select(h => h.StateName)).Contains(ScheduledState.StateName);
+        // A deferral uses no attempt of AutomaticRetry: neither job has a retry count.
+        using (var connection = storage.GetConnection())
+        {
+            foreach (var id in new[] { job1, job2 })
+            {
+                await Assert.That(connection.GetJobParameter(id, "RetryCount") ?? "0").IsEqualTo("0");
+            }
+        }
+
         var traversedFailures = history.Where(h => h.StateName == FailedState.StateName).ToList();
         await Assert.That(traversedFailures.All(h => h.Data.TryGetValue("ExceptionType", out var type) &&
                                                      type.Contains(nameof(IndexUpgradeDeferredException)))).IsTrue();
