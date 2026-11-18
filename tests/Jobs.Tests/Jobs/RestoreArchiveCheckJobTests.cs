@@ -116,6 +116,33 @@ public class RestoreArchiveCheckJobTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task DumpEntry_IsDatedByTheStartOfTheDump_NotByItsRegistration()
+    {
+        var dumpStartedAt = new DateTimeOffset(2026, 11, 18, 9, 0, 0, TimeSpan.Zero);
+        var clock = new FixedTimeProvider(dumpStartedAt);
+        var localDumpPath = Path.Combine(_env.Directory, "dumps", Tenant, "dated.tar.gz");
+        _files.GenerateDumpFileName(Tenant).Returns("dated.tar.gz");
+        _files.GetDumpFilePath(Tenant, "dated.tar.gz").Returns(localDumpPath);
+        _systemContext.BackupTenantAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<TimeSpan?>(),
+                Arg.Any<CancellationToken?>())
+            .Returns(call =>
+            {
+                clock.Now = dumpStartedAt.AddHours(2);
+                Directory.CreateDirectory(Path.GetDirectoryName(call.ArgAt<string>(1))!);
+                File.WriteAllBytes(call.ArgAt<string>(1), _dump);
+                return Task.FromResult(new CommandResult { Success = true });
+            });
+        var recorder = new DumpHashRecorder(_registry, Options.Create(new DumpHashRegistryOptions()),
+            NullLogger<DumpHashRecorder>.Instance, _env.Storage);
+        var dumpJob = new DumpRepositoryJob(Substitute.For<ILogger<DumpRepositoryJob>>(), _systemContext, _files,
+            _env.Storage, timeProvider: clock, dumpHashRecorder: recorder);
+
+        await dumpJob.Run(Tenant, false, null);
+
+        await Assert.That(_registry.Entries.Single().DumpedAtUtc).IsEqualTo(dumpStartedAt.UtcDateTime);
+    }
+
+    [Test]
     public async Task WithoutAVerifier_ACheckedRestoreIsRefused()
     {
         var downloadedDump = await DumpAndDownloadAsync();

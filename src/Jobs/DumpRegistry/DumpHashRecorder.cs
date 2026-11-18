@@ -39,13 +39,13 @@ public sealed class DumpHashRecorder(
         return sha256;
     }
 
-    /// <summary>Registers a stored tenant dump of an earlier version, dated by its artifact.</summary>
+    /// <summary>Registers a stored tenant dump of an earlier version, dated by the earliest time it can have started.</summary>
     /// <returns>The SHA-256 of the dump, lower-case hex.</returns>
-    public async Task<string> RecordStoredDumpAsync(string tenantId, string fileName, DateTime storedAtUtc,
+    public async Task<string> RecordStoredDumpAsync(string tenantId, string fileName, DateTime earliestStartUtc,
         CancellationToken cancellationToken)
     {
         var (sha256, sizeBytes) = await HashStoredDumpAsync(tenantId, fileName, cancellationToken);
-        await RegisterAsync(tenantId, sha256, storedAtUtc, fileName, sizeBytes, null, DumpHashSources.Backfill,
+        await RegisterAsync(tenantId, sha256, earliestStartUtc, fileName, sizeBytes, null, DumpHashSources.Backfill,
             cancellationToken);
         return sha256;
     }

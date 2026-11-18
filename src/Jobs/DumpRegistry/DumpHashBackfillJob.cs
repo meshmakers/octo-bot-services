@@ -7,8 +7,10 @@ using Microsoft.Extensions.Options;
 namespace Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 
 /// <summary>
-///     Registers every tenant dump in the artifact store that has no entry yet, dated by the artifact. Only the dump job
-///     writes the tenant dump category, so every artifact there is a dump the platform produced. Skips dumps of tenants
+///     Registers every tenant dump in the artifact store that has no entry yet, dated by the earliest time the dump can
+///     have started (<see cref="DumpFileStartTime" />), never by the time it was stored: a dump of an earlier tenant with
+///     the same id stays filtered by the tenant generation. Only the dump job writes the tenant dump category, so every
+///     artifact there is a dump the platform produced. Skips dumps of tenants
 ///     that no longer exist and dumps whose retention has already run out. A dump that cannot be read is logged and
 ///     skipped.
 /// </summary>
@@ -35,13 +37,21 @@ public sealed class DumpHashBackfillJob(
         var registeredCount = 0;
         await foreach (var artifact in artifactStorage.ListCategoryAsync(ArtifactCategories.TenantDumps, ct))
         {
-            var storedAtUtc = artifact.CreatedAt.UtcDateTime;
-            if (storedAtUtc <= oldestStillValidUtc || !await TenantExistsAsync(artifact.TenantId, existingTenants))
+            if (!DumpFileStartTime.TryRead(artifact.FileName, out var earliestStartUtc))
+            {
+                logger.LogWarning(
+                    "Dump '{FileName}' of tenant '{TenantId}' is not registered by the backfill: its start time cannot be read from the name",
+                    artifact.FileName, artifact.TenantId);
+                continue;
+            }
+
+            if (earliestStartUtc <= oldestStillValidUtc ||
+                !await TenantExistsAsync(artifact.TenantId, existingTenants))
             {
                 continue;
             }
 
-            if (await TryRegisterAsync(artifact, storedAtUtc, ct))
+            if (await TryRegisterAsync(artifact, earliestStartUtc, ct))
             {
                 registeredCount++;
             }
@@ -51,7 +61,7 @@ public sealed class DumpHashBackfillJob(
         return registeredCount;
     }
 
-    private async Task<bool> TryRegisterAsync(StoredTenantArtifactEntry artifact, DateTime storedAtUtc,
+    private async Task<bool> TryRegisterAsync(StoredTenantArtifactEntry artifact, DateTime earliestStartUtc,
         CancellationToken ct)
     {
         try
@@ -61,7 +71,7 @@ public sealed class DumpHashBackfillJob(
                 return false;
             }
 
-            await recorder.RecordStoredDumpAsync(artifact.TenantId, artifact.FileName, storedAtUtc, ct);
+            await recorder.RecordStoredDumpAsync(artifact.TenantId, artifact.FileName, earliestStartUtc, ct);
             return true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

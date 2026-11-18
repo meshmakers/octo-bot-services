@@ -1,9 +1,11 @@
 using System.Security.Cryptography;
+using Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.Services;
 using Meshmakers.Octo.Backend.Jobs.Tests.Services;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Services.ArtifactStorage;
+using Meshmakers.Octo.Services.Methods.Operations;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -32,15 +34,14 @@ public class DumpHashBackfillJobTests : IDisposable
         _artifacts.Dispose();
     }
 
-    [Test]
-    public async Task StoredDumpOfAnExistingTenant_IsRegisteredWithTheDownloadHash_DatedByTheArtifact()
-    {
-        var stored = await StoreDumpAsync(ExistingTenant, "old-dump.tar.gz");
-        var artifactInfo = await _artifacts.Storage.GetInfoAsync(ArtifactCategories.TenantDumps, ExistingTenant,
-            stored.FileName);
-        var storedAtUtc = artifactInfo!.CreatedAt.UtcDateTime;
+    private static readonly DateTime DumpNamedAtUtc = new(2026, 11, 1, 8, 15, 30, DateTimeKind.Utc);
 
-        var registeredCount = await BackfillJob(DateTimeOffset.UtcNow.AddDays(3)).Run(null);
+    [Test]
+    public async Task StoredDumpOfAnExistingTenant_IsRegisteredWithTheDownloadHash_DatedByItsStartFromTheName()
+    {
+        var stored = await StoreDumpAsync(ExistingTenant, DumpName(ExistingTenant, DumpNamedAtUtc, ".tar.gz"));
+
+        var registeredCount = await BackfillJob().Run(null);
 
         await Assert.That(registeredCount).IsEqualTo(1);
         var entry = _registry.Entries.Single();
@@ -48,16 +49,50 @@ public class DumpHashBackfillJobTests : IDisposable
         await Assert.That(entry.FileName).IsEqualTo(stored.FileName);
         await Assert.That(entry.Source).IsEqualTo(DumpHashSources.Backfill);
         await Assert.That(entry.JobId).IsNull();
-        await Assert.That(entry.DumpedAtUtc).IsEqualTo(storedAtUtc);
-        await Assert.That(entry.ExpiresAtUtc).IsEqualTo(storedAtUtc.AddDays(365));
+        await Assert.That(entry.DumpedAtUtc).IsEqualTo(DumpNamedAtUtc);
+        await Assert.That(entry.ExpiresAtUtc).IsEqualTo(DumpNamedAtUtc.AddDays(365));
+    }
+
+    [Test]
+    public async Task ArchiveContainer_IsDatedTheMongoDumpTimeoutBeforeItsName()
+    {
+        await StoreDumpAsync(ExistingTenant, DumpName(ExistingTenant, DumpNamedAtUtc, ".octobak.zip"));
+
+        await BackfillJob().Run(null);
+
+        await Assert.That(_registry.Entries.Single().DumpedAtUtc).IsEqualTo(DumpNamedAtUtc.AddHours(-1));
+    }
+
+    [Test]
+    public async Task DumpWhoseNameCarriesNoStartTime_IsNotRegistered()
+    {
+        await StoreDumpAsync(ExistingTenant, "renamed-dump.tar.gz");
+
+        await Assert.That(await BackfillJob().Run(null)).IsEqualTo(0);
+        await Assert.That(_registry.Entries.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DumpOfAnEarlierTenantStoredAfterTheNewTenantWasCreated_StaysFiltered()
+    {
+        var newTenantCreatedUtc = DumpNamedAtUtc.AddMinutes(10);
+        await StoreDumpAsync(ExistingTenant, DumpName(ExistingTenant, DumpNamedAtUtc, ".tar.gz"));
+        var generation = Substitute.For<ICkMethodOperationTenantGeneration>();
+        generation.GetStartUtcAsync(ExistingTenant, Arg.Any<CancellationToken>()).Returns(newTenantCreatedUtc);
+
+        await BackfillJob().Run(null);
+
+        var sha256 = _registry.Entries.Single().Sha256;
+        var generationRegistry = new TenantGenerationDumpHashRegistry(_registry, generation);
+        await Assert.That(await generationRegistry.FindAsync(ExistingTenant, sha256)).IsNull();
     }
 
     [Test]
     public async Task AlreadyRecordedDump_IsNotRegisteredAgain()
     {
-        var stored = await StoreDumpAsync(ExistingTenant, "recorded.tar.gz");
-        await _registry.RegisterAsync(new DumpHashEntry(ExistingTenant, "recorded-hash", DateTime.UtcNow,
-            DateTime.UtcNow.AddDays(1), stored.FileName, 1, "job-1", DumpHashSources.Dump));
+        var stored = await StoreDumpAsync(ExistingTenant, DumpName(ExistingTenant, DumpNamedAtUtc, ".tar.gz"));
+        await _registry.RegisterAsync(new DumpHashEntry(ExistingTenant, "recorded-hash", DumpNamedAtUtc,
+            DumpNamedAtUtc.AddDays(365), stored.FileName, 1, "job-1", DumpHashSources.Dump));
 
         var registeredCount = await BackfillJob().Run(null);
 
@@ -68,7 +103,7 @@ public class DumpHashBackfillJobTests : IDisposable
     [Test]
     public async Task DumpOfADeletedTenant_IsNotRegistered()
     {
-        await StoreDumpAsync(DeletedTenant, "orphan.tar.gz");
+        await StoreDumpAsync(DeletedTenant, DumpName(DeletedTenant, DumpNamedAtUtc, ".tar.gz"));
 
         await Assert.That(await BackfillJob().Run(null)).IsEqualTo(0);
         await Assert.That(_registry.Entries.Count).IsEqualTo(0);
@@ -77,9 +112,9 @@ public class DumpHashBackfillJobTests : IDisposable
     [Test]
     public async Task DumpOlderThanTheRetention_IsNotRegistered()
     {
-        await StoreDumpAsync(ExistingTenant, "ancient.tar.gz");
+        await StoreDumpAsync(ExistingTenant, DumpName(ExistingTenant, DumpNamedAtUtc, ".tar.gz"));
 
-        var registeredCount = await BackfillJob(DateTimeOffset.UtcNow.AddDays(400)).Run(null);
+        var registeredCount = await BackfillJob(new DateTimeOffset(DumpNamedAtUtc.AddDays(366))).Run(null);
 
         await Assert.That(registeredCount).IsEqualTo(0);
     }
@@ -87,19 +122,24 @@ public class DumpHashBackfillJobTests : IDisposable
     [Test]
     public async Task UnreadableDump_IsSkipped_AndTheOthersAreRegistered()
     {
-        var damaged = await StoreDumpAsync(ExistingTenant, "damaged.tar.gz");
+        var damagedName = DumpName(ExistingTenant, DumpNamedAtUtc, ".tar.gz");
+        var damaged = await StoreDumpAsync(ExistingTenant, damagedName);
         var storedPath = Path.Combine(_artifacts.StoreRoot,
             _artifacts.Keys.Build(ArtifactCategories.TenantDumps, ExistingTenant, damaged.FileName));
         var storedBytes = await File.ReadAllBytesAsync(storedPath);
         storedBytes[^10] ^= 0xFF;
         await File.WriteAllBytesAsync(storedPath, storedBytes);
-        await StoreDumpAsync(ExistingTenant, "intact.tar.gz");
+        var intactName = DumpName(ExistingTenant, DumpNamedAtUtc.AddMinutes(5), ".tar.gz");
+        await StoreDumpAsync(ExistingTenant, intactName);
 
         var registeredCount = await BackfillJob().Run(null);
 
         await Assert.That(registeredCount).IsEqualTo(1);
-        await Assert.That(_registry.Entries.Single().FileName).StartsWith("intact.tar.gz");
+        await Assert.That(_registry.Entries.Single().FileName).StartsWith(intactName);
     }
+
+    private static string DumpName(string tenantId, DateTime namedAtUtc, string extension) =>
+        $"{tenantId}-{namedAtUtc:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}{extension}";
 
     private Task<StoredArtifact> StoreDumpAsync(string tenantId, string fileName) =>
         _artifacts.Storage.StoreFileAsync(ArtifactCategories.TenantDumps, tenantId, fileName,
@@ -108,7 +148,7 @@ public class DumpHashBackfillJobTests : IDisposable
     private DumpHashBackfillJob BackfillJob(DateTimeOffset? now = null)
     {
         var options = Options.Create(new DumpHashRegistryOptions());
-        TimeProvider clock = now == null ? TimeProvider.System : new FixedTimeProvider(now.Value);
+        TimeProvider clock = new FixedTimeProvider(now ?? new DateTimeOffset(DumpNamedAtUtc.AddDays(3)));
         var recorder = new DumpHashRecorder(_registry, options, NullLogger<DumpHashRecorder>.Instance,
             _artifacts.Storage);
         return new DumpHashBackfillJob(_registry, recorder, _systemContext, options, clock,
