@@ -17,8 +17,9 @@ public interface ITenantIndexInspector
         IReadOnlyCollection<string>? collectionNames = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    ///     The indexes (name and keys) of one collection, without indexes that carry a collation: the engine never
-    ///     builds a CK index with one, so such an index is never the replacement of a legacy index.
+    ///     The indexes (name and keys) of one collection; indexes without a collation come first, so a key match finds the
+    ///     engine's index before a hand-made one with a collation. (On a collection with a default collation every index
+    ///     carries one, so they are not left out.)
     /// </summary>
     Task<IReadOnlyList<(string Name, IReadOnlyList<string> Keys)>> ListIndexesAsync(string databaseName,
         string collectionName, CancellationToken cancellationToken = default);
@@ -49,7 +50,7 @@ internal sealed class TenantIndexInspector(IIndexUpgradeMongoClient client) : IT
         string collectionName, CancellationToken cancellationToken = default)
     {
         var indexes = await ListIndexDocumentsAsync(client.GetDatabase(databaseName), collectionName, cancellationToken);
-        return indexes.Where(i => !i.Contains("collation"))
+        return indexes.OrderBy(i => i.Contains("collation") ? 1 : 0)
             .Select(i => (i["name"].AsString, LegacyIndexShape.KeysOf(i))).ToList();
     }
 

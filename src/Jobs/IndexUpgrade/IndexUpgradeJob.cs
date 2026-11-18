@@ -140,13 +140,10 @@ public class IndexUpgradeJob(
         var progress = new IndexUpgradeProgress(inspector, logger, tenantId, tenantContext.DatabaseName, before, _time);
         // The window has its own token: whether it closed is read from the timer, not compared with the clock, so a timer
         // that fires a few milliseconds early still counts as the window closing.
-        using var windowTimer = new CancellationTokenSource();
+        var untilClose = windowClosesAt == null ? Timeout.InfiniteTimeSpan : windowClosesAt.Value - Now();
+        using var windowTimer = new CancellationTokenSource(
+            untilClose == Timeout.InfiniteTimeSpan || untilClose > TimeSpan.Zero ? untilClose : TimeSpan.Zero, _time);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(shutdown, windowTimer.Token);
-        if (windowClosesAt != null)
-        {
-            var untilClose = windowClosesAt.Value - Now();
-            windowTimer.CancelAfter(untilClose > TimeSpan.Zero ? untilClose : TimeSpan.Zero);
-        }
 
         var yielded = 0;
         using var watcherStop = new CancellationTokenSource();
@@ -175,9 +172,11 @@ public class IndexUpgradeJob(
             await Task.WhenAll(yieldWatcher, progressWatcher);
         }
 
-        // One final observation for the progress log, the count and the names of what is left.
-        using (var bounded = new CancellationTokenSource(BookkeepingTimeout))
+        // One final observation for the progress log (skipped on shutdown, to keep the bookkeeping short), then the
+        // count and the names of what is left.
+        if (!shutdown.IsCancellationRequested)
         {
+            using var bounded = new CancellationTokenSource(BookkeepingTimeout);
             await progress.CheckAsync(bounded.Token);
         }
 
@@ -201,7 +200,7 @@ public class IndexUpgradeJob(
                 await DeferAsync(record, clock, leftCount, "Gave way to a CK import of the tenant", AfterYieldDelay);
             }
 
-            if (windowTimer.IsCancellationRequested)
+            if (windowTimer.IsCancellationRequested && leftCount != 0)
             {
                 await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred,
                     "The build window closed; the rest follows in the next window.", leftCount);
@@ -215,6 +214,12 @@ public class IndexUpgradeJob(
             // typed signal to match.
             await DeferAsync(record, clock, leftCount,
                 "The tenant's index_update_lock is held (CK import or index update)", settings.RetryDelay);
+        }
+
+        if (failure is OperationCanceledException && windowTimer.IsCancellationRequested && leftCount == 0)
+        {
+            // The window closed while the engine finished the last collection: nothing is left, the run succeeded.
+            failure = null;
         }
 
         if (failure != null)
@@ -356,8 +361,7 @@ public class IndexUpgradeJob(
             "{CollectionsUpgraded} collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}" +
             "{Reason}",
             record.TenantId, status, record.DurationMs, record.Trigger, record.CollectionsUpgraded.Count,
-            record.LegacyIndexesBefore?.ToString() ?? "?", legacyLeft?.ToString() ?? "?",
-            error == null ? "" : ": " + error);
+            record.LegacyIndexesBefore, legacyLeft, error == null ? "" : ": " + error);
     }
 
     private async Task SaveAsync(IndexUpgradeRunRecord record)

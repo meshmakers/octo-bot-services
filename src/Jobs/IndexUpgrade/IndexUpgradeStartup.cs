@@ -48,7 +48,8 @@ public static class IndexUpgradeStartup
                         job => job.RunAsync(IndexUpgradeConstants.TriggerWindow, JobCancellationToken.Null, null),
                         options.Window.Cron);
                 }
-                catch (ArgumentException e)
+                catch (ArgumentException e) when (e.ParamName == "cronExpression" ||
+                                                  e.Message.Contains("CRON", StringComparison.OrdinalIgnoreCase))
                 {
                     // An invalid cron: Hangfire refuses the update and would keep an older trigger. Remove it, so no
                     // window opens on a schedule nobody configured any more.

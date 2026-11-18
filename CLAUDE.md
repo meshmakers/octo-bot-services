@@ -316,7 +316,8 @@ configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
   resolved or inspected. A run that cannot work now throws `IndexUpgradeDeferredException`; `IndexUpgradeDeferAttribute` (order 0,
   before `AutomaticRetry`) makes it `Scheduled`, never `Failed`.
 - **Incomplete, not Failed**: legacy indexes the engine does not upgrade (collections of models that are not Available, a build the
-  engine logged as failed) end the run `Incomplete` (warning, no retry) - found in the local stack check.
+  engine logged as failed) end the run `Incomplete` (warning, no retry) - found in the local stack check. So does a final read that
+  failed after the engine returned (`LegacyIndexesAfter` null, "not verified"): look at MongoDB, not at the models.
 - **CK imports go first**: `ImportModelJob` CK imports enter `ICkImportIndexUpgradeGate` (own yield request per import + tenant lease);
   a running upgrade stops before its next collection and is rescheduled. Embedded CK imports of other services do not pass the gate
   (90 s lock wait in the engine, then `TenantSetupRetryTracker`); documented remaining risk, engine fix AB#9302.

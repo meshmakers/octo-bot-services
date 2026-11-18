@@ -140,7 +140,7 @@ Structured logs (Dash0, service `octo-bot-services`):
 
 - per collection: `Index upgrade of tenant '{TenantId}': collection '{Collection}' index '{LegacyIndexName}' {LegacyKeys}
   replaced by '{NewIndexName}' {NewKeys} (seen {SinceLastMs} ms after the previous collection)` - the time since the
-  previous observation that found a collection done, shared by all collections found in the same observation (precision
+  previous observation that confirmed a replacement, shared by all collections found in the same observation (precision
   `PollInterval`);
 - per run: `Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): {CollectionsUpgraded}
   collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}`;
@@ -155,7 +155,7 @@ Section `IndexUpgrade` (environment `OCTO_INDEXUPGRADE__*`):
 | --- | --- | --- |
 | `Schedule` | `Window` | `Immediate` or `Window` |
 | `Window:Enabled` | `false` | the window opens only when set |
-| `Window:Cron` | `0 1 * * *` | when the window opens (Hangfire cron, UTC); an invalid value switches the window off (error in the log, an older trigger is removed) |
+| `Window:Cron` | `0 1 * * *` | when the window opens (Hangfire cron, UTC); an invalid value removes the window job (error in the log, an older trigger is removed) - no window opens until the value is fixed |
 | `Window:MaxDuration` | `04:00:00` | how long it stays open; no collection starts after it closed |
 | `MaxConcurrent` | `1` | tenants rebuilt at the same time across all replicas; `0` builds nothing |
 | `StartDelay` | `00:05:00` | after-deploy sweep after the service start (Immediate); delay of a job for a created or attached tenant (up to 30 days) |

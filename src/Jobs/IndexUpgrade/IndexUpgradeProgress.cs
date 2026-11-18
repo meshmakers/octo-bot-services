@@ -6,7 +6,7 @@ namespace Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 ///     Follows the collections of one index upgrade run (AB#9118): the engine upgrades a whole tenant in one call, so
 ///     the job looks at the legacy indexes of the collections still pending and logs each collection once its legacy
 ///     indexes are gone - tenant, collection, legacy and new index names and keys, and when the change was seen. The time
-///     is the time since the previous observation that found a collection done, shared by every collection found in the
+///     is the time since the previous observation that confirmed a replacement, shared by every collection found in the
 ///     same observation (the engine works through the collections one after the other; precision: the poll interval).
 /// </summary>
 internal sealed class IndexUpgradeProgress
