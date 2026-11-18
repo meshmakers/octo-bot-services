@@ -623,6 +623,10 @@ dotnet test Octo.Bots.sln
 
 The complete OctoMesh documentation is available at https://docs.meshmakers.cloud.
 
+- [Paging index upgrade per tenant](docs/index-upgrade.md) (AB#9118): the Hangfire job that rebuilds the CK Ascending
+  indexes of every tenant in the paging tiebreak shape, its triggers, configuration per environment, global limit and the
+  production rollout procedure.
+
 ## License
 
 Released under the MIT License.

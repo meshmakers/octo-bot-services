@@ -296,3 +296,39 @@ in process memory: the tus endpoint (`TusUploadEndpoint.MapBotTusUpload`) stores
 file id (never a local path). Never copy a whole upload inside a request (the ingress times out, and two concurrent
 assemblies remove each other's result): the job start only checks, the job reads (import) or assembles (restore). Test: `Jobs.Tests/Api/SharedUploadReplicaTests` (two hosts over one store: create on A, HEAD and PATCH on B, job
 start on A, job on a third), `Jobs.Tests/Services/SharedUploadStoreTests`. Details: README "Shared tus uploads".
+
+## Paging index upgrade per tenant (AB#9118)
+
+`src/Jobs/IndexUpgrade`: one idempotent Hangfire job per tenant (`IIndexUpgradeJob`, queue `index-upgrade`, own lightweight
+Hangfire server with one worker) calls `ITenantContext.UpgradeTiebreakIndexesAsync` (engine-mongodb AB#8960). Full description,
+configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
+
+- **Shape by index keys only** (`LegacyIndexShape`): legacy = not unique, no `_fts`, first key `ckTypeId`, an `rtState` key, no `_id`.
+  Never decide by the name (hashed names `{Type}_{n}_id_<hash>` exist). No marker decides anything; the last-run record
+  (system database, `IndexUpgradeRuns`, status as text) is status only.
+- **Triggers**: after-deploy sweep (`IndexUpgradeStartupService` in the background, Immediate, after `StartDelay`, one sweep for all
+  replicas), window sweep (recurring `index-upgrade-window`, window from the occurrence = `PerformContext.BackgroundJob.CreatedAt`),
+  `PosCreateTenant` in `TenantManagementConsumer` (create and attach; restore and copy attach; scheduled after `StartDelay`). Every
+  replica triggers; `IIndexUpgradeCoordination.EnqueueOnce` keeps one pending or running job per tenant once its job id is recorded
+  (a replica stopping between creating the job and recording the id can leave a second job; the leases serialize the two).
+- **Global limit = own lease** (`HangfireIndexUpgradeCoordination` slots on Hangfire distributed locks, failed releases swallowed), not
+  `DisableConcurrentExecution`: its lock timeout fails waiting jobs during hours-long builds. Leases are taken before the tenant is
+  resolved or inspected. A run that cannot work now throws `IndexUpgradeDeferredException`; `IndexUpgradeDeferAttribute` (order 0,
+  before `AutomaticRetry`) makes it `Scheduled`, never `Failed`.
+- **Incomplete, not Failed**: legacy indexes the engine does not upgrade (collections of models that are not Available, a build the
+  engine logged as failed) end the run `Incomplete` (warning, no retry) - found in the local stack check. So does a final read that
+  failed after the engine returned (`LegacyIndexesAfter` null, "not verified"): look at MongoDB, not at the models.
+- **CK imports go first**: `ImportModelJob` CK imports enter `ICkImportIndexUpgradeGate` (own yield request per import + tenant lease);
+  a running upgrade stops before its next collection and is rescheduled. Embedded CK imports of other services do not pass the gate
+  (90 s lock wait in the engine, then `TenantSetupRetryTracker`); documented remaining risk, engine fix AB#9302.
+- **Cancellation**: the job takes Hangfire's `IJobCancellationToken` (the bot's `IBotCancellationToken` is never filled by Hangfire), so a
+  shutdown stops it before the next collection and Hangfire requeues it. Status writes and final reads are bounded (4 s each, together below
+  Hangfire's 15 s shutdown timeout).
+- **Configuration never stops the service**: `IndexUpgradeOptions.Normalize` (post-configure) makes out-of-range values safe; a value the
+  binder cannot convert is caught by the start-up registration and the import gate (upgrade off, imports as before).
+- **Code defaults = production** (`Schedule = Window`, `Window:Enabled = false`): nothing is built without deployment values; test-2 and
+  staging-1 set `OCTO_INDEXUPGRADE__SCHEDULE=Immediate`. `MaxConcurrent = 0` switches the upgrade off in every schedule.
+- Tests: `tests/Jobs.Tests/IndexUpgrade/*` (unit; `IndexUpgradeWiringTests` pins that the host registrations give `ImportModelJob`
+  its gate and `TenantManagementConsumer` its scheduler - both are optional constructor parameters),
+  `tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests` (Docker: real engine,
+  unmanaged collection, attach, two Hangfire servers on one storage, server stopped during a job).

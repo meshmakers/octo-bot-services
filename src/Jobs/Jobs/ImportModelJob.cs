@@ -1,6 +1,7 @@
 using Meshmakers.Octo.Runtime.Contracts;
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
+using Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
 using Meshmakers.Octo.Runtime.Contracts.Exchange;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
@@ -21,6 +22,7 @@ public class ImportModelJob : IImportModelJob
     private readonly IImportCkModelCommand _importCkModelCommand;
     private readonly IImportRtModelCommand _importRtModelCommand;
     private readonly IReadOnlyList<TimeSpan> _cacheLookupRetryDelays;
+    private readonly ICkImportIndexUpgradeGate? _indexUpgradeGate;
 
     /// <summary>
     ///     Waits between the lookups of a cache stream that is not (yet) there (AB#7256): the import is enqueued right
@@ -39,11 +41,16 @@ public class ImportModelJob : IImportModelJob
     /// <param name="importCkModelCommand">Command to import a CK model</param>
     /// <param name="importRtModelCommand">Command to import an RT model</param>
     /// <param name="cacheLookupRetryDelays">Waits between repeated lookups of a missing cache stream (tests only)</param>
+    /// <param name="indexUpgradeGate">
+    ///     AB#9118: a CK import goes before a running index upgrade of its tenant (the upgrade stops before its next
+    ///     collection); null = no coordination
+    /// </param>
     public ImportModelJob(ILogger<ImportModelJob> logger, ISystemContext systemContext,
         IDistributedCacheService distributedCacheService, ICompressionService compressionService,
         IImportCkModelCommand importCkModelCommand,
         IImportRtModelCommand importRtModelCommand,
-        IReadOnlyList<TimeSpan>? cacheLookupRetryDelays = null)
+        IReadOnlyList<TimeSpan>? cacheLookupRetryDelays = null,
+        ICkImportIndexUpgradeGate? indexUpgradeGate = null)
     {
         _logger = logger;
         _systemContext = systemContext;
@@ -52,6 +59,7 @@ public class ImportModelJob : IImportModelJob
         _importCkModelCommand = importCkModelCommand;
         _importRtModelCommand = importRtModelCommand;
         _cacheLookupRetryDelays = cacheLookupRetryDelays ?? DefaultCacheLookupRetryDelays;
+        _indexUpgradeGate = indexUpgradeGate;
     }
 
     /// <summary>
@@ -71,8 +79,11 @@ public class ImportModelJob : IImportModelJob
 
             _logger.LogInformation("Starting import of file \'{TempFile}\'", tempFile);
 
-            await _importCkModelCommand.ImportAsync(tenantId, tempFile.Item1,
-                cancellationToken?.ShutdownToken);
+            using (await EnterIndexUpgradeGateAsync(tenantId, cancellationToken))
+            {
+                await _importCkModelCommand.ImportAsync(tenantId, tempFile.Item1,
+                    cancellationToken?.ShutdownToken);
+            }
 
             await ClearCache(tenantId, key);
 
@@ -93,6 +104,7 @@ public class ImportModelJob : IImportModelJob
             "Starting sequential batch import of {Count} CK models to '{TenantId}'",
             keys.Count, tenantId);
 
+        using var indexUpgradeHold = await EnterIndexUpgradeGateAsync(tenantId, cancellationToken);
         for (var i = 0; i < keys.Count; i++)
         {
             var key = keys[i];
@@ -190,6 +202,14 @@ public class ImportModelJob : IImportModelJob
             _logger.LogError(e, "Import failed with error");
             throw;
         }
+    }
+
+    private async Task<IDisposable?> EnterIndexUpgradeGateAsync(string tenantId,
+        IBotCancellationToken? cancellationToken)
+    {
+        return _indexUpgradeGate == null
+            ? null
+            : await _indexUpgradeGate.EnterAsync(tenantId, cancellationToken?.ShutdownToken ?? CancellationToken.None);
     }
 
     private async Task<Tuple<string, string>> GetTempFile(string tenantId, string key)
