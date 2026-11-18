@@ -90,6 +90,19 @@ public class TenantRepositoryDumpHandlerTests
         await Assert.That(_progress.Reports[2].Parameters["archive"]).IsEqualTo("1");
         await Assert.That(outcome.Value!.Value!.JobId).IsEqualTo(JobId);
         await Assert.That(outcome.Value.Value.DownloadPath).IsEqualTo($"{Tenant}/v1/jobs/download?id={JobId}");
+        await Assert.That(outcome.Value.Value.Sha256).IsNull();
+    }
+
+    [Test]
+    public async Task Work_CompletesWithTheRegisteredHashOfTheDump()
+    {
+        const string dumpHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        _storage.Written[DumpJobParameters.Sha256] = SerializationHelper.Serialize(dumpHash, SerializationOption.User);
+        _storage.States.Enqueue("Succeeded");
+
+        var outcome = await CreateHandler().RunAsync(Tenant, false, "user-1", null, _progress, CancellationToken.None);
+
+        await Assert.That(outcome.Value!.Value!.Sha256).IsEqualTo(dumpHash);
     }
 
     [Test]
@@ -191,6 +204,22 @@ public class TenantRepositoryDumpHandlerTests
         await Assert.That(json).IsEqualTo("{\"jobId\":\"job-42\",\"downloadPath\":\"t/v1/jobs/download?id=job-42\"}");
         var read = JsonSerializer.Deserialize<RtRepositoryDumpResultRecord>(json, CkMethodJson.Options)!;
         await Assert.That(read.JobId).IsEqualTo(JobId);
+    }
+
+    [Test]
+    public async Task Result_WithAHash_CarriesItOnTheWire()
+    {
+        var record = new RtRepositoryDumpResultRecord
+        {
+            JobId = JobId, DownloadPath = "t/v1/jobs/download?id=job-42", Sha256 = "ab12"
+        };
+
+        var json = JsonSerializer.Serialize(record, CkMethodJson.Options);
+
+        await Assert.That(json)
+            .IsEqualTo("{\"jobId\":\"job-42\",\"downloadPath\":\"t/v1/jobs/download?id=job-42\",\"sha256\":\"ab12\"}");
+        var read = JsonSerializer.Deserialize<RtRepositoryDumpResultRecord>(json, CkMethodJson.Options)!;
+        await Assert.That(read.Sha256).IsEqualTo("ab12");
     }
 
     [Test]

@@ -4,6 +4,9 @@ using Hangfire.Common;
 using Hangfire.States;
 using Meshmakers.Octo.Backend.BotServices.Methods;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
@@ -114,13 +117,14 @@ public class TenantRepositoryJobMethodHandlerTests
         _storage.States.Enqueue("Succeeded");
         _storage.ResultJson = new RestoreOperationSummary(2, 1, 3).ToJson();
 
-        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, "olddb", true, "user-1", "studio",
+        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, "olddb", true, ArchiveRegistrationCheck.Required, "user-1", "studio",
             _progress, CancellationToken.None);
 
         _jobs.Received(1).Create(Arg.Any<Job>(), Arg.Any<IState>());
         await Assert.That(_enqueued!.Method.Name).IsEqualTo(nameof(IRestoreRepositoryJob.RunForOperation));
         await Assert.That(_enqueued.Args.Take(6).ToArray())
             .IsEquivalentTo(new object?[] { Tenant, "db1", UploadId, "olddb", true, _progress.OperationId });
+        await Assert.That(_enqueued.Args[6]).IsEqualTo(ArchiveRegistrationCheck.Required);
         await Assert.That(_storage.Written[JobTenantBinding.StartedBySubjectParameter]).IsEqualTo("user-1");
         await Assert.That(_storage.Written[JobTenantBinding.StartedByClientIdParameter]).IsEqualTo("studio");
         await Assert.That(_storage.Written[OperationJobParameters.OperationId]).IsEqualTo(_progress.OperationId);
@@ -142,7 +146,7 @@ public class TenantRepositoryJobMethodHandlerTests
         _storage.States.Enqueue("Succeeded");
         _storage.ResultJson = new RestoreOperationSummary(0, 0, 0, ClearCacheRequired: true).ToJson();
 
-        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, "user-1", "studio",
+        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, ArchiveRegistrationCheck.Required, "user-1", "studio",
             _progress, CancellationToken.None);
 
         await Assert.That(outcome.Value!.Value!.ClearCacheRequired).IsTrue();
@@ -157,7 +161,7 @@ public class TenantRepositoryJobMethodHandlerTests
         _storage.Outcome = outcomeParameter;
         _storage.States.Enqueue("Deleted");
 
-        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, "user-1", null, _progress,
+        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, ArchiveRegistrationCheck.Required, "user-1", null, _progress,
             CancellationToken.None);
 
         await Assert.That(outcome.Failure!.Code).IsEqualTo(code);
@@ -170,7 +174,7 @@ public class TenantRepositoryJobMethodHandlerTests
         _storage.FailedExceptionType = "Hangfire.Storage.DistributedLockTimeoutException";
         _storage.States.Enqueue("Deleted");
 
-        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, "user-1", null, _progress,
+        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, ArchiveRegistrationCheck.Required, "user-1", null, _progress,
             CancellationToken.None);
 
         await Assert.That(outcome.Failure!.Code).IsEqualTo(TenantRepositoryRestoreHandler.RestoreFailed);
@@ -182,7 +186,7 @@ public class TenantRepositoryJobMethodHandlerTests
     {
         _storage.Vanished = true;
 
-        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, "user-1", null, _progress,
+        var outcome = await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, ArchiveRegistrationCheck.Required, "user-1", null, _progress,
             CancellationToken.None);
 
         await Assert.That(outcome.Failure!.Code).IsEqualTo(TenantRepositoryRestoreHandler.RestoreFailed);
@@ -195,7 +199,7 @@ public class TenantRepositoryJobMethodHandlerTests
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        await Assert.That(async () => await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, "user-1",
+        await Assert.That(async () => await RestoreHandler().RunAsync(Tenant, "db1", UploadId, null, false, ArchiveRegistrationCheck.Required, "user-1",
             null, _progress, cts.Token)).Throws<OperationCanceledException>();
         await Assert.That(_enqueued).IsNull();
     }
@@ -362,7 +366,10 @@ public class TenantRepositoryJobMethodHandlerTests
 
     private TenantRepositoryRestoreHandler RestoreHandler() =>
         new(_jobs, _storage, _uploads, _backupFiles, FastOptions(), TimeProvider.System,
-            NullLogger<TenantRepositoryRestoreHandler>.Instance);
+            NullLogger<TenantRepositoryRestoreHandler>.Instance, ArchiveCheckPolicy());
+
+    private static RestoreArchiveCheckPolicy ArchiveCheckPolicy() =>
+        new(Options.Create(new OctoSystemConfiguration { SystemTenantId = "octosystem" }));
 
     private TenantRepositoryExportArchiveDataHandler ExportHandler() =>
         new(_jobs, _storage, FastOptions(), TimeProvider.System,

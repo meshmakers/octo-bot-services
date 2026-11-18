@@ -7,3 +7,6 @@ attributes:
 - id: RepositoryDump.DownloadPath
   valueType: String
   description: "Relative path of the download of the dump file on the bot service, {tenantId}/v1/jobs/download?id={jobId}."
+- id: RepositoryDump.Sha256
+  valueType: String
+  description: "SHA-256 (lower-case hex) of the dump file as the download serves it; the platform registered it for the tenant, so a tenant administrator can restore exactly this file."

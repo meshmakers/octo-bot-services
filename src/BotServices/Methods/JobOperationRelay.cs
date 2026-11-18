@@ -119,6 +119,15 @@ internal sealed class JobOperationRelay(IJobStorageAccessor jobStorage, TimeProv
                                  h.Data.TryGetValue("ExceptionType", out var type) &&
                                  type?.Contains("DistributedLockTimeoutException", StringComparison.Ordinal) == true);
 
+    /// <summary>
+    ///     <c>true</c> when the job failed with an exception of type <typeparamref name="TException" /> (the failed state
+    ///     names its full type name).
+    /// </summary>
+    public static bool FailedWith<TException>(JobDetailsDto details) where TException : Exception =>
+        details.History.Any(h => h.StateName == "Failed" && h.Data != null &&
+                                 h.Data.TryGetValue("ExceptionType", out var type) &&
+                                 string.Equals(type, typeof(TException).FullName, StringComparison.Ordinal));
+
     /// <summary>The report of the job as operation progress; <c>null</c> when it is out of the allowed shape.</summary>
     public static CkMethodOperationProgress? TryToOperationProgress(DumpProgress progress, string jobId)
     {

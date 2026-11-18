@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Hangfire;
 using Hangfire.Server;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 
@@ -61,6 +62,30 @@ public interface IRestoreRepositoryJob
     Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey, string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership, PerformContext? performContext, IBotCancellationToken? cancellationToken);
 
     /// <summary>
+    /// Restores a repository like <see cref="Run(string, string, string, string?, bool, bool, PerformContext?, IBotCancellationToken?)" />
+    /// and says whether the archive must be a dump registered for the tenant. The overloads without
+    /// <paramref name="archiveCheck" /> stay for jobs enqueued before it existed and require a registered dump.
+    /// </summary>
+    /// <param name="tenantId">The corresponding tenant id</param>
+    /// <param name="databaseName">The name of the database to restore</param>
+    /// <param name="cacheKey">The cache key the file to restore is stored</param>
+    /// <param name="oldDatabaseName">The database name the backup was taken from, when it differs</param>
+    /// <param name="restoreArchiveData">See the first overload.</param>
+    /// <param name="overrideForeignOwnership">See the overload with the ownership override.</param>
+    /// <param name="archiveCheck">
+    /// <see cref="ArchiveRegistrationCheck.Required" /> for a tenant identity: the job hashes the staged archive right
+    /// before the restore and refuses it with <see cref="ArchiveNotRegisteredException" /> unless the hash is registered
+    /// for <paramref name="tenantId" />. <see cref="ArchiveRegistrationCheck.NotRequired" /> for a system operator.
+    /// </param>
+    /// <param name="performContext">Supplied by Hangfire (pass <c>null</c>).</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
+    /// <returns>See the first overload.</returns>
+    [DisplayName("Restore repository '{1}' using tenant '{0}'")]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
+    Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey, string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership, ArchiveRegistrationCheck archiveCheck, PerformContext? performContext, IBotCancellationToken? cancellationToken);
+
+    /// <summary>
     ///     Restores the repository of a tenant for the asynchronous method <c>System.Bot/TenantRepository.Restore-1</c>
     ///     (AB#8447). Same restore as <see cref="Run(string, string, string, string?, bool, PerformContext?, IBotCancellationToken?)" />; in addition the job reports its progress as the job parameter
     ///     <c>OctoOperationProgress</c>, writes a count summary as <c>OctoOperationResult</c>, and runs <b>at most once</b>:
@@ -82,4 +107,25 @@ public interface IRestoreRepositoryJob
     Task<RestoreRepositoryResult?> RunForOperation(string tenantId, string databaseName, string tusFileId,
         string? oldDatabaseName, bool restoreArchiveData, string operationId, PerformContext? performContext,
         IBotCancellationToken? cancellationToken);
+
+    /// <summary>
+    ///     Restores the repository of a tenant for the method like the overload without <paramref name="archiveCheck" />,
+    ///     which stays for jobs enqueued before it existed and requires a registered dump.
+    /// </summary>
+    /// <param name="tenantId">The corresponding tenant id</param>
+    /// <param name="databaseName">The name of the database to restore</param>
+    /// <param name="tusFileId">The tus file id of the uploaded backup</param>
+    /// <param name="oldDatabaseName">See the first overload of Run.</param>
+    /// <param name="restoreArchiveData">See the first overload of Run.</param>
+    /// <param name="operationId">The operation id of the method call that enqueued the job.</param>
+    /// <param name="archiveCheck">See the Run overload with the archive check.</param>
+    /// <param name="performContext">Injected by Hangfire; pass <c>null</c> when enqueuing.</param>
+    /// <param name="cancellationToken">A cancellation token to abort the job</param>
+    /// <returns>The restore result.</returns>
+    [DisplayName("Restore repository '{1}' using tenant '{0}' (method operation {5})")]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
+    [DisableConcurrentExecution(60 * 10)] // Prevents concurrent execution
+    Task<RestoreRepositoryResult?> RunForOperation(string tenantId, string databaseName, string tusFileId,
+        string? oldDatabaseName, bool restoreArchiveData, string operationId, ArchiveRegistrationCheck archiveCheck,
+        PerformContext? performContext, IBotCancellationToken? cancellationToken);
 }

@@ -29,6 +29,12 @@ public static class BotJobMethodErrors
     /// </summary>
     public const string AnotherJobRunningReason = "another-job-running";
 
+    /// <summary>
+    ///     <see cref="ReasonParameter" /> of a failed restore: the archive is not a dump the platform produced for the
+    ///     tenant and the caller is not a system operator. The same for an edited, an unknown and another tenant's archive.
+    /// </summary>
+    public const string ArchiveNotRegisteredReason = "archive-not-registered";
+
     /// <summary><see cref="ReasonParameter" /> of a failed job: the job no longer exists in the job storage.</summary>
     public const string JobMissingReason = "job-missing";
 

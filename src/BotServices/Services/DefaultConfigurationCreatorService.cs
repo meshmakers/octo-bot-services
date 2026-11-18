@@ -12,6 +12,7 @@ using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Commands.Payloads;
 using Meshmakers.Octo.Services.Infrastructure;
 using Meshmakers.Octo.Services.Infrastructure.Services;
+using Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
 using Microsoft.Extensions.Options;
 
 namespace Meshmakers.Octo.Backend.BotServices.Services;
@@ -25,7 +26,8 @@ internal class DefaultConfigurationCreatorService(
     IOptions<OctoBotServicesOptions> octoBotServicesOptions,
     FailedTenantRegistry failedTenantRegistry,
     TenantSetupRetryTracker tenantSetupRetryTracker,
-    OperationRecordGenerationCleanup? operationRecordCleanup = null)
+    OperationRecordGenerationCleanup? operationRecordCleanup = null,
+    DumpHashGenerationCleanup? dumpHashCleanup = null)
     : DefaultConfigurationCreatorServiceStandardized(logger, systemContext, createIdentityDataCommandClient,
         BotServiceConstants.BotServiceIdentityDataVersionKey, BotServiceConstants.BotServiceIdentityDataVersionValue,
         null, // migrationService - we don't need migrations here
@@ -56,6 +58,11 @@ internal class DefaultConfigurationCreatorService(
         if (operationRecordCleanup is not null)
         {
             await operationRecordCleanup.RunAsync(tenantId);
+        }
+
+        if (dumpHashCleanup is not null)
+        {
+            await dumpHashCleanup.RunAsync(tenantId);
         }
 
         await base.StartTenantAsync(tenantId);

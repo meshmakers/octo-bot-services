@@ -9,6 +9,7 @@ root `CLAUDE.md` rules (`dotnet build Octo.Bots.sln -c DebugL`, tests are TUnit:
 | Surface | Required |
 | --- | --- |
 | Dump, restore, archive export / import, fixup script run, tus upload, artifact download | scope `octo_api` (full access) + tenant role `TenantManagement` (`BotServiceConstants.TenantJobManagementPolicy`; tus: `TusUploadAuthorization`) |
+| Restore of an archive that is not a registered dump of the target tenant | system operator only (system tenant + `TenantManagement`, `RestoreArchiveCheckPolicy`); see "Restore only registered dumps" |
 | Secret sweep trigger / delete dump | scope + `SecretManagement`; sweep report / runs: read scope + `AdminPanelManagement` |
 | Job status / delete (System API) | scope + job tenant binding (`JobTenantAccessGuard`) |
 | Hangfire dashboard `/ui/jobs` | scope + caller of the **system tenant** (`tenant_id` claim) **and** tenant role `TenantManagement` (`HangfireDashboardAccessMiddleware` + `HangfireDashboardAuthorizationFilter`; others get 403) |
@@ -247,6 +248,29 @@ warnings; cancellation is rethrown unchanged). The dump job never detaches, so i
 the text are separate changes; until then octo-cli `RestoreTenant` exits non-zero on such a restore and the Studio shows a plain
 success. Details: README
 "Restore: services that were not told about the tenant".
+
+## Restore only registered dumps for tenant identities (AB#9228; System.Bot 3.10.0)
+
+User documentation: README "Who may restore which archive: the dump registry". Decided 2026-11-18 without a transition
+period.
+
+- **Registry**: `Jobs/DumpRegistry` (`IDumpHashRegistry`, `DumpHashRecorder`, `ArchiveRegistrationVerifier`,
+  `DumpHashBackfillJob`); store `BotServices/Services/DumpRegistry/MongoDumpHashRegistry` (collection `DumpHashRegistry` in the
+  job database, unique `tenantId`+`sha256`, TTL on `expiresAtUtc`), wrapped by `TenantGenerationDumpHashRegistry` (ignores
+  entries dumped before the tenant's creation). Wiring: `AddDumpHashRegistry` in `Program.cs`; options `DumpHashRegistry:RetentionDays`.
+- **Recording**: `DumpRepositoryJob.Run` / `RunForOperation` register the stored dump after `RunCoreAsync` (hash read through
+  the download path, `OpenDownloadAsync` + `CopyPlainAsync`); `RunForOperation` writes `OctoDumpSha256`, `Dump-1` returns it.
+- **Gate**: `RestoreArchiveCheckPolicy` (system tenant + `TenantManagement` = `NotRequired`, everything else `Required`, unknown
+  callers fail closed). REST and `Restore-1` always enqueue the job overload with `ArchiveRegistrationCheck`; the overloads
+  without it require a registered dump. In `Required` mode the job never streams from the store: it verifies and restores a
+  job-owned copy (`RestoreRepositoryJob.ArchiveCheck.cs`).
+- **Refusal**: `ArchiveNotRegisteredException` (same message for every case); `Restore-1` maps it, and only it, to
+  `RESTORE_FAILED` + `reason` `archive-not-registered` (`JobOperationRelay.FailedWith<T>`). Do not add a declared error code
+  for it: that is a Major of System.Bot (OCTO-CK200, row M8).
+- **Lifecycle**: purge in `TenantManagementConsumer` (Deleting tombstone only), cleanup at setup in
+  `DumpHashGenerationCleanup`, backfill enqueued at start by `DumpHashBackfillStartup`.
+- Never let a tenant identity restore an archive the platform did not produce for that tenant; a new restore entry point
+  takes the decision from `RestoreArchiveCheckPolicy` and passes it to the job.
 
 ## System.Bot on ckLanguage 2 (AB#8593; System.Bot 3.6.0)
 

@@ -16,6 +16,7 @@ public sealed class RtRepositoryDumpResultRecordJsonConverter : JsonConverter<Rt
 {
     private const string JobIdName = "jobId";
     private const string DownloadPathName = "downloadPath";
+    private const string Sha256Name = "sha256";
 
     /// <inheritdoc />
     public override RtRepositoryDumpResultRecord? Read(ref Utf8JsonReader reader, Type typeToConvert,
@@ -43,6 +44,10 @@ public sealed class RtRepositoryDumpResultRecordJsonConverter : JsonConverter<Rt
             {
                 record.DownloadPath = property.Value.GetString()!;
             }
+            else if (string.Equals(property.Name, Sha256Name, StringComparison.OrdinalIgnoreCase))
+            {
+                record.Sha256 = property.Value.GetString();
+            }
         }
 
         return record;
@@ -54,6 +59,11 @@ public sealed class RtRepositoryDumpResultRecordJsonConverter : JsonConverter<Rt
         writer.WriteStartObject();
         writer.WriteString(JobIdName, value.JobId);
         writer.WriteString(DownloadPathName, value.DownloadPath);
+        if (!string.IsNullOrEmpty(value.Sha256))
+        {
+            writer.WriteString(Sha256Name, value.Sha256);
+        }
+
         writer.WriteEndObject();
     }
 }

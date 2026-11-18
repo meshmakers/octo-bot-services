@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using System.Security.Cryptography;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
@@ -88,7 +89,7 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
         var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,
             null, _env.Storage);
 
-        await job.Run(Tenant, "db-1", "tus01", null, false, null, null);
+        await job.Run(Tenant, "db-1", "tus01", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
         await Assert.That(restores.Single().Content.SequenceEqual(_dump)).IsTrue();
         await Assert.That(await _env.Storage.FindRestoreStagingAsync(Tenant, "tus01")).IsNull();
@@ -113,7 +114,7 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
             sharedUploads: new SharedUploadStore(_env.Storage,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<SharedUploadStore>.Instance));
 
-        await job.Run(Tenant, "db-1", id, null, false, null, null);
+        await job.Run(Tenant, "db-1", id, null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
         await Assert.That(restores.Single().Content.SequenceEqual(_dump)).IsTrue();
         await Assert.That(await _env.Storage.FindRestoreStagingAsync(Tenant, id)).IsNull();
@@ -130,7 +131,7 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
         var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,
             null, _env.Storage);
 
-        await job.Run(Tenant, "db-1", "tus02", null, false, null, null);
+        await job.Run(Tenant, "db-1", "tus02", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
         await Assert.That(restores.Single().Content.SequenceEqual(_dump)).IsTrue();
         await Assert.That(File.Exists(local)).IsFalse();
@@ -152,7 +153,7 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
         var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,
             null, _env.Storage);
 
-        await job.Run(Tenant, "db-1", "tus03", null, false, null, null);
+        await job.Run(Tenant, "db-1", "tus03", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
         await Assert.That(restores.Single().Content.SequenceEqual(_dump)).IsTrue();
         await Assert.That(File.Exists(local)).IsFalse();
@@ -177,7 +178,7 @@ public class ArtifactStoreJobsTests : ArtifactStoreJobTestBase
         var job = new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext, _files,
             null, _env.Storage);
 
-        await Assert.That(async () => await job.Run(Tenant, "db-1", "tus04", null, false, null, null))
+        await Assert.That(async () => await job.Run(Tenant, "db-1", "tus04", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null))
             .Throws<InvalidSecretFileException>();
 
         await Assert.That(restores).IsEmpty();

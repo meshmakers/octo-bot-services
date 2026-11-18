@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using Hangfire.Server;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
@@ -39,7 +40,8 @@ public partial class DumpRepositoryJob(
     IBotArtifactStorage? artifactStorage = null,
     IArchiveCopyStagingLocationFactory? stagingFactory = null,
     TimeProvider? timeProvider = null,
-    IDumpOperationGate? operationGate = null) : IDumpRepositoryJob
+    IDumpOperationGate? operationGate = null,
+    DumpHashRecorder? dumpHashRecorder = null) : IDumpRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -49,11 +51,13 @@ public partial class DumpRepositoryJob(
     private static readonly JsonSerializerOptions NdjsonJsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <inheritdoc />
-    public Task<string?> Run(string tenantId, bool includeArchiveData,
+    public async Task<string?> Run(string tenantId, bool includeArchiveData,
         IBotCancellationToken? cancellationToken)
     {
-        return RunCoreAsync(tenantId, includeArchiveData, NullDumpProgressSink.Instance,
-            cancellationToken?.ShutdownToken ?? CancellationToken.None);
+        var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
+        var result = await RunCoreAsync(tenantId, includeArchiveData, NullDumpProgressSink.Instance, ct);
+        await RegisterDumpAsync(tenantId, result, null, ct);
+        return result;
     }
 
     /// <inheritdoc />
@@ -66,7 +70,10 @@ public partial class DumpRepositoryJob(
         // (OperationJobGuard, shared with restore and archive data since AB#8447).
         var sink = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Dump, operationGate,
             tenantId, operationId, "dump", logger, ct);
-        return await RunCoreAsync(tenantId, includeArchiveData, sink, ct);
+        var result = await RunCoreAsync(tenantId, includeArchiveData, sink, ct);
+        var sha256 = await RegisterDumpAsync(tenantId, result, performContext?.BackgroundJob?.Id, ct);
+        WriteDumpHash(performContext, sha256);
+        return result;
     }
 
     private async Task<string?> RunCoreAsync(string tenantId, bool includeArchiveData, IDumpProgressSink progress,

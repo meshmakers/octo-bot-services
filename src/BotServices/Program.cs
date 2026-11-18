@@ -12,6 +12,7 @@ using Meshmakers.Octo.Backend.BotServices;
 using Meshmakers.Octo.Backend.BotServices.Configuration;
 using Meshmakers.Octo.Backend.BotServices.Consumers;
 using Meshmakers.Octo.Backend.BotServices.HangfireSetup;
+using Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
 using Meshmakers.Octo.Backend.BotServices.Methods;
 using Meshmakers.Octo.Services.Methods;
 using Meshmakers.Octo.Backend.BotServices.Services;
@@ -154,6 +155,7 @@ try
 
     // AB#8445 (F3.6): CK method host - System.Bot/TenantRepository.Dump-1 (async, operation handle).
     builder.Services.AddBotCkMethodHost();
+    builder.Services.AddDumpHashRegistry(builder.Configuration);
 
     builder.Services.AddRuntimeEngine()
         .AddMongoDbRuntimeRepository()
@@ -316,29 +318,7 @@ try
 
         // AB#7196: migrate in place with a collection backup; never drop recurring jobs.
         var storageOptions = HangfireMongoStorageSetup.CreateStorageOptions();
-        var mongoUrlBuilder = new MongoUrlBuilder
-        {
-            DatabaseName = string.IsNullOrWhiteSpace(octoBotServicesOptions.Value.InstancePrefix) ? octoBotServicesOptions.Value.JobDatabaseName :
-                $"{octoBotServicesOptions.Value.InstancePrefix}-{octoBotServicesOptions.Value.JobDatabaseName}",
-            Username = systemOptions.Value.AdminUser,
-            Password = systemOptions.Value.AdminUserPassword,
-            AuthenticationSource = systemOptions.Value.AuthenticationDatabaseName,
-            UseTls = systemOptions.Value.UseTls,
-            DirectConnection = systemOptions.Value.UseDirectConnection,
-            AllowInsecureTls = systemOptions.Value.AllowInsecureTls
-        };
-
-        // DatabaseHost may carry a port suffix ("host:port"). MongoServerAddress.Parse handles
-        // that; the MongoServerAddress(string host) constructor rejects it since MongoDB.Driver
-        // 3.11.1 (CSHARP-6171 host validation).
-        if (systemOptions.Value.DatabaseHost.Contains(","))
-        {
-            mongoUrlBuilder.Servers = systemOptions.Value.DatabaseHost.Split(",").Select(MongoServerAddress.Parse);
-        }
-        else
-        {
-            mongoUrlBuilder.Server = MongoServerAddress.Parse(systemOptions.Value.DatabaseHost);
-        }
+        var mongoUrlBuilder = JobDatabaseUrl.Create(octoBotServicesOptions.Value, systemOptions.Value);
 
         var mongoUrl = mongoUrlBuilder.ToString();
         var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(HangfireMongoStorageSetup));

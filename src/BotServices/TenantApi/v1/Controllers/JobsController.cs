@@ -3,6 +3,7 @@ using Asp.Versioning;
 using Hangfire;
 using Duende.IdentityModel;
 using Meshmakers.Octo.Backend.BotServices.Controllers;
+using Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
@@ -126,6 +127,9 @@ public class JobsController : JobsControllerBase
     /// <summary>
     ///     Restores the repository for the tenant taken from the route from a tus resumable upload.
     ///     The file must have been uploaded via the tus endpoint at <c>/system/v1/tus-upload</c> first.
+    ///     A tenant identity restores only an unedited dump the platform produced for this tenant; any other archive
+    ///     fails the job with <c>ARCHIVE_NOT_REGISTERED</c>. A system operator (a user of the system tenant with
+    ///     <c>TenantManagement</c>) restores any archive.
     /// </summary>
     /// <param name="tenantId">The tenant id, from the route.</param>
     /// <param name="tusFileId">The tus file ID from the completed upload.</param>
@@ -148,8 +152,9 @@ public class JobsController : JobsControllerBase
         [FromQuery] bool restoreArchiveData = false,
         [FromQuery] bool overrideForeignOwnership = false)
     {
+        var archiveCheck = HttpContext.RequestServices.GetRequiredService<RestoreArchiveCheckPolicy>().For(User);
         return EnqueueRestoreFromUploadAsync(tusFileId, tenantId, databaseName, oldDatabaseName, restoreArchiveData,
-            overrideForeignOwnership);
+            overrideForeignOwnership, archiveCheck);
     }
 
     /// <summary>

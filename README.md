@@ -117,7 +117,7 @@ without it, no job is enqueued):
 | Operation | Route | Required |
 | --- | --- | --- |
 | Repository dump | `POST {tenantId}/v1/jobs/dump-repository` | scope + `TenantManagement` |
-| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | scope + `TenantManagement` |
+| Restore from upload | `POST {tenantId}/v1/jobs/restore-from-upload` | scope + `TenantManagement`; a tenant identity restores only a registered dump of the tenant (see "Who may restore which archive") |
 | Archive data export / import | `POST {tenantId}/v1/jobs/export-archive-data`, `.../import-archive-data-from-upload` | scope + `TenantManagement` |
 | tus upload feeding restore / import | `{tenantId}/v1/tus-upload` | scope + `TenantManagement` (`TusUploadAuthorization`) |
 | Artifact download (dump / export file) | `GET {tenantId}/v1/jobs/download`, deprecated `GET system/v1/jobs/download` | scope + `TenantManagement` |
@@ -428,6 +428,52 @@ Tests: `tests/Jobs.Tests/Jobs/TenantNotificationWarningsTests`, `RestoreReposito
 `tests/Jobs.Tests/Api/RestoreOutcomeTests`, `tests/Jobs.Tests/Jobs/Operations/JobsForOperationTests`,
 `tests/Jobs.Tests/Methods/TenantRepositoryJobMethodHandlerTests`.
 
+### Who may restore which archive: the dump registry (AB#9228)
+
+A restore writes the archive's documents into the tenant database as they are. An edited archive could therefore move an
+encrypted value into another attribute, entity or type, so a **tenant identity restores only an unedited dump the
+platform itself produced for the target tenant**:
+
+| Caller | May restore |
+| --- | --- |
+| Administrator of the tenant (`TenantManagement` in its own token), its service token | an unedited dump of **this** tenant, registered and not expired |
+| Administrator of a parent tenant (`TenantManagement` in the parent) | the same: only a dump registered for the **target** tenant; a dump of a sibling tenant is refused |
+| System operator (a token of the system tenant with `TenantManagement`) | any archive, also an edited, unknown or older one, and another tenant's dump |
+
+- **Registry.** Every dump that succeeds is registered right after it is stored, on both paths (REST `dump-repository` and the
+  method `Dump-1`, format 1 and format 2): a streaming SHA-256 of the file exactly as the download serves it (the plaintext of an
+  encrypted artifact), one entry per tenant and hash, in the collection `DumpHashRegistry` of the bot's job database
+  (`OctoSystemJobs`). Each entry holds the dump time, the expiry, the file name, the size, the job id and its writer (`dump` or
+  `backfill`). No API writes to it, so a tenant identity can only add entries by running real dumps of data it can already read.
+  `Dump-1` returns the hash as `sha256` (System.Bot 3.10.0). A dump whose registration fails fails its job.
+- **Check.** The gate (`restore-from-upload`, `Restore-1`) decides from the caller (`RestoreArchiveCheckPolicy`) and passes
+  the decision to the job (`ArchiveRegistrationCheck`). For a tenant identity the job copies the upload into a job-owned file,
+  hashes exactly those bytes right before the restore, and restores that copy; format 2 is then read from that file instead of
+  being streamed from the store. Restore jobs enqueued without the decision (an older bot replica, a job queued before the
+  update) require a registered dump; a worker that does not know the new job signature fails the job.
+- **Refusal.** One answer for an edited archive, an unknown archive, another tenant's dump and an expired entry, so the answer
+  does not tell whether a hash exists: the REST job fails with
+  `ARCHIVE_NOT_REGISTERED: the archive is not a dump this platform produced for this tenant. ...`, and `Restore-1` answers
+  `RESTORE_FAILED` with `reason` `archive-not-registered` (a new declared error code would be a Major of System.Bot). Nothing is
+  restored; the upload is consumed. The log names tenant, a 12-character hash prefix and the job.
+- **Dumps made before this version** are refused for tenant identities unless the backfill registered them. At every start the
+  service enqueues `IDumpHashBackfillJob`: it registers each tenant dump still held in the artifact store (category
+  `tenant-dumps`, which only the dump job writes) that has no entry yet, dated by the artifact, for tenants that still exist and
+  only while the retention has not run out. A dump file kept only outside the store needs a system operator to restore it.
+  There is no transition period.
+- **Retention.** An entry admits a restore for `DumpHashRegistry:RetentionDays` (default 365) after the dump; a TTL index
+  removes it afterwards. Then only a system operator can restore that dump. Restoring the tenant's own older dump (a rollback)
+  is allowed while the entry lives; the old key ids must stay in the key ring for its secrets to read.
+- **Tenant lifecycle.** Deleting a tenant removes its entries (`PosDeleteTenant` with the Deleting tombstone, like the
+  operation records). A tenant set up again with a reused id ignores the entries of the earlier tenant (every read compares
+  the dump time with the tenant's creation time) and its setup removes them (`DumpHashGenerationCleanup`).
+- **Not covered.** The cluster's nightly MongoDB backup is not a dump of this service and is not registered (separate
+  operations work). An operator endpoint that registers one reviewed archive for a tenant does not exist.
+- Tests: `DumpRegistry/*` (recorder, verifier, backfill, lifecycle), `Jobs/RestoreArchiveCheckJobTests` (round trip of an
+  unedited dump through download and upload, edited, unknown, foreign, operator, older job signatures, local upload),
+  `Api/TenantRestoreArchiveCheckTests`, `Methods/RestoreArchiveCheckMethodTests`,
+  `Jobs.IntegrationTests/MongoDumpHashRegistryTests`.
+
 ### The tenant gate was a no-op until AB#5054
 
 `TenantAuthorizationMiddleware` inspects only principals whose `Identity.AuthenticationType` reads
@@ -540,7 +586,7 @@ System.Bot 3.8.0 adds three methods to `System.Bot/TenantRepository`, with the s
 
 | Method | Parameters | Result (`Succeeded`) | Declared errors |
 | --- | --- | --- | --- |
-| `Restore-1` | `tusFileId`, `databaseName`, `oldDatabaseName?`, `restoreArchiveData?` | `{ jobId, archiveCount, failedArchiveCount, secretsToReEnterCount, clearCacheRequired }` (`clearCacheRequired` since System.Bot 3.9.0) | `UPLOAD_NOT_FOUND` (`reason` `not-found` / `incomplete` / `empty`), `RESTORE_FAILED`, `RESTORE_INTERRUPTED` |
+| `Restore-1` | `tusFileId`, `databaseName`, `oldDatabaseName?`, `restoreArchiveData?` | `{ jobId, archiveCount, failedArchiveCount, secretsToReEnterCount, clearCacheRequired }` (`clearCacheRequired` since System.Bot 3.9.0) | `UPLOAD_NOT_FOUND` (`reason` `not-found` / `incomplete` / `empty`), `RESTORE_FAILED` (`reason` `archive-not-registered` for a refused archive), `RESTORE_INTERRUPTED` |
 | `ExportArchiveData-1` | `archiveRtId`, `fromUtc?`, `toUtc?` | `{ jobId, downloadPath, rowCount }` | `ARCHIVE_EXPORT_FAILED`, `ARCHIVE_EXPORT_INTERRUPTED` |
 | `ImportArchiveData-1` | `tusFileId`, `archiveRtId`, `mode?` (`InsertOnly` / `Upsert`) | `{ jobId, rowCount }` | `UPLOAD_NOT_FOUND`, `ARCHIVE_IMPORT_FAILED`, `ARCHIVE_IMPORT_INTERRUPTED` |
 

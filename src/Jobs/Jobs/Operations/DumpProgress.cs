@@ -60,6 +60,9 @@ public static class DumpJobParameters
     /// <summary>The operation id of the method call that started the job.</summary>
     public const string OperationId = "OctoMethodOperationId";
 
+    /// <summary>The SHA-256 of the stored dump as the download serves it, written once the dump is registered.</summary>
+    public const string Sha256 = "OctoDumpSha256";
+
     /// <summary>The latest <see cref="DumpProgress" /> as JSON.</summary>
     public const string Progress = "OctoDumpProgress";
 

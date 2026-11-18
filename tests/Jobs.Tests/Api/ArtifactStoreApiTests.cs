@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using System.Net;
 using System.Security.Cryptography;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -91,9 +92,8 @@ public class ArtifactStoreApiTests
     }
 
     [Test]
-    public async Task RestoreFromUpload_WithoutOverride_EnqueuesTheRunSignatureOlderWorkersKnow()
+    public async Task RestoreFromUpload_WithoutOverride_EnqueuesTheOverloadWithTheArchiveCheck()
     {
-        // AB#8672: during a rolling update an older worker only knows the Run overload without the override.
         using var host = await JobsApiTestHost.StartAsync();
         await host.Artifacts.Storage.StoreFileAsync(ArtifactCategories.RestoreStaging, Child, "plainupload",
             host.Artifacts.WriteFile("plain", [1, 2, 3]), ArtifactEncryption.IfConfigured);
@@ -104,8 +104,12 @@ public class ArtifactStoreApiTests
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var job = host.LastEnqueuedJob();
-        await Assert.That(job.Method.GetParameters().Length).IsEqualTo(7);
-        await Assert.That(job.Method.GetParameters().Any(p => p.Name == "overrideForeignOwnership")).IsFalse();
+        var parameters = job.Method.GetParameters();
+        await Assert.That(parameters.Length).IsEqualTo(9);
+        var overrideIndex = Array.FindIndex(parameters, p => p.Name == "overrideForeignOwnership");
+        var archiveCheckIndex = Array.FindIndex(parameters, p => p.Name == "archiveCheck");
+        await Assert.That((bool)job.Args[overrideIndex]!).IsFalse();
+        await Assert.That(job.Args[archiveCheckIndex]).IsEqualTo(ArchiveRegistrationCheck.Required);
     }
 
     [Test]
@@ -122,7 +126,7 @@ public class ArtifactStoreApiTests
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var job = host.LastEnqueuedJob();
         var parameters = job.Method.GetParameters();
-        await Assert.That(parameters.Length).IsEqualTo(8);
+        await Assert.That(parameters.Length).IsEqualTo(9);
         var overrideIndex = Array.FindIndex(parameters, p => p.Name == "overrideForeignOwnership");
         await Assert.That(overrideIndex).IsGreaterThanOrEqualTo(0);
         await Assert.That((bool)job.Args[overrideIndex]!).IsTrue();

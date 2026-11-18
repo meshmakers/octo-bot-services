@@ -60,6 +60,9 @@ internal sealed class JobsApiTestHost : IDisposable
     public const string Child = "childtenant";
     public const string Unrelated = "othertenant";
 
+    /// <summary>The system tenant of the host (the default of <c>OctoSystemConfiguration.SystemTenantId</c>).</summary>
+    public const string SystemTenant = "OctoSystem";
+
     private const string SchemeName = "Bearer";
 
     private WebApplication _app = null!;
@@ -328,6 +331,8 @@ internal sealed class JobsApiTestHost : IDisposable
         // including the reverse and any self-pair, answers false (NSubstitute's default).
         var hierarchy = Substitute.For<ITenantHierarchyReader>();
         hierarchy.IsChildTenantAsync(Parent, Child).Returns(true);
+        hierarchy.IsChildTenantAsync(SystemTenant, Parent).Returns(true);
+        hierarchy.IsChildTenantAsync(SystemTenant, Child).Returns(true);
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -346,6 +351,7 @@ internal sealed class JobsApiTestHost : IDisposable
         builder.Services.AddSingleton(_secretEnvironmentStatusService);
         // System tenant of the instance-wide secret sweep routes (AB#5539); default "OctoSystem".
         builder.Services.AddOptions<Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration.OctoSystemConfiguration>();
+        builder.Services.AddSingleton<Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry.RestoreArchiveCheckPolicy>();
         builder.Services.AddScoped<IJobTenantAccessGuard, JobTenantAccessGuard>();
 
         if (configure != null)

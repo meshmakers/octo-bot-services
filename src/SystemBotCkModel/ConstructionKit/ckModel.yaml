@@ -13,7 +13,9 @@ $schema: https://schemas.meshmakers.cloud/construction-kit-meta.schema.json
 # ImportArchiveData-1, their result records, four attributes and the enum ArchiveImportMode - additions only, a Minor.
 # 3.9.0: the record RepositoryRestoreResult gets the attribute ClearCacheRequired (a restore whose tenant notification failed
 # after the commit) - an addition only, a Minor.
-modelId: "System.Bot-3.9.0"
+# 3.10.0: the record RepositoryDumpResult gets the optional member Sha256 - an addition only, a Minor. A refused
+# archive is RESTORE_FAILED with reason archive-not-registered: a new declared error would be a Major (row M8).
+modelId: "System.Bot-3.10.0"
 ckLanguage: 2
 dependencies:
   - System-[2.5,3.0)

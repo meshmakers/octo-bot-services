@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
@@ -27,7 +28,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), Arg.Any<string>()).Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
+        await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
         await _systemContext.DidNotReceive().RestoreTenantAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
@@ -42,7 +43,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns("/data/tus-uploads/abc123");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
+        await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
         await _backupFileStorage.Received(1).DeleteFileAsync("/data/tus-uploads/abc123");
     }
@@ -54,7 +55,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath("tenant-1", "abc123").Returns("/nonexistent/abc123");
         var job = CreateJob();
 
-        await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null, null))
+        await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null))
             .Throws<JobFailedException>();
     }
 
@@ -67,7 +68,7 @@ public class RestoreRepositoryJobTests
 
         try
         {
-            await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
         }
         catch (JobFailedException)
         {
@@ -96,7 +97,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _backupFileStorage.Received(1).DeleteFileAsync(tempFile);
         }
@@ -161,7 +162,7 @@ public class RestoreRepositoryJobTests
                     Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
                 .Returns(engineResult);
 
-            return await CreateJob().Run("tenant-1", "db-1", "abc123", null, false, null, null);
+            return await CreateJob().Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
         }
         finally
         {
@@ -188,7 +189,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", "old-db", false, null, null);
+            await job.Run("tenant-1", "db-1", "abc123", "old-db", false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync(
                 "tenant-1", "db-1", tempFile, "old-db",
@@ -219,7 +220,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null, null))
+            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null))
                 .Throws<JobFailedException>();
         }
         finally
@@ -235,7 +236,7 @@ public class RestoreRepositoryJobTests
         _backupFileStorage.GetTusUploadFilePath(Arg.Any<string>(), Arg.Any<string>()).Returns("/data/tus-uploads/myFileId");
         var job = CreateJob();
 
-        await job.Run("tenant-1", "db-1", "myFileId", null, false, null, null);
+        await job.Run("tenant-1", "db-1", "myFileId", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
         _backupFileStorage.Received(1).GetTusUploadFilePath("tenant-1", "myFileId");
     }
@@ -269,7 +270,7 @@ public class RestoreRepositoryJobTests
 
             var job = new RestoreRepositoryJob(_logger, _systemContext, _backupFileStorage, coordinator);
 
-            var result = await job.Run("tenant-1", "db-1", "abc123", "other-env-db", false, null, null);
+            var result = await job.Run("tenant-1", "db-1", "abc123", "other-env-db", false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await Assert.That(result).IsNotNull();
             await Assert.That(result!.TenantId).IsEqualTo("tenant-1");
@@ -305,7 +306,7 @@ public class RestoreRepositoryJobTests
             var coordinator = Substitute.For<ISecretSweepCoordinator>();
             var job = new RestoreRepositoryJob(_logger, _systemContext, _backupFileStorage, coordinator);
 
-            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, null, null))
+            await Assert.That(async () => await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null))
                 .Throws<JobFailedException>();
 
             await coordinator.DidNotReceiveWithAnyArgs().RunAfterRestoreAsync(default!, default, default);
@@ -334,7 +335,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", null, false, true, null, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, true, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync("tenant-1", "db-1", tempFile, null, true, true,
                 TimeSpan.FromHours(1), Arg.Any<CancellationToken?>(), true);
@@ -363,7 +364,7 @@ public class RestoreRepositoryJobTests
 
             var job = CreateJob();
 
-            await job.Run("tenant-1", "db-1", "abc123", null, false, null, null);
+            await job.Run("tenant-1", "db-1", "abc123", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync("tenant-1", "db-1", tempFile, null, true, true,
                 TimeSpan.FromHours(1), Arg.Any<CancellationToken?>(), false);

@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Hangfire.Server;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
 using Meshmakers.Octo.Backend.Jobs.Jobs.TenantBackup;
@@ -48,7 +49,8 @@ public partial class RestoreRepositoryJob(
     IStreamDataRepositoryFactory? streamDataFactory = null,
     ISharedUploadStore? sharedUploads = null,
     IDumpOperationGate? operationGate = null,
-    ICkCacheService? ckCacheService = null) : IRestoreRepositoryJob
+    ICkCacheService? ckCacheService = null,
+    ArchiveRegistrationVerifier? archiveVerifier = null) : IRestoreRepositoryJob
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -69,14 +71,24 @@ public partial class RestoreRepositoryJob(
         string? oldDatabaseName, bool restoreArchiveData, PerformContext? performContext,
         IBotCancellationToken? cancellationToken)
     {
-        return Run(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData, false, performContext,
-            cancellationToken);
+        return Run(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData, false,
+            ArchiveRegistrationCheck.Required, performContext, cancellationToken);
     }
 
     /// <inheritdoc />
     public Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
         string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership,
         PerformContext? performContext, IBotCancellationToken? cancellationToken)
+    {
+        return Run(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData, overrideForeignOwnership,
+            ArchiveRegistrationCheck.Required, performContext, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<RestoreRepositoryResult?> Run(string tenantId, string databaseName, string cacheKey,
+        string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership,
+        ArchiveRegistrationCheck archiveCheck, PerformContext? performContext,
+        IBotCancellationToken? cancellationToken)
     {
         if (overrideForeignOwnership)
         {
@@ -87,19 +99,29 @@ public partial class RestoreRepositoryJob(
         }
 
         return RunCoreAsync(tenantId, databaseName, cacheKey, oldDatabaseName, restoreArchiveData,
-            overrideForeignOwnership, performContext, cancellationToken?.ShutdownToken ?? CancellationToken.None);
+            overrideForeignOwnership, archiveCheck, performContext,
+            cancellationToken?.ShutdownToken ?? CancellationToken.None);
+    }
+
+    /// <inheritdoc />
+    public Task<RestoreRepositoryResult?> RunForOperation(string tenantId, string databaseName, string tusFileId,
+        string? oldDatabaseName, bool restoreArchiveData, string operationId, PerformContext? performContext,
+        IBotCancellationToken? cancellationToken)
+    {
+        return RunForOperation(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, operationId,
+            ArchiveRegistrationCheck.Required, performContext, cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<RestoreRepositoryResult?> RunForOperation(string tenantId, string databaseName, string tusFileId,
-        string? oldDatabaseName, bool restoreArchiveData, string operationId, PerformContext? performContext,
-        IBotCancellationToken? cancellationToken)
+        string? oldDatabaseName, bool restoreArchiveData, string operationId, ArchiveRegistrationCheck archiveCheck,
+        PerformContext? performContext, IBotCancellationToken? cancellationToken)
     {
         var ct = cancellationToken?.ShutdownToken ?? CancellationToken.None;
         _progress = await OperationJobGuard.EnterAsync(performContext, OperationJobParameterNames.Generic,
             operationGate, tenantId, operationId, "restore", logger, ct);
         var result = await RunCoreAsync(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
-            false, performContext, ct);
+            false, archiveCheck, performContext, ct);
         if (result != null)
         {
             OperationJobGuard.WriteResult(performContext, RestoreOperationSummary.From(result).ToJson(), logger);
@@ -110,8 +132,10 @@ public partial class RestoreRepositoryJob(
 
     private async Task<RestoreRepositoryResult?> RunCoreAsync(string tenantId, string databaseName, string cacheKey,
         string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership,
-        PerformContext? performContext, CancellationToken ct)
+        ArchiveRegistrationCheck archiveCheck, PerformContext? performContext, CancellationToken ct)
     {
+        var mustVerifyArchive = archiveCheck != ArchiveRegistrationCheck.NotRequired;
+        string? verifiedCopyPath = null;
         // cacheKey is used as the tus file ID (or legacy cache key). The tenant is part of the
         // address since AB#5060: uploads live under a per-tenant directory (and, since AB#5561, under the
         // tenant's restore-staging prefix of the artifact store), so a restore can only ever resolve a file
@@ -143,10 +167,12 @@ public partial class RestoreRepositoryJob(
 
                 // Format 2 is read as a stream from the store; anything else (a mongodump, format 1) is not handled
                 // here and takes the unchanged path below.
-                var nativeFromStore = await TryRestoreNativeAsync(tenantId, databaseName, oldDatabaseName,
-                    restoreArchiveData, overrideForeignOwnership,
-                    () => artifactStorage!.OpenPlainReadAsync(ArtifactCategories.RestoreStaging, tenantId,
-                        stagedFileName, ct), ct);
+                var nativeFromStore = mustVerifyArchive
+                    ? null
+                    : await TryRestoreNativeAsync(tenantId, databaseName, oldDatabaseName,
+                        restoreArchiveData, overrideForeignOwnership,
+                        () => artifactStorage!.OpenPlainReadAsync(ArtifactCategories.RestoreStaging, tenantId,
+                            stagedFileName, ct), ct);
                 if (nativeFromStore != null)
                 {
                     nativeFromStore.NotificationWarnings = [.. _notificationWarnings];
@@ -189,6 +215,17 @@ public partial class RestoreRepositoryJob(
                 }
             }
 
+            if (mustVerifyArchive)
+            {
+                if (!string.Equals(filePath, scratchPath, StringComparison.Ordinal))
+                {
+                    verifiedCopyPath = await CopyToJobOwnedFileAsync(filePath, ct);
+                    filePath = verifiedCopyPath;
+                }
+
+                await VerifyRegisteredArchiveAsync(tenantId, filePath, ct);
+            }
+
             var fileInfo = new FileInfo(filePath);
             if (fileInfo.Length == 0)
             {
@@ -196,7 +233,7 @@ public partial class RestoreRepositoryJob(
                     $"Backup file at '{filePath}' for tus file ID '{cacheKey}' is empty (0 bytes). The upload may not have completed successfully.");
             }
 
-            if (staged == null)
+            if (staged == null || mustVerifyArchive)
             {
                 // A local upload (no staging in the store): format 2 is read from the file as a stream as well.
                 var nativeFromFile = await TryRestoreNativeAsync(tenantId, databaseName, oldDatabaseName,
@@ -262,6 +299,7 @@ public partial class RestoreRepositoryJob(
         {
             await backupFileStorage.DeleteFileAsync(localUploadPath);
             artifactStorage?.DeleteScratchFile(scratchPath);
+            DeleteJobOwnedFile(verifiedCopyPath);
             if (stagedFileName != null)
             {
                 await DeleteStagedUploadAsync(tenantId, stagedFileName);

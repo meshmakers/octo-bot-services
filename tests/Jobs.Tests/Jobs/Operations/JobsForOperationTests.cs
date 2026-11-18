@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using System.Reflection;
 using Hangfire;
 using Hangfire.Common;
@@ -47,10 +48,14 @@ public class JobsForOperationTests
     [Arguments(typeof(IImportArchiveDataJob))]
     public async Task RunForOperation_HasNoAutomaticRetry(Type jobInterface)
     {
-        var method = jobInterface.GetMethod("RunForOperation")!;
+        var overloads = jobInterface.GetMethods().Where(method => method.Name == "RunForOperation").ToList();
 
-        await Assert.That(method.GetCustomAttribute<AutomaticRetryAttribute>()!.Attempts).IsEqualTo(0);
-        await Assert.That(method.GetCustomAttribute<DisableConcurrentExecutionAttribute>()).IsNotNull();
+        await Assert.That(overloads.Count).IsGreaterThanOrEqualTo(1);
+        foreach (var method in overloads)
+        {
+            await Assert.That(method.GetCustomAttribute<AutomaticRetryAttribute>()!.Attempts).IsEqualTo(0);
+            await Assert.That(method.GetCustomAttribute<DisableConcurrentExecutionAttribute>()).IsNotNull();
+        }
     }
 
     [Test]
@@ -119,7 +124,7 @@ public class JobsForOperationTests
 
         var result = await new RestoreRepositoryJob(Substitute.For<ILogger<RestoreRepositoryJob>>(), _systemContext,
                 backupFiles, operationGate: _gate)
-            .RunForOperation(Tenant, "db1", "upload-1", null, false, OperationId, context.Context, null);
+            .RunForOperation(Tenant, "db1", "upload-1", null, false, OperationId, ArchiveRegistrationCheck.NotRequired, context.Context, null);
 
         await Assert.That(result).IsNotNull();
         await Assert.That(context.Progress.Select(p => p.StageCode).ToArray())

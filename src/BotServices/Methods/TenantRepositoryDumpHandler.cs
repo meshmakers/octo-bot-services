@@ -98,7 +98,8 @@ public sealed class TenantRepositoryDumpHandler(
                     Value = new RtRepositoryDumpResultRecord
                     {
                         JobId = jobId,
-                        DownloadPath = DownloadPath(tenantId, jobId)
+                        DownloadPath = DownloadPath(tenantId, jobId),
+                        Sha256 = JobOperationRelay.ReadParameter(end.Details!, DumpJobParameters.Sha256)
                     }
                 });
             case JobOperationEndKind.Interrupted:

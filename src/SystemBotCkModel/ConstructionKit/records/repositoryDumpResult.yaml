@@ -8,3 +8,6 @@ records:
       name: JobId
     - id: ${this}/RepositoryDump.DownloadPath
       name: DownloadPath
+    - id: ${this}/RepositoryDump.Sha256
+      name: Sha256
+      isOptional: true

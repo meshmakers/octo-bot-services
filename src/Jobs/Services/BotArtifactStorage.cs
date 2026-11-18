@@ -552,6 +552,19 @@ public sealed class BotArtifactStorage : IBotArtifactStorage
     }
 
     /// <inheritdoc />
+    public async IAsyncEnumerable<StoredTenantArtifactEntry> ListCategoryAsync(string category,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var info in GetStore(category).ListAsync(_keys.CategoryPrefix(category), cancellationToken))
+        {
+            if (_keys.TryParse(info.Key, out var parts) && parts != null)
+            {
+                yield return new StoredTenantArtifactEntry(parts.TenantId, parts.FileName, info.Size, info.CreatedAt);
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public async IAsyncEnumerable<StoredArtifactEntry> ListAsync(string category, string tenantId,
         string fileNamePrefix, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {

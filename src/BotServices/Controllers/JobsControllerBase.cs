@@ -3,6 +3,7 @@ using Hangfire;
 using Hangfire.Storage.Monitoring;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
@@ -127,10 +128,12 @@ public abstract class JobsControllerBase : ControllerBase
     }
 
     /// <summary>
-    ///     Enqueues the repository restore of <paramref name="tenantId" /> from a completed tus upload.
+    ///     Enqueues the repository restore of <paramref name="tenantId" /> from a completed tus upload. The job checks the
+    ///     archive as <paramref name="archiveCheck" /> says; the caller decides it with the restore archive check policy.
     /// </summary>
     protected async Task<IActionResult> EnqueueRestoreFromUploadAsync(string tusFileId, string tenantId,
-        string databaseName, string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership = false)
+        string databaseName, string? oldDatabaseName, bool restoreArchiveData, bool overrideForeignOwnership,
+        ArchiveRegistrationCheck archiveCheck)
     {
         try
         {
@@ -141,15 +144,11 @@ public abstract class JobsControllerBase : ControllerBase
                 return uploadCheck;
             }
 
-            // A restore without the override is enqueued with the Run signature from before AB#8672, so a worker
-            // that does not know the override overload yet (rolling update) can still run it.
-            var id = overrideForeignOwnership
-                ? _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                    job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
-                        true, null, BotCancellationToken.Null))
-                : _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
-                    job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
-                        null, BotCancellationToken.Null));
+            // Always the overload with the archive check: a worker that does not know it yet (rolling update) fails
+            // the job instead of restoring an unchecked archive.
+            var id = _backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
+                job.Run(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData,
+                    overrideForeignOwnership, archiveCheck, null, BotCancellationToken.Null));
 
             RecordStarter(id, tenantId);
             return Ok(new JobResponseDto(id));

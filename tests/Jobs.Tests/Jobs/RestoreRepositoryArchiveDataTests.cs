@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -128,7 +129,7 @@ public class RestoreRepositoryArchiveDataTests
             _systemContext.FindTenantContextAsync("tenant-1").Returns(Task.FromResult<ITenantContext>(null!));
 
             var failure = await Assert.That(async () =>
-                    await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null))
+                    await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null))
                 .Throws<JobFailedException>();
 
             await Assert.That(failure!.Message).Contains("Tenant context not found");
@@ -150,7 +151,7 @@ public class RestoreRepositoryArchiveDataTests
             _systemContext.FindTenantContextAsync("tenant-1").Returns(Task.FromResult<ITenantContext>(null!));
 
             var failure = await Assert.That(async () =>
-                    await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null))
+                    await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null))
                 .Throws<JobFailedException>();
 
             await Assert.That(failure!.Message).Contains("Tenant context not found");
@@ -172,7 +173,7 @@ public class RestoreRepositoryArchiveDataTests
             SetupCommon(path);
             SetupTenant(CkArchiveStatus.Disabled, RtIdA);
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
             // Mongo restored exactly once from the extracted blob.
             await _systemContext.Received(1).RestoreTenantAsync(Arg.Is("tenant-1"), Arg.Is("db-1"), Arg.Any<string>(),
                 Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
@@ -207,7 +208,7 @@ public class RestoreRepositoryArchiveDataTests
             _archiveStore.GetAsync(id).Returns(snapshot, failed);
             _lifecycle.RevalidateAccessAsync(id).Returns(false);
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             Received.InOrder(() =>
             {
@@ -239,7 +240,7 @@ public class RestoreRepositoryArchiveDataTests
             SetupCommon(path);
             SetupTenant(CkArchiveStatus.Activated, RtIdA);
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
             // Disable called twice: the pre-activate normalisation + the post-activate import precondition.
             await _lifecycle.Received(2).DisableAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
             await _repository.Received(1).DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
@@ -266,7 +267,7 @@ public class RestoreRepositoryArchiveDataTests
             SetupCommon(path);
             SetupTenant(CkArchiveStatus.Activated, RtIdA);
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, false, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, false, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync(Arg.Is("tenant-1"), Arg.Is("db-1"), Arg.Any<string>(),
                 Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
@@ -307,7 +308,7 @@ public class RestoreRepositoryArchiveDataTests
             // Both archives exist post-restore with the (un-drifted) on-disk schema.
             SetupTenant(CkArchiveStatus.Disabled, RtIdA, RtIdB);
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
             // A skipped: never touched.
             await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
             await _lifecycle.DidNotReceive().ActivateAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
@@ -339,7 +340,7 @@ public class RestoreRepositoryArchiveDataTests
             _archiveStore.GetAsync(Arg.Any<OctoObjectId>()).Returns((ArchiveSnapshot?)null);
 
             // Must not throw — skip + report.
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Any<OctoObjectId>());
             await _repository.DidNotReceive().ImportRowsAsync(Arg.Any<OctoObjectId>(),
@@ -362,7 +363,7 @@ public class RestoreRepositoryArchiveDataTests
         {
             SetupCommon(path);
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _systemContext.Received(1).RestoreTenantAsync(Arg.Is("tenant-1"), Arg.Is("db-1"), Arg.Is(path),
                 Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
@@ -393,7 +394,7 @@ public class RestoreRepositoryArchiveDataTests
             SetupCommon(path);
             SetupTenant(CkArchiveStatus.Disabled, RtIdA, RtIdB);
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             // A: untouched.
             await _repository.DidNotReceive().DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
@@ -446,7 +447,7 @@ public class RestoreRepositoryArchiveDataTests
                     importedRows = count;
                 });
 
-            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, null, null);
+            await CreateJob().Run("tenant-1", "db-1", "file-1", null, true, false, ArchiveRegistrationCheck.NotRequired, null, null);
 
             await _repository.Received(1).DeleteArchiveAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));
             await _lifecycle.Received(1).ActivateAsync(Arg.Is<OctoObjectId>(o => o.ToString() == RtIdA));

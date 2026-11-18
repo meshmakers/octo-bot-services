@@ -1,3 +1,4 @@
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -177,7 +178,7 @@ public class RestoreRepositoryNativeTests : ArtifactStoreJobTestBase
 
     private Task<RestoreRepositoryResult?> RunAsync(bool restoreArchiveData = true, string tenant = Tenant)
     {
-        return CreateJob().Run(tenant, "tenantdb", "file-1", null, restoreArchiveData, null, null);
+        return CreateJob().Run(tenant, "tenantdb", "file-1", null, restoreArchiveData, false, ArchiveRegistrationCheck.NotRequired, null, null);
     }
 
     [Test]

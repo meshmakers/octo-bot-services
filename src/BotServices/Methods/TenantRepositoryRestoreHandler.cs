@@ -1,5 +1,7 @@
 using Hangfire;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.Operations;
@@ -20,8 +22,13 @@ namespace Meshmakers.Octo.Backend.BotServices.Methods;
 ///         <see cref="HandleAsync" /> checks the upload (complete, not empty, of this tenant) and answers
 ///         <c>UPLOAD_NOT_FOUND</c> at once when it is not usable; otherwise it accepts. The work enqueues the <b>same
 ///         Hangfire restore job</b> the REST endpoint <c>{tenantId}/v1/jobs/restore-from-upload</c> enqueues
-///         (<see cref="IRestoreRepositoryJob.RunForOperation" />, <c>AutomaticRetry(Attempts = 0)</c>, at most once), relays
+///         (<c>IRestoreRepositoryJob.RunForOperation</c>, <c>AutomaticRetry(Attempts = 0)</c>, at most once), relays
 ///         its progress and completes with <see cref="RtRepositoryRestoreResultRecord" /> or a declared error.
+///     </para>
+///     <para>
+///         The archive check follows the caller (<see cref="RestoreArchiveCheckPolicy" />): a tenant identity restores
+///         only a dump the platform produced for this tenant, the job refuses any other archive and the method answers
+///         <c>RESTORE_FAILED</c> with reason <c>archive-not-registered</c>; a system operator restores any archive.
 ///     </para>
 ///     <para>
 ///         The restore replaces the tenant <b>database</b>. The operation record lives in the system database
@@ -37,7 +44,8 @@ public sealed class TenantRepositoryRestoreHandler(
     IBackupFileStorageService backupFileStorage,
     IOptions<BotJobMethodOptions> options,
     TimeProvider timeProvider,
-    ILogger<TenantRepositoryRestoreHandler> logger)
+    ILogger<TenantRepositoryRestoreHandler> logger,
+    RestoreArchiveCheckPolicy archiveCheckPolicy)
     : ICkMethodHandler<TenantRepositoryRestoreParameters, TenantRepositoryRestoreResult>
 {
     /// <summary>Declared error: the restore job failed.</summary>
@@ -69,6 +77,7 @@ public sealed class TenantRepositoryRestoreHandler(
         var restoreArchiveData = parameters.RestoreArchiveData ?? false;
         var subjectId = context.CallerPrincipal?.SubjectId;
         var clientId = context.CallerPrincipal?.ClientId;
+        var archiveCheck = archiveCheckPolicy.For(context.CallerPrincipal);
 
         var problem = await StagedUploadCheck.CheckAsync(sharedUploads, backupFileStorage, tenantId, tusFileId,
             cancellationToken);
@@ -79,19 +88,19 @@ public sealed class TenantRepositoryRestoreHandler(
         }
 
         return CkMethodOutcome<TenantRepositoryRestoreResult>.Accepted((progress, ct) =>
-            RunAsync(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, subjectId, clientId,
-                progress, ct));
+            RunAsync(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, archiveCheck, subjectId,
+                clientId, progress, ct));
     }
 
     internal async Task<CkMethodOutcome<TenantRepositoryRestoreResult>> RunAsync(string tenantId, string databaseName,
-        string tusFileId, string? oldDatabaseName, bool restoreArchiveData, string? subjectId, string? clientId,
-        ICkMethodOperationProgress progress, CancellationToken ct)
+        string tusFileId, string? oldDatabaseName, bool restoreArchiveData, ArchiveRegistrationCheck archiveCheck,
+        string? subjectId, string? clientId, ICkMethodOperationProgress progress, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var operationId = progress.OperationId;
         var jobId = backgroundJobClient.Enqueue<IRestoreRepositoryJob>(job =>
             job.RunForOperation(tenantId, databaseName, tusFileId, oldDatabaseName, restoreArchiveData, operationId,
-                null, BotCancellationToken.Null));
+                archiveCheck, null, BotCancellationToken.Null));
 
         var relay = new JobOperationRelay(jobStorage, timeProvider, logger);
         relay.RecordStart(jobId, tenantId, operationId, OperationJobParameterNames.Generic, subjectId, clientId);
@@ -116,6 +125,16 @@ public sealed class TenantRepositoryRestoreHandler(
                     ClearCacheRequired = summary?.ClearCacheRequired ?? false
                 }
             });
+        }
+
+        if (end.Kind == JobOperationEndKind.Failed && end.Details != null &&
+            JobOperationRelay.FailedWith<ArchiveNotRegisteredException>(end.Details))
+        {
+            logger.LogWarning("Restore job '{JobId}' of tenant '{TenantId}' refused the archive ({Reason})", jobId,
+                tenantId, BotJobMethodErrors.ArchiveNotRegisteredReason);
+            return CkMethodOutcome<TenantRepositoryRestoreResult>.Fail(RestoreFailed,
+                (BotJobMethodErrors.JobIdParameter, jobId),
+                (BotJobMethodErrors.ReasonParameter, BotJobMethodErrors.ArchiveNotRegisteredReason));
         }
 
         var code = end.Kind == JobOperationEndKind.Interrupted ? RestoreInterrupted : RestoreFailed;

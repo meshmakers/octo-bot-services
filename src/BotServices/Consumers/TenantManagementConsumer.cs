@@ -1,5 +1,6 @@
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.TenantLifecycle;
@@ -12,7 +13,8 @@ namespace Meshmakers.Octo.Backend.BotServices.Consumers;
 /// <summary>
 ///    Updates jobs for a tenant. AB#8447: when a tenant is deleted, its recurring jobs and its method operation records
 ///    (system database, <see cref="ICkMethodOperationTenantPurge" />) are removed, so a new tenant with the same id never
-///    reads an operation of the old one. A restore is not a delete and keeps the records.
+///    reads an operation of the old one. The tenant's dump registry entries are removed the same way, so a new tenant
+///    with the same id never restores a dump of the old one. A restore is not a delete and keeps both.
 /// </summary>
 /// <remarks>
 ///     The purge runs on <c>PosDeleteTenant</c>, which the tenant delete sends after the database drop, also when the drop
@@ -38,6 +40,7 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
     private readonly ICkMethodOperationTenantPurge _operationPurge;
     private readonly ITenantLifecycleStore _tenantLifecycleStore;
     private readonly IIndexUpgradeScheduler? _indexUpgradeScheduler;
+    private readonly IDumpHashRegistry? _dumpHashRegistry;
 
     /// <summary>
     ///     Constructor.
@@ -50,12 +53,14 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
     /// <param name="indexUpgradeScheduler">
     ///     AB#9118: enqueues the paging index upgrade of a created or attached tenant (once across replicas)
     /// </param>
+    /// <param name="dumpHashRegistry">Removes the dump registry entries of a deleted tenant.</param>
     public TenantManagementConsumer(ILogger<TenantManagementConsumer> logger,
         IOptions<OctoBotServicesOptions> options,
         IJobCreatorService jobCreatorService,
         ICkMethodOperationTenantPurge operationPurge,
         ITenantLifecycleStore tenantLifecycleStore,
-        IIndexUpgradeScheduler? indexUpgradeScheduler = null)
+        IIndexUpgradeScheduler? indexUpgradeScheduler = null,
+        IDumpHashRegistry? dumpHashRegistry = null)
     {
         _logger = logger;
         _options = options;
@@ -63,6 +68,7 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
         _operationPurge = operationPurge;
         _tenantLifecycleStore = tenantLifecycleStore;
         _indexUpgradeScheduler = indexUpgradeScheduler;
+        _dumpHashRegistry = dumpHashRegistry;
     }
 
     public Task ConsumeAsync(IDistributedContext<PosUpdateTenant> context)
@@ -120,6 +126,34 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
         {
             _logger.LogWarning(e,
                 "Could not remove the method operation records of deleted tenant '{TenantId}'; they expire with their retention",
+                tenantId);
+        }
+
+        await PurgeDumpHashesAsync(tenantId);
+    }
+
+    private async Task PurgeDumpHashesAsync(string tenantId)
+    {
+        if (_dumpHashRegistry == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await IsBeingDeletedAsync(tenantId))
+            {
+                return;
+            }
+
+            var removedCount = await _dumpHashRegistry.DeleteTenantAsync(tenantId);
+            _logger.LogInformation("Removed {Count} dump registry entries of deleted tenant '{TenantId}'",
+                removedCount, tenantId);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception,
+                "Could not remove the dump registry entries of deleted tenant '{TenantId}'; reads of a new tenant with the id ignore them",
                 tenantId);
         }
     }

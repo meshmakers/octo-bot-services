@@ -206,6 +206,13 @@ public interface IBotArtifactStorage
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    ///     Lists every artifact of <paramref name="category" /> (a category with flat keys) of every tenant of this
+    ///     instance.
+    /// </summary>
+    IAsyncEnumerable<StoredTenantArtifactEntry> ListCategoryAsync(string category,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     ///     Opens a stored artifact for reading, driven by its stored name only: a name ending with <c>.octoenc</c> is
     ///     decrypted on the fly (same guarantees as <see cref="OpenPlainReadAsync" />), any other name is returned byte
     ///     for byte. Unlike <see cref="OpenPlainReadAsync" /> the content is never sniffed, so a plain artifact that
@@ -259,6 +266,9 @@ public interface IBotArtifactStorage
 /// <param name="Size">Stored size in bytes (ciphertext size when encrypted).</param>
 /// <param name="CreatedAt">When the artifact was written.</param>
 public sealed record StoredArtifactEntry(string FileName, long Size, DateTimeOffset CreatedAt);
+
+/// <summary>An artifact of a category with its tenant (see <see cref="IBotArtifactStorage.ListCategoryAsync" />).</summary>
+public sealed record StoredTenantArtifactEntry(string TenantId, string FileName, long Size, DateTimeOffset CreatedAt);
 
 /// <summary>
 ///     An object of a run in the copy staging area.
