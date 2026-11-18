@@ -1,5 +1,6 @@
 using Meshmakers.Common.Shared;
 using Meshmakers.Octo.Backend.BotServices.Services;
+using Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.TenantLifecycle;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
@@ -36,6 +37,7 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
     private readonly IJobCreatorService _jobCreatorService;
     private readonly ICkMethodOperationTenantPurge _operationPurge;
     private readonly ITenantLifecycleStore _tenantLifecycleStore;
+    private readonly IIndexUpgradeScheduler? _indexUpgradeScheduler;
 
     /// <summary>
     ///     Constructor.
@@ -45,17 +47,22 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
     /// <param name="jobCreatorService"></param>
     /// <param name="operationPurge">Removes the method operation records of a deleted tenant (AB#8447).</param>
     /// <param name="tenantLifecycleStore">Tells a delete (Deleting tombstone) from a restore or detach (AB#8447).</param>
+    /// <param name="indexUpgradeScheduler">
+    ///     AB#9118: enqueues the paging index upgrade of a created or attached tenant (once across replicas)
+    /// </param>
     public TenantManagementConsumer(ILogger<TenantManagementConsumer> logger,
         IOptions<OctoBotServicesOptions> options,
         IJobCreatorService jobCreatorService,
         ICkMethodOperationTenantPurge operationPurge,
-        ITenantLifecycleStore tenantLifecycleStore)
+        ITenantLifecycleStore tenantLifecycleStore,
+        IIndexUpgradeScheduler? indexUpgradeScheduler = null)
     {
         _logger = logger;
         _options = options;
         _jobCreatorService = jobCreatorService;
         _operationPurge = operationPurge;
         _tenantLifecycleStore = tenantLifecycleStore;
+        _indexUpgradeScheduler = indexUpgradeScheduler;
     }
 
     public Task ConsumeAsync(IDistributedContext<PosUpdateTenant> context)
@@ -70,10 +77,15 @@ internal class TenantManagementConsumer : IDistributedConsumer<PosUpdateTenant>,
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    ///     A tenant was created or attached (a restore and a copy attach as well). Every replica receives it; the
+    ///     index upgrade job (AB#9118) is enqueued once per tenant and never fails the consumer.
+    /// </summary>
     public Task ConsumeAsync(IDistributedContext<PosCreateTenant> context)
     {
         _jobCreatorService.CreateJobs(_options.Value.InstancePrefix ?? BotServiceConstants.DefaultInstancePrefix,
             context.Message.TenantId);
+        _indexUpgradeScheduler?.OnTenantCreatedOrAttached(context.Message.TenantId);
         return Task.CompletedTask;
     }
 

@@ -1,5 +1,6 @@
 using Meshmakers.Common.Shared.Services;
 using Meshmakers.Octo.Backend.Jobs.Commands;
+using Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Jobs.ArchiveData;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
@@ -101,6 +102,30 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISecretSweepJobInspector>(_ => new HangfireSecretSweepJobInspector());
         services.AddTransient<SecretSweepInterruptedRunRecovery>();
 
+        return services;
+    }
+
+    /// <summary>
+    ///     Adds the paging index upgrade (AB#9118): the per-tenant job, the sweep, the scheduler, the CK import gate and
+    ///     their shared state in the Hangfire job storage. Binds <see cref="IndexUpgradeOptions" /> from
+    ///     <see cref="IndexUpgradeOptions.SectionName" />. The host also needs a Hangfire server for
+    ///     <see cref="IndexUpgradeConstants.Queue" />.
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <param name="configuration">The configuration root</param>
+    /// <returns>The service collection</returns>
+    public static IServiceCollection AddOctoIndexUpgrade(this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddOptions<IndexUpgradeOptions>().Bind(configuration.GetSection(IndexUpgradeOptions.SectionName));
+        services.AddSingleton<IIndexUpgradeMongoClient, IndexUpgradeMongoClient>();
+        services.AddSingleton<ITenantIndexInspector, TenantIndexInspector>();
+        services.AddSingleton<IIndexUpgradeRunStore, MongoIndexUpgradeRunStore>();
+        services.AddSingleton<IIndexUpgradeCoordination>(_ => new HangfireIndexUpgradeCoordination());
+        services.AddTransient<IIndexUpgradeScheduler, IndexUpgradeScheduler>();
+        services.AddTransient<ICkImportIndexUpgradeGate, CkImportIndexUpgradeGate>();
+        services.AddTransient<IIndexUpgradeJob, IndexUpgradeJob>();
+        services.AddTransient<IIndexUpgradeSweepJob, IndexUpgradeSweepJob>();
         return services;
     }
 

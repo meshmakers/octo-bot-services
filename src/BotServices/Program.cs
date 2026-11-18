@@ -16,6 +16,7 @@ using Meshmakers.Octo.Backend.BotServices.Methods;
 using Meshmakers.Octo.Services.Methods;
 using Meshmakers.Octo.Backend.BotServices.Services;
 using Meshmakers.Octo.Backend.Jobs;
+using Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Backend.Jobs.Secrets;
 using Meshmakers.Octo.Backend.Jobs.Services;
@@ -188,6 +189,8 @@ try
         secretBackupStoragePath: secretSweepOptions.BackupStoragePath,
         secretBackupRetentionDays: secretSweepOptions.BackupRetentionDays,
         artifactRetentionHours: botOptions.ArtifactRetentionHours);
+    // AB#9118: paging index upgrade per tenant (section IndexUpgrade, OCTO_INDEXUPGRADE__*); docs/index-upgrade.md.
+    builder.Services.AddOctoIndexUpgrade(builder.Configuration);
     // AB#5561: platform artifact store (ArtifactStorage section, OCTO_ARTIFACTSTORAGE__*). Without configuration it
     // is the file system below <temp>/octo-bot/artifacts, so a local start needs no new settings. Precedence of the
     // file system root and the Bot:SecretSweep:BackupStoragePath alias: see AddOctoBotArtifactStorage / README.
@@ -369,6 +372,16 @@ try
         options.SchedulePollingInterval = TimeSpan.FromSeconds(schedulePollingSeconds);
     });
 
+    // AB#9118: a server of its own with one worker for the index upgrade jobs, so a rebuild that runs for hours never
+    // takes a worker of the other jobs. The limit across replicas is the global slot of IIndexUpgradeCoordination.
+    builder.Services.AddHangfireServer(options =>
+    {
+        options.ServerName = $"{Environment.MachineName}:{IndexUpgradeConstants.Queue}";
+        options.Queues = [IndexUpgradeConstants.Queue];
+        options.WorkerCount = 1;
+        options.SchedulePollingInterval = TimeSpan.FromSeconds(15);
+    });
+
     // AB#5539: sweep runs a crashed/killed process left in Running are marked Failed after startup.
     builder.Services.AddOctoSecretSweepInterruptedRunRecovery();
 
@@ -503,6 +516,12 @@ try
         job => job.RunAllTenants(systemTenantId, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual, null, null,
             BotCancellationToken.Null),
         Cron.Never());
+
+    // AB#9118: after-deploy sweep (Immediate) or the build window (Window); only job storage writes, never a build.
+    IndexUpgradeStartup.Apply(app.Services.GetRequiredService<IOptions<IndexUpgradeOptions>>().Value,
+        app.Services.GetRequiredService<IRecurringJobManager>(), app.Services.GetRequiredService<IBackgroundJobClient>(),
+        app.Services.GetRequiredService<IIndexUpgradeCoordination>(),
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(IndexUpgradeStartup)));
 
     await app.RunAsync();
 }
