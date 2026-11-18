@@ -80,12 +80,13 @@ The engine holds the tenant's `index_update_lock` for a whole upgrade run; a CK 
   start. When `index_update_lock` is held by someone else (an embedded import or `UpdateIndexesAsync` of another service), the
   engine's `TimeoutException` after 90 s makes the run `Scheduled` again after `RetryDelay`.
 - **Remaining risk** (accepted, Odin 2026-11-18, option A): the **embedded** CK model imports of the other services at their
-  tenant setup (asset repository, communication controller, …; only after a deploy that raises a model version) do not go
+  tenant setup (asset repository, communication controller, …; after a deploy that raises a model version, or right after
+  an attach) do not go
   through this gate. Meeting a running rebuild they time out after 90 s, and the service retries the tenant setup
   (`TenantSetupRetryTracker`, AB#7249, 30 s doubling to 5 min) until the rebuild of the current collection ended; the
   `TenantSetup` health check turns `Degraded` after 10 minutes. `StartDelay` (5 min) lets those imports finish before the
-  after-deploy sweep starts. A fix in the engine (release `index_update_lock` between collections) is a story of its own under
-  AB#8793.
+  after-deploy sweep starts and before the job of a created or attached tenant runs. The engine fix (release
+  `index_update_lock` between collections) is AB#9302.
 
 ### Restart during a job
 
