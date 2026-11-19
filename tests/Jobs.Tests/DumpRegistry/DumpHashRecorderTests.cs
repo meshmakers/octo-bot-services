@@ -64,7 +64,7 @@ public class DumpHashRecorderTests : IDisposable
         _registry.FailingRegistrations = 3;
 
         await Assert.That(async () => await CreateRecorder(withArtifactStore: false).RecordAsync(Tenant, localPath,
-            null, DumpStartedAtUtc, CancellationToken.None)).Throws<InvalidOperationException>();
+            null, DumpStartedAtUtc, CancellationToken.None)).Throws<DumpRegistryWriteException>();
         await Assert.That(_registry.Entries.Count).IsEqualTo(0);
     }
 

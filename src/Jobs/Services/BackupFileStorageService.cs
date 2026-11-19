@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
@@ -145,7 +146,7 @@ public class BackupFileStorageService : IBackupFileStorageService
     /// <inheritdoc />
     public string GenerateDumpFileName(string tenantId)
     {
-        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var guid = Guid.NewGuid().ToString("N")[..8];
         return $"{tenantId}-{timestamp}-{guid}.tar.gz";
     }
@@ -206,7 +207,7 @@ public class BackupFileStorageService : IBackupFileStorageService
         CreateOwnerOnlyDirectory(SecretBackupStoragePath);
         CreateOwnerOnlyDirectory(directory);
 
-        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var guid = Guid.NewGuid().ToString("N")[..8];
         return Path.Combine(directory, $"{tenantId}-{timestamp}-{guid}{SecretBackupFileSuffix}");
     }

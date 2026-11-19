@@ -448,7 +448,8 @@ platform itself produced for the target tenant**:
   the REST dump has none) and its writer (`dump` or `backfill`). Registering the same hash again never moves its dump time or
   expiry back. No API writes to it, so a tenant identity can only add entries by running real dumps of data it can already read.
   `Dump-1` returns the hash as `sha256` (System.Bot 3.10.0). The registry write is tried three times; a dump whose registration
-  still fails fails its job, and the backfill registers the stored file at the next start.
+  still fails fails its job. The backfill registers such a stored file at the next start only when it is a MongoDB dump
+  (`.tar.gz`); a dump with archive data (`.octobak.zip`) stays unregistered and needs a system operator.
 - **Check.** The gate (`restore-from-upload`, `Restore-1`) decides from the caller (`RestoreArchiveCheckPolicy`) and passes
   the decision to the job (`ArchiveRegistrationCheck`). For a tenant identity the job copies the upload into a job-owned file,
   hashes exactly those bytes right before the restore, and restores that copy; format 2 is then read from that file instead of
@@ -459,7 +460,7 @@ platform itself produced for the target tenant**:
   queued restore of an unregistered archive fails and is started again after the update; a worker that does not know the new
   job signature fails the job without restoring anything. Roll the bot service out while no restore is running, or start
   a failed restore again afterwards. A dump an older worker runs during the rollout is registered by the backfill at the next
-  start.
+  start when it is a MongoDB dump (`.tar.gz`); a dump with archive data run that way needs a system operator.
 - **Refusal.** One answer for an edited archive, an unknown archive, another tenant's dump and an expired entry, so the answer
   does not tell whether a hash exists: the REST job fails with
   `ARCHIVE_NOT_REGISTERED: the archive is not a dump this platform produced for this tenant. ...`, and `Restore-1` answers
@@ -468,7 +469,9 @@ platform itself produced for the target tenant**:
 - **Dumps made before this version** are refused for tenant identities unless the backfill registered them. At every start the
   service enqueues `IDumpHashBackfillJob` (up to three attempts): it registers each tenant dump still held in the artifact
   store (category `tenant-dumps`, which only the dump job writes) that has no entry yet, for tenants that still exist and only
-  while the retention has not run out; a dump it cannot read or register is logged and skipped. The entry is dated by the
+  while the retention has not run out (checked for each dump); a dump it cannot read is logged and skipped, a name dated in
+  the future is skipped, and when the registry cannot be read or written the scan goes on and the job fails at its end, so
+  Hangfire runs it again. File names are written with the invariant culture (Gregorian calendar). The entry is dated by the
   start of the dump read from the file name, never by the time it was stored, so a dump of an earlier tenant with the same id
   stays filtered. Only a MongoDB dump (`.tar.gz`) carries a safe start time: it is named before mongodump starts. An archive
   container (`.octobak.zip`, a dump with archive data) is named after mongodump and the archive copy, which has no time limit,

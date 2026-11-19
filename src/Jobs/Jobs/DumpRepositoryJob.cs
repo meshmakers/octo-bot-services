@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -414,9 +415,9 @@ public partial class DumpRepositoryJob(
         });
     }
 
-    private static string BuildBackupArchiveFileName(string tenantId)
+    internal static string BuildBackupArchiveFileName(string tenantId)
     {
-        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var guid = Guid.NewGuid().ToString("N")[..8];
         return $"{tenantId}-{timestamp}-{guid}.octobak.zip";
     }

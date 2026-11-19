@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using Meshmakers.Octo.Backend.BotServices.Services.DumpRegistry;
 using Meshmakers.Octo.Backend.Jobs.DumpRegistry;
@@ -138,7 +139,8 @@ public class DumpHashBackfillJobTests : IDisposable
     }
 
     private static string DumpName(string tenantId, DateTime namedAtUtc, string extension) =>
-        $"{tenantId}-{namedAtUtc:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}{extension}";
+        string.Create(CultureInfo.InvariantCulture,
+            $"{tenantId}-{namedAtUtc:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..8]}{extension}");
 
     private Task<StoredArtifact> StoreDumpAsync(string tenantId, string fileName) =>
         _artifacts.Storage.StoreFileAsync(ArtifactCategories.TenantDumps, tenantId, fileName,

@@ -70,6 +70,12 @@ public sealed class DumpHashRecorder(
                     fileName, tenantId, attempt);
                 await Task.Delay(RegistryWriteBackoff * attempt, cancellationToken);
             }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                throw new DumpRegistryWriteException(
+                    $"The dump '{fileName}' of tenant '{tenantId}' could not be registered after {RegistryWriteAttempts} attempts.",
+                    exception);
+            }
         }
     }
 
