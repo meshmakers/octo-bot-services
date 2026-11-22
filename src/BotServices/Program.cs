@@ -316,36 +316,13 @@ try
 
         // AB#7196: migrate in place with a collection backup; never drop recurring jobs.
         var storageOptions = HangfireMongoStorageSetup.CreateStorageOptions();
-        var mongoUrlBuilder = new MongoUrlBuilder
-        {
-            DatabaseName = string.IsNullOrWhiteSpace(octoBotServicesOptions.Value.InstancePrefix) ? octoBotServicesOptions.Value.JobDatabaseName :
-                $"{octoBotServicesOptions.Value.InstancePrefix}-{octoBotServicesOptions.Value.JobDatabaseName}",
-            Username = systemOptions.Value.AdminUser,
-            Password = systemOptions.Value.AdminUserPassword,
-            AuthenticationSource = systemOptions.Value.AuthenticationDatabaseName,
-            UseTls = systemOptions.Value.UseTls,
-            DirectConnection = systemOptions.Value.UseDirectConnection,
-            AllowInsecureTls = systemOptions.Value.AllowInsecureTls
-        };
-
-        // DatabaseHost may carry a port suffix ("host:port"). MongoServerAddress.Parse handles
-        // that; the MongoServerAddress(string host) constructor rejects it since MongoDB.Driver
-        // 3.11.1 (CSHARP-6171 host validation).
-        if (systemOptions.Value.DatabaseHost.Contains(","))
-        {
-            mongoUrlBuilder.Servers = systemOptions.Value.DatabaseHost.Split(",").Select(MongoServerAddress.Parse);
-        }
-        else
-        {
-            mongoUrlBuilder.Server = MongoServerAddress.Parse(systemOptions.Value.DatabaseHost);
-        }
-
-        var mongoUrl = mongoUrlBuilder.ToString();
+        // AB#9640: hand the driver a MongoUrl / client, never the string form (redacted since MongoDB.Driver 3.14.1).
+        var mongoUrl = HangfireMongoConnection.CreateUrl(systemOptions.Value, octoBotServicesOptions.Value);
+        var mongoClient = new MongoClient(mongoUrl);
         var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(HangfireMongoStorageSetup));
         try
         {
-            HangfireMongoStorageSetup.PrepareSchema(
-                new MongoClient(mongoUrl).GetDatabase(mongoUrlBuilder.DatabaseName), storageOptions, logger);
+            HangfireMongoStorageSetup.PrepareSchema(mongoClient.GetDatabase(mongoUrl.DatabaseName), storageOptions, logger);
         }
         catch (HangfireSchemaException e)
         {
@@ -353,7 +330,7 @@ try
             throw;
         }
 
-        config.UseMongoStorage(mongoUrl, storageOptions);
+        config.UseMongoStorage(mongoClient, mongoUrl.DatabaseName, storageOptions);
         config.UseNLogLogProvider();
     });
 
