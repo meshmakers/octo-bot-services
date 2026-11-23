@@ -10,7 +10,10 @@ public enum IndexUpgradeRunStatus
     /// <summary>The run builds now.</summary>
     Running,
 
-    /// <summary>Every legacy index of the tenant was replaced.</summary>
+    /// <summary>
+    ///     Every legacy index the engine manages was replaced. Leftovers the job cannot change (AB#9322) are named in
+    ///     <see cref="IndexUpgradeRunRecord.Warning" /> and <see cref="IndexUpgradeRunRecord.Leftovers" />.
+    /// </summary>
     Succeeded,
 
     /// <summary>The tenant had no legacy index; nothing was built.</summary>
@@ -26,9 +29,11 @@ public enum IndexUpgradeRunStatus
     Interrupted,
 
     /// <summary>
-    ///     The engine ran, but legacy indexes are left that it does not upgrade: collections of models that are not
-    ///     Available, or an index build the engine logged as failed. Listed in <see cref="IndexUpgradeRunRecord.Error" />;
-    ///     a retry would change nothing, the next sweep tries again.
+    ///     The engine ran, but legacy indexes of collections it manages (collection roots of Available models) are left,
+    ///     e.g. an index build the engine logged as failed, or what is left could not be read or classified. Listed in
+    ///     <see cref="IndexUpgradeRunRecord.Error" />; a retry would change nothing, the next sweep tries again. Leftovers
+    ///     the job can never change (models not Available, orphaned collections) do not make a run Incomplete
+    ///     (AB#9322): it ends <see cref="Succeeded" /> with <see cref="IndexUpgradeRunRecord.Warning" />.
     /// </summary>
     Incomplete,
 
@@ -74,8 +79,61 @@ public sealed class IndexUpgradeRunRecord
     /// <summary>The collections whose legacy indexes the run replaced.</summary>
     public List<string> CollectionsUpgraded { get; set; } = [];
 
-    /// <summary>Why the run was deferred or failed.</summary>
+    /// <summary>Why the run was deferred or failed, or (Incomplete) which managed legacy indexes are left.</summary>
     public string? Error { get; set; }
+
+    /// <summary>
+    ///     The legacy indexes left by category (AB#9322): after the run, or before it when nothing was for the engine;
+    ///     null when the run ended before it looked or what was left could not be classified. Absent in records of older
+    ///     versions.
+    /// </summary>
+    public IndexUpgradeLeftovers? Leftovers { get; set; }
+
+    /// <summary>
+    ///     The legacy indexes the job cannot upgrade (models not Available, orphaned collections) as text (AB#9322), set
+    ///     whenever a classified run has such leftovers, so a success with leftovers is never silent. The same entries are
+    ///     in <see cref="Leftovers" /> as fields.
+    /// </summary>
+    public string? Warning { get; set; }
+}
+
+/// <summary>The legacy indexes left after an index upgrade run, by category (AB#9322, <see cref="LegacyIndexCategory" />).</summary>
+public sealed class IndexUpgradeLeftovers
+{
+    /// <summary>Legacy indexes of collection roots of Available models (the engine should have upgraded them).</summary>
+    public int ManagedIndexes { get; set; }
+
+    /// <summary>Legacy indexes of collection roots of models that are not Available.</summary>
+    public int ModelNotAvailableIndexes { get; set; }
+
+    /// <summary>Legacy indexes of collections without a collection root in the CK metadata.</summary>
+    public int OrphanedIndexes { get; set; }
+
+    /// <summary>The models that are not Available and hold legacy indexes, ordered by model id.</summary>
+    public List<IndexUpgradeModelNotAvailable> ModelsNotAvailable { get; set; } = [];
+
+    /// <summary>
+    ///     The orphaned collections with legacy indexes, ordered by name, at most
+    ///     <see cref="LegacyIndexClassification.OrphanedCollectionsCap" />; <see cref="OrphanedCollectionsTotal" /> counts
+    ///     all.
+    /// </summary>
+    public List<string> OrphanedCollections { get; set; } = [];
+
+    /// <summary>How many orphaned collections hold legacy indexes.</summary>
+    public int OrphanedCollectionsTotal { get; set; }
+}
+
+/// <summary>A model that is not Available and holds legacy indexes (AB#9322).</summary>
+public sealed class IndexUpgradeModelNotAvailable
+{
+    /// <summary>The model id, e.g. <c>Monitoring-2.1.0</c>.</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>The model state as text, e.g. <c>ResolveFailed</c> or <c>Importing</c>.</summary>
+    public string State { get; set; } = string.Empty;
+
+    /// <summary>The legacy indexes of its collection roots.</summary>
+    public int IndexCount { get; set; }
 }
 
 /// <summary>Writes and reads the last-run record of the index upgrade per tenant (AB#9118).</summary>

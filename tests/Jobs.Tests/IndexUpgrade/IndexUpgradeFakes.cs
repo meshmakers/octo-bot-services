@@ -1,4 +1,5 @@
 using Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
+using Meshmakers.Octo.ConstructionKit.Contracts.DataTransferObjects;
 
 namespace Meshmakers.Octo.Backend.Jobs.Tests.IndexUpgrade;
 
@@ -159,12 +160,74 @@ internal sealed class InMemoryIndexUpgradeCoordination(TimeProvider? timeProvide
 
 /// <summary>
 ///     Index state of fake tenant databases: the legacy indexes per database. <see cref="UpgradeOneCollection" />
-///     plays the engine for one collection.
+///     plays the engine for one collection. Also the CK metadata (AB#9322): a collection with a legacy index is the
+///     collection root of an Available model unless <see cref="SetRoot" /> or <see cref="MarkOrphaned" /> says otherwise.
 /// </summary>
-internal sealed class FakeTenantIndexes : ITenantIndexInspector
+internal sealed class FakeTenantIndexes : ITenantIndexInspector, ICkCollectionRootReader
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, List<LegacyIndex>> _legacy = new();
+    private readonly Dictionary<(string Database, string Collection), CkCollectionRoot?> _roots = new();
+
+    /// <summary>Reads of the CK metadata fail.</summary>
+    public bool FailRootReads { get; set; }
+
+    /// <summary>How often the CK metadata was read.</summary>
+    public int RootReadCount { get; private set; }
+
+    /// <summary>The collection is the root of a type of <paramref name="modelId" /> in <paramref name="state" />.</summary>
+    public void SetRoot(string databaseName, string collection, string modelId, ModelState state)
+    {
+        lock (_gate)
+        {
+            _roots[(databaseName, collection)] =
+                new CkCollectionRoot(collection, $"{modelId}/{collection}-1", modelId, state);
+        }
+    }
+
+    /// <summary>
+    ///     True when the engine upgrades the collection: it is the root of an Available model (the default for a collection
+    ///     without <see cref="SetRoot" /> or <see cref="MarkOrphaned" />).
+    /// </summary>
+    public bool IsManagedByEngine(string databaseName, string collection)
+    {
+        lock (_gate)
+        {
+            return !_roots.TryGetValue((databaseName, collection), out var root) ||
+                   root is { State: ModelState.Available };
+        }
+    }
+
+    /// <summary>The collection has no collection root in the CK metadata.</summary>
+    public void MarkOrphaned(string databaseName, string collection)
+    {
+        lock (_gate)
+        {
+            _roots[(databaseName, collection)] = null;
+        }
+    }
+
+    public Task<IReadOnlyList<CkCollectionRoot>> GetCollectionRootsAsync(string databaseName,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            RootReadCount++;
+            if (FailRootReads)
+            {
+                throw new TimeoutException("find CkType timed out");
+            }
+
+            var explicitRoots = _roots.Where(r => r.Key.Database == databaseName).ToList();
+            var defaults = _legacy.GetValueOrDefault(databaseName, []).Select(i => i.CollectionName)
+                .Concat(_upgraded.Where(u => u.Database == databaseName).Select(u => u.Collection))
+                .Distinct().Where(c => explicitRoots.All(r => r.Key.Collection != c))
+                .Select(c => new CkCollectionRoot(c, $"Test-1.0.0/{c}-1", "Test-1.0.0", ModelState.Available));
+            IReadOnlyList<CkCollectionRoot> result = explicitRoots.Where(r => r.Value != null).Select(r => r.Value!)
+                .Concat(defaults).ToList();
+            return Task.FromResult(result);
+        }
+    }
     private readonly List<(string Database, string Collection, string Name, IReadOnlyList<string> Keys)> _upgraded = [];
 
     public int ReadCount { get; private set; }
@@ -239,6 +302,53 @@ internal sealed class FakeTenantIndexes : ITenantIndexInspector
 }
 
 /// <summary>A clock that stands still at <see cref="Now" /> until a test moves it.</summary>
+/// <summary>Keeps the formatted log lines with their level (AB#9322).</summary>
+internal sealed class ListLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+{
+    private readonly Lock _gate = new();
+    private readonly List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> _entries = [];
+
+    public IReadOnlyList<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _entries.ToList();
+            }
+        }
+    }
+
+    public IReadOnlyList<string> Messages => Entries.Select(e => e.Message).ToList();
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        lock (_gate)
+        {
+            _entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
+}
+
+/// <summary>A timestamp clock that moves only by <see cref="Advance" /> (AB#9317).</summary>
+internal sealed class ManualTimestampProvider : TimeProvider
+{
+    private long _ticks;
+
+    public TimeSpan Elapsed => TimeSpan.FromTicks(Interlocked.Read(ref _ticks));
+
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+
+    public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
+}
+
 internal sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
 {
     public DateTimeOffset Now { get; set; } = now;
@@ -271,7 +381,9 @@ internal sealed class RecordingRunStore : IIndexUpgradeRunStore
                 LegacyIndexesBefore = record.LegacyIndexesBefore,
                 LegacyIndexesAfter = record.LegacyIndexesAfter,
                 CollectionsUpgraded = record.CollectionsUpgraded.ToList(),
-                Error = record.Error
+                Error = record.Error,
+                Leftovers = record.Leftovers,
+                Warning = record.Warning
             };
         }
 

@@ -13,6 +13,7 @@ using Meshmakers.Octo.Backend.Jobs.Jobs;
 using Meshmakers.Octo.Common.DistributionEventHub.Consumers;
 using Meshmakers.Octo.Common.DistributionEventHub.Payloads;
 using Meshmakers.Octo.Common.DistributionEventHub.Services;
+using Meshmakers.Octo.ConstructionKit.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.Exchange;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
@@ -136,6 +137,62 @@ public class IndexUpgradeSchedulingTests
     }
 
     [Test]
+    public async Task Sweep_EnqueuesOnlyTenantsWithAManagedLegacyIndex_AndCountsTheOthers()
+    {
+        // AB#9322: the two test-2 shapes get no job (no index_update_lock); a tenant with a managed index does.
+        var indexes = new FakeTenantIndexes();
+        indexes.AddLegacy("db-system", "RtEntity_MonitoringMonitoredTenant", "SystemEntity_0", "attributes.a");
+        indexes.SetRoot("db-system", "RtEntity_MonitoringMonitoredTenant", "Monitoring-2.1.0", ModelState.ResolveFailed);
+        indexes.AddLegacy("db-a", "RtEntity_SystemQuery", "SystemQuery_1", "attributes.name");
+        indexes.MarkOrphaned("db-a", "RtEntity_SystemQuery");
+        indexes.AddLegacy("db-b", "RtEntity_SystemQuery", "SystemQuery_1", "attributes.name");
+        indexes.MarkOrphaned("db-b", "RtEntity_SystemQuery");
+        indexes.AddLegacy("db-b", "RtEntity_B", "B_1", "attributes.name");
+        var logger = new ListLogger<IndexUpgradeSweepJob>();
+        var sweep = new IndexUpgradeSweepJob(SystemWithTenants(("a", "db-a"), ("b", "db-b")), indexes, indexes,
+            Scheduler(), _coordination, Options.Create(_options), logger);
+
+        await sweep.RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null);
+
+        await Assert.That(_created.Select(j => (string)j.Args[0])).IsEquivalentTo(new[] { "b" });
+        var summary = logger.Messages.Single(m => m.Contains("sweep (after-deploy) done"));
+        await Assert.That(summary).Contains("1 with legacy indexes the engine upgrades");
+        await Assert.That(summary).Contains("2 tenant(s) with only leftovers no job can change");
+        await Assert.That(summary).Contains("model not Available 1, orphaned 2");
+    }
+
+    [Test]
+    public async Task Sweep_ModelBecomesAvailable_TheNextSweepEnqueuesTheTenant()
+    {
+        // AB#9322: a library update or fix makes the model Available; its indexes are managed from then on.
+        var indexes = new FakeTenantIndexes();
+        indexes.AddLegacy("db-a", "RtEntity_MonitoringMonitoredTenant", "SystemEntity_0", "attributes.a");
+        indexes.SetRoot("db-a", "RtEntity_MonitoringMonitoredTenant", "Monitoring-2.1.0", ModelState.ResolveFailed);
+        var systemContext = SystemWithTenants(("a", "db-a"));
+
+        await Sweep(systemContext, indexes).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null);
+        await Assert.That(_created).IsEmpty();
+
+        indexes.SetRoot("db-a", "RtEntity_MonitoringMonitoredTenant", "Monitoring-2.2.0", ModelState.Available);
+        await Sweep(systemContext, indexes).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null);
+
+        await Assert.That(_created.Select(j => (string)j.Args[0])).IsEquivalentTo(new[] { "a" });
+    }
+
+    [Test]
+    public async Task Sweep_CkMetadataUnreadable_EnqueuesTheTenantAsBefore()
+    {
+        var indexes = new FakeTenantIndexes { FailRootReads = true };
+        indexes.AddLegacy("db-a", "RtEntity_SystemQuery", "SystemQuery_1", "attributes.name");
+        indexes.MarkOrphaned("db-a", "RtEntity_SystemQuery");
+
+        await Sweep(SystemWithTenants(("a", "db-a")), indexes).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy,
+            null, null);
+
+        await Assert.That(_created.Select(j => (string)j.Args[0])).IsEquivalentTo(new[] { "a" });
+    }
+
+    [Test]
     public async Task Sweep_TwoReplicas_EnqueueEachTenantOnce()
     {
         var indexes = new FakeTenantIndexes();
@@ -145,8 +202,10 @@ public class IndexUpgradeSchedulingTests
         var systemContext = SystemWithTenants(("a", "db-a"));
 
         await Task.WhenAll(
-            Task.Run(() => Sweep(systemContext, barrier).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null)),
-            Task.Run(() => Sweep(systemContext, barrier).RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null)))
+            Task.Run(() => Sweep(systemContext, barrier, roots: indexes)
+                .RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null)),
+            Task.Run(() => Sweep(systemContext, barrier, roots: indexes)
+                .RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null)))
             .WaitAsync(TimeSpan.FromSeconds(30));
 
         await Assert.That(barrier.Arrived).IsEqualTo(2);
@@ -225,10 +284,12 @@ public class IndexUpgradeSchedulingTests
         indexes.FindLegacyIndexesAsync("db-b", null, Arg.Any<CancellationToken>())
             .Returns([new LegacyIndex("RtEntity_B", "B_1", ["ckTypeId", "a", "rtState"])]);
         indexes.FindLegacyIndexesAsync("db-system", null, Arg.Any<CancellationToken>()).Returns([]);
+        var roots = new FakeTenantIndexes();
+        roots.SetRoot("db-b", "RtEntity_B", "B-1.0.0", ModelState.Available);
 
         // The run checks every tenant, then fails so that Hangfire retries the unreadable one.
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            Sweep(SystemWithTenants(("a", "db-a"), ("b", "db-b")), indexes)
+            Sweep(SystemWithTenants(("a", "db-a"), ("b", "db-b")), indexes, roots: roots)
                 .RunAsync(IndexUpgradeConstants.TriggerAfterDeploy, null, null));
 
         await indexes.Received(1).FindLegacyIndexesAsync("db-a", null, Arg.Any<CancellationToken>());
@@ -273,9 +334,11 @@ public class IndexUpgradeSchedulingTests
         new(_jobClient, _coordination, Options.Create(_options), NullLogger<IndexUpgradeScheduler>.Instance);
 
     private IndexUpgradeSweepJob Sweep(ISystemContext systemContext, ITenantIndexInspector inspector,
-        TimeProvider? clock = null) =>
-        new(systemContext, inspector, Scheduler(), _coordination, Options.Create(_options),
-            NullLogger<IndexUpgradeSweepJob>.Instance, clock);
+        TimeProvider? clock = null, ICkCollectionRootReader? roots = null) =>
+        new(systemContext, inspector,
+            roots ?? inspector as ICkCollectionRootReader ??
+            throw new ArgumentException("pass the CK metadata", nameof(roots)),
+            Scheduler(), _coordination, Options.Create(_options), NullLogger<IndexUpgradeSweepJob>.Instance, clock);
 
     /// <summary>A perform context of a job created at <paramref name="createdAt" /> (the recurring occurrence).</summary>
     private static PerformContext Context(DateTime createdAt) =>

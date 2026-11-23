@@ -64,8 +64,106 @@ public class IndexUpgradeWiringTests
     {
         var program = await File.ReadAllTextAsync(Path.Combine(RepositoryRoot(), "src", "BotServices", "Program.cs"));
 
-        await Assert.That(program).Contains("builder.Services.AddOctoIndexUpgrade(builder.Configuration);");
-        await Assert.That(program).Contains("options.Queues = [IndexUpgradeConstants.Queue];");
+        await Assert.That(RegistersTheIndexUpgrade(program)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("// builder.Services.AddOctoIndexUpgrade(builder.Configuration);\noptions.Queues = [IndexUpgradeConstants.Queue];")]
+    [Arguments("builder.Services.AddOctoIndexUpgrade(builder.Configuration);\n// options.Queues = [IndexUpgradeConstants.Queue];")]
+    [Arguments("/* builder.Services.AddOctoIndexUpgrade(builder.Configuration); */\noptions.Queues = [IndexUpgradeConstants.Queue];")]
+    [Arguments("/*\nbuilder.Services.AddOctoIndexUpgrade(builder.Configuration);\noptions.Queues = [IndexUpgradeConstants.Queue];\n*/")]
+    [Arguments("var a = 1; // builder.Services.AddOctoIndexUpgrade(builder.Configuration);\noptions.Queues = [IndexUpgradeConstants.Queue];")]
+    public async Task ProgramCheck_CommentedOutRegistration_Fails(string program)
+    {
+        // AB#9317: a commented-out line must not satisfy the wiring check.
+        await Assert.That(RegistersTheIndexUpgrade(program)).IsFalse();
+    }
+
+    [Test]
+    public async Task ProgramCheck_CommentMarkersInStrings_DoNotHideCode()
+    {
+        const string program = "var url = \"https://x/*\"; var c = '/'; var v = @\"a\"\"//\";\n" +
+                               "builder.Services.AddOctoIndexUpgrade(builder.Configuration); // AB#9118\n" +
+                               "options.Queues = [IndexUpgradeConstants.Queue]; /* the queue */";
+
+        await Assert.That(RegistersTheIndexUpgrade(program)).IsTrue();
+    }
+
+    private static bool RegistersTheIndexUpgrade(string program)
+    {
+        var code = WithoutComments(program);
+        return code.Contains("builder.Services.AddOctoIndexUpgrade(builder.Configuration);", StringComparison.Ordinal) &&
+               code.Contains("options.Queues = [IndexUpgradeConstants.Queue];", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     The C# source without <c>//</c> and <c>/* */</c> comments; regular and verbatim string literals and char
+    ///     literals are kept as they are, so a <c>//</c> inside a URL is not a comment. Enough for <c>Program.cs</c>, not
+    ///     a full C# lexer (raw and interpolated strings with nested quotes are not modelled).
+    /// </summary>
+    internal static string WithoutComments(string source)
+    {
+        var result = new System.Text.StringBuilder(source.Length);
+        var i = 0;
+        while (i < source.Length)
+        {
+            var c = source[i];
+            var next = i + 1 < source.Length ? source[i + 1] : '\0';
+            if (c == '/' && next == '/')
+            {
+                while (i < source.Length && source[i] != '\n')
+                {
+                    i++;
+                }
+            }
+            else if (c == '/' && next == '*')
+            {
+                var end = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                i = end < 0 ? source.Length : end + 2;
+                result.Append(' ');
+            }
+            else if (c == '"' || c == '\'')
+            {
+                var verbatim = c == '"' && i > 0 && source[i - 1] == '@';
+                var start = i++;
+                while (i < source.Length)
+                {
+                    if (!verbatim && source[i] == '\\')
+                    {
+                        i += 2;
+                        continue;
+                    }
+
+                    if (source[i] == c)
+                    {
+                        if (verbatim && i + 1 < source.Length && source[i + 1] == '"')
+                        {
+                            i += 2;
+                            continue;
+                        }
+
+                        i++;
+                        break;
+                    }
+
+                    if (!verbatim && source[i] == '\n')
+                    {
+                        break;
+                    }
+
+                    i++;
+                }
+
+                result.Append(source, start, Math.Min(i, source.Length) - start);
+            }
+            else
+            {
+                result.Append(c);
+                i++;
+            }
+        }
+
+        return result.ToString();
     }
 
     private static ServiceProvider HostServices()

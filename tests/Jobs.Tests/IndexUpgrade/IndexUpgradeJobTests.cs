@@ -1,7 +1,9 @@
 using Hangfire;
 using Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
+using Meshmakers.Octo.ConstructionKit.Contracts.DataTransferObjects;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -163,6 +165,144 @@ public class IndexUpgradeJobTests
         await Assert.That(record.Error).Contains("RtEntity_A.A_1");
         await Assert.That(record.LegacyIndexesAfter).IsEqualTo(1);
         await Assert.That(record.CollectionsUpgraded).IsEquivalentTo(new[] { "RtEntity_B" });
+        // AB#9322: only managed indexes are left (both collections are roots of Available models).
+        await Assert.That(record.Error).DoesNotContain("model not Available");
+        await Assert.That(record.Leftovers!.ManagedIndexes).IsEqualTo(1);
+        await Assert.That(record.Leftovers.ModelNotAvailableIndexes).IsEqualTo(0);
+        await Assert.That(record.Leftovers.OrphanedIndexes).IsEqualTo(0);
+        await Assert.That(record.Warning).IsNull();
+    }
+
+    [Test]
+    public async Task OnlyIndexesOfAModelNotAvailable_Octosystem_SucceedsWithAWarning_WithoutTheEngine()
+    {
+        // AB#9322, test-2 octosystem: the retired Monitoring-2.1.0 is ResolveFailed; its 4 legacy indexes stay.
+        AddMonitoringLeftovers();
+        var logger = new ListLogger<IndexUpgradeJob>();
+
+        await NewJob(logger: logger).UpgradeTenantAsync(TenantId, "test", null, null);
+
+        await _tenant.DidNotReceiveWithAnyArgs().UpgradeTiebreakIndexesAsync(default!, default);
+        var record = _runs.Last[TenantId];
+        await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Succeeded);
+        await Assert.That(record.Error).IsNull();
+        await Assert.That(record.LegacyIndexesBefore).IsEqualTo(4);
+        await Assert.That(record.LegacyIndexesAfter).IsEqualTo(4);
+        await Assert.That(record.Leftovers!.ManagedIndexes).IsEqualTo(0);
+        await Assert.That(record.Leftovers.ModelNotAvailableIndexes).IsEqualTo(4);
+        await Assert.That(record.Leftovers.OrphanedIndexes).IsEqualTo(0);
+        await Assert.That(record.Leftovers.ModelsNotAvailable).Count().IsEqualTo(1);
+        var model = record.Leftovers.ModelsNotAvailable[0];
+        await Assert.That((model.ModelId, model.State, model.IndexCount)).IsEqualTo(("Monitoring-2.1.0", "ResolveFailed", 4));
+        await Assert.That(record.Warning).Contains("model not Available: Monitoring-2.1.0 ResolveFailed (4 indexes)");
+        var end = logger.Entries.Single(e => e.Message.Contains("ended Succeeded"));
+        await Assert.That(end.Level).IsEqualTo(LogLevel.Warning);
+        await Assert.That(end.Message).Contains("managed 0, model not Available 4, orphaned 0");
+        await Assert.That(end.Message).Contains("Monitoring-2.1.0 ResolveFailed");
+    }
+
+    [Test]
+    public async Task OnlyOrphanedIndexes_Mrotest_SucceedsWithAWarning_WithoutTheEngine()
+    {
+        // AB#9322, test-2 mrotest: RtEntity_SystemQuery was left by the System 1.x -> 2.0.0 migration.
+        AddSystemQueryLeftovers();
+        var logger = new ListLogger<IndexUpgradeJob>();
+
+        await NewJob(logger: logger).UpgradeTenantAsync(TenantId, "test", null, null);
+
+        await _tenant.DidNotReceiveWithAnyArgs().UpgradeTiebreakIndexesAsync(default!, default);
+        var record = _runs.Last[TenantId];
+        await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Succeeded);
+        await Assert.That(record.Leftovers!.OrphanedIndexes).IsEqualTo(2);
+        await Assert.That(record.Leftovers.OrphanedCollections).IsEquivalentTo(new[] { "RtEntity_SystemQuery" });
+        await Assert.That(record.Leftovers.OrphanedCollectionsTotal).IsEqualTo(1);
+        await Assert.That(record.Leftovers.ModelsNotAvailable).IsEmpty();
+        await Assert.That(record.Warning).Contains("orphaned (no collection root): RtEntity_SystemQuery (2 indexes)");
+        await Assert.That(record.Warning).DoesNotContain("model not Available");
+        var end = logger.Entries.Single(e => e.Message.Contains("ended Succeeded"));
+        await Assert.That(end.Level).IsEqualTo(LogLevel.Warning);
+        await Assert.That(end.Message).DoesNotContain("model not Available:");
+    }
+
+    [Test]
+    public async Task ManagedAndLeftovers_EngineUpgradesTheManaged_RunSucceedsWithAWarning()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        AddMonitoringLeftovers();
+        AddSystemQueryLeftovers();
+
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        await _tenant.Received(1).UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>());
+        var record = _runs.Last[TenantId];
+        await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Succeeded);
+        await Assert.That(record.CollectionsUpgraded).IsEquivalentTo(new[] { "RtEntity_A" });
+        await Assert.That(record.LegacyIndexesBefore).IsEqualTo(7);
+        await Assert.That(record.LegacyIndexesAfter).IsEqualTo(6);
+        await Assert.That((record.Leftovers!.ManagedIndexes, record.Leftovers.ModelNotAvailableIndexes,
+            record.Leftovers.OrphanedIndexes)).IsEqualTo((0, 4, 2));
+        await Assert.That(record.Warning).Contains("Monitoring-2.1.0 ResolveFailed (4 indexes)");
+        await Assert.That(record.Warning).Contains("RtEntity_SystemQuery (2 indexes)");
+    }
+
+    [Test]
+    public async Task ManagedIndexLeftWithOtherLeftovers_EndsIncomplete_ErrorNamesOnlyTheManaged()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        AddMonitoringLeftovers();
+        AddSystemQueryLeftovers();
+        // The engine logs a failed build of RtEntity_A and returns normally.
+        _tenant.UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        var record = _runs.Last[TenantId];
+        await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
+        await Assert.That(record.Error).Contains("1 legacy index(es) of collections the engine manages");
+        await Assert.That(record.Error).Contains("RtEntity_A.A_1");
+        await Assert.That(record.Error).DoesNotContain("Monitoring");
+        await Assert.That(record.Error).DoesNotContain("SystemQuery");
+        await Assert.That(record.Error).DoesNotContain("model not Available");
+        await Assert.That((record.Leftovers!.ManagedIndexes, record.Leftovers.ModelNotAvailableIndexes,
+            record.Leftovers.OrphanedIndexes)).IsEqualTo((1, 4, 2));
+        await Assert.That(record.Warning).Contains("Monitoring-2.1.0 ResolveFailed");
+    }
+
+    [Test]
+    public async Task CkMetadataUnreadable_EngineRunsAsBefore_LeftoversEndIncompleteUnclassified()
+    {
+        AddSystemQueryLeftovers();
+        _indexes.FailRootReads = true;
+
+        await NewJob().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        // Not classified before: the engine runs (it skips the orphaned collection); not classified after: Incomplete.
+        await _tenant.Received(1).UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>());
+        var record = _runs.Last[TenantId];
+        await Assert.That(record.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
+        await Assert.That(record.Error).Contains("CK metadata could not be read");
+        await Assert.That(record.Error).Contains("RtEntity_SystemQuery.SystemQuery_1");
+        await Assert.That(record.Leftovers).IsNull();
+    }
+
+    /// <summary>octosystem on test-2: 4 legacy indexes of the ResolveFailed Monitoring-2.1.0.</summary>
+    private void AddMonitoringLeftovers()
+    {
+        foreach (var collection in new[] { "RtEntity_MonitoringCkHealthMonitorConfig", "RtEntity_MonitoringMonitoredTenant" })
+        {
+            _indexes.AddLegacy(DatabaseName, collection, "SystemEntity_0", "attributes.a");
+            _indexes.AddLegacy(DatabaseName, collection, "SystemEntity_2", "attributes.b");
+            _indexes.SetRoot(DatabaseName, collection, "Monitoring-2.1.0", ModelState.ResolveFailed);
+        }
+    }
+
+    /// <summary>mrotest on test-2: 2 legacy indexes of the orphaned RtEntity_SystemQuery.</summary>
+    private void AddSystemQueryLeftovers()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_SystemQuery", "SystemQuery_1", "attributes.name");
+        _indexes.AddLegacy(DatabaseName, "RtEntity_SystemQuery", "SystemQuery_2", "attributes.queryType");
+        _indexes.MarkOrphaned(DatabaseName, "RtEntity_SystemQuery");
     }
 
     [Test]
@@ -212,13 +352,19 @@ public class IndexUpgradeJobTests
             await Assert.That(_indexes.PendingCollections(DatabaseName))
                 .IsEquivalentTo(new[] { "RtEntity_B", "RtEntity_C" });
 
-            // The import gets the tenant and runs; meanwhile the upgrade is deferred again.
+            // The import gets the tenant and runs; meanwhile the upgrade is deferred again. importHandled is set only
+            // once the import has its handle, and the handle must hold the tenant lease (AB#9317): a gate that let the
+            // import run without the lease fails here.
+            var hold = await importEntered.WaitAsync(TimeSpan.FromSeconds(10));
             importHandled = true;
-            using (await importEntered.WaitAsync(TimeSpan.FromSeconds(10)))
+            using (hold)
             {
+                await Assert.That(_coordination.IsTenantHeld(TenantId)).IsTrue();
                 await Assert.ThrowsAsync<IndexUpgradeDeferredException>(() =>
                     NewJob().UpgradeTenantAsync(TenantId, "test", null, null));
             }
+
+            await Assert.That(_coordination.IsTenantHeld(TenantId)).IsFalse();
         }
         finally
         {
@@ -402,14 +548,17 @@ public class IndexUpgradeJobTests
         await Assert.That(_indexes.PendingCollections(DatabaseName)).IsEmpty();
     }
 
-    private IndexUpgradeJob NewJob(IIndexUpgradeRunStore? store = null) =>
-        new(NullLogger<IndexUpgradeJob>.Instance, _systemContext, _indexes, _coordination, store ?? _runs,
+    private IndexUpgradeJob NewJob(IIndexUpgradeRunStore? store = null, ILogger<IndexUpgradeJob>? logger = null) =>
+        new(logger ?? NullLogger<IndexUpgradeJob>.Instance, _systemContext, _indexes, _indexes, _coordination,
+            store ?? _runs,
             Options.Create(_options));
 
     private async Task FakeEngineAsync(CancellationToken cancellationToken)
     {
         await using var signal = cancellationToken.Register(() => _engine.Cancelled.TrySetResult());
-        foreach (var collection in _indexes.PendingCollections(DatabaseName))
+        // Like the engine: only collection roots of Available models (AB#9322).
+        foreach (var collection in _indexes.PendingCollections(DatabaseName)
+                     .Where(c => _indexes.IsManagedByEngine(DatabaseName, c)))
         {
             cancellationToken.ThrowIfCancellationRequested();
             await _engine.BeforeCollection(collection, cancellationToken);
