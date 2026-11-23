@@ -158,7 +158,8 @@ public class IndexUpgradeSchedulingTests
         var summary = logger.Messages.Single(m => m.Contains("sweep (after-deploy) done"));
         await Assert.That(summary).Contains("1 with legacy indexes the engine upgrades");
         await Assert.That(summary).Contains("2 tenant(s) with only leftovers no job can change");
-        await Assert.That(summary).Contains("model not Available 1, orphaned 2");
+        // Across all checked tenants: the orphaned index of db-b counts too, although db-b got a job.
+        await Assert.That(summary).Contains("leftover legacy indexes across all checked tenants: model not Available 1, orphaned 2");
     }
 
     [Test]

@@ -92,8 +92,10 @@ internal sealed class CkCollectionRootReader(IIndexUpgradeMongoClient client) : 
                 return (ModelState)number;
             }
         }
-        else if (value.IsString && Enum.TryParse<ModelState>(value.AsString, true, out var parsed))
+        else if (value.IsString && Enum.TryParse<ModelState>(value.AsString, true, out var parsed) &&
+                 Enum.IsDefined(parsed))
         {
+            // TryParse also accepts a numeric string such as "7" that names no member.
             return parsed;
         }
 

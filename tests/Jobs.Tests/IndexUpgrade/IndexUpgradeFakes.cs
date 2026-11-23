@@ -301,7 +301,6 @@ internal sealed class FakeTenantIndexes : ITenantIndexInspector, ICkCollectionRo
     }
 }
 
-/// <summary>A clock that stands still at <see cref="Now" /> until a test moves it.</summary>
 /// <summary>Keeps the formatted log lines with their level (AB#9322).</summary>
 internal sealed class ListLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
 {
@@ -349,6 +348,7 @@ internal sealed class ManualTimestampProvider : TimeProvider
     public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
 }
 
+/// <summary>A clock that stands still at <see cref="Now" /> until a test moves it.</summary>
 internal sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
 {
     public DateTimeOffset Now { get; set; } = now;

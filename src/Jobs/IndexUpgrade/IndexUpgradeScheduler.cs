@@ -233,8 +233,8 @@ public class IndexUpgradeSweepJob(
         logger.LogInformation(
             "Index upgrade sweep ({Trigger}) done: {TenantCount} tenant(s) checked, {DueCount} with legacy indexes the " +
             "engine upgrades, {EnqueuedCount} job(s) enqueued, {FailedCount} not checked; {LeftoversOnlyCount} tenant(s) " +
-            "with only leftovers no job can change and no job (legacy indexes: model not Available " +
-            "{ModelNotAvailableIndexCount}, orphaned {OrphanedIndexCount})",
+            "with only leftovers no job can change, no job for them; leftover legacy indexes across all checked tenants: " +
+            "model not Available {ModelNotAvailableIndexCount}, orphaned {OrphanedIndexCount}",
             trigger, tenants.Count, due, enqueued, failed, leftoversOnly, notAvailableIndexes, orphanedIndexes);
         if (failed > 0)
         {

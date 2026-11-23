@@ -194,8 +194,9 @@ Structured logs (Dash0, service `octo-bot-services`):
   `(managed {ManagedIndexes}, model not Available {ModelNotAvailableIndexes}, orphaned {OrphanedIndexes})` and the warning;
   level Warning when indexes are left. The words "model not Available" appear only for that category;
 - per sweep: `Index upgrade sweep ({Trigger}) done: … checked, … with legacy indexes the engine upgrades, … job(s)
-  enqueued, … not checked; … tenant(s) with only leftovers no job can change and no job (legacy indexes: model not
-  Available …, orphaned …)`;
+  enqueued, … not checked; … tenant(s) with only leftovers no job can change, no job for them; leftover legacy indexes
+  across all checked tenants: model not Available …, orphaned …` (the leftover counts include tenants that got a job for
+  their managed indexes);
 - at the start: `Index upgrade: Immediate schedule, …`, `Window schedule, …` or `switched off …`.
 
 ## Configuration

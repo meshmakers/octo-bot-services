@@ -147,6 +147,7 @@ public class LegacyIndexClassificationTests
     [Arguments("{ _id: 'A-1.0.0/T-1', ckModelId: 'A-1.0.0' }")]
     [Arguments("{ _id: 'A-1.0.0/T-1', ckModelId: 'A-1.0.0', modelState: 7 }")]
     [Arguments("{ _id: 'A-1.0.0/T-1', ckModelId: 'A-1.0.0', modelState: 'Gone' }")]
+    [Arguments("{ _id: 'A-1.0.0/T-1', ckModelId: 'A-1.0.0', modelState: '7' }")]
     public async Task CkTypeDocument_WithoutAKnownState_FailsTheRead_NoGuess(string json)
     {
         await Assert.That(() => CkCollectionRootReader.ToRoot(BsonDocument.Parse(json))).Throws<FormatException>();
