@@ -14,6 +14,7 @@ using Meshmakers.Octo.ConstructionKit.Models.System.Generated.System.v2;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Configuration;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb.Repositories.Entities;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb.TenantLifecycle;
 using Meshmakers.Octo.Services.Contracts.DistributionEventHub.Messages;
 using Meshmakers.Octo.Services.Methods.Operations;
@@ -96,11 +97,11 @@ public class IndexUpgradeIntegrationTests
     }
 
     [Test]
-    public async Task LegacyIndexOfACollectionTheEngineDoesNotManage_RunEndsIncomplete_TheOthersAreUpgraded()
+    public async Task LegacyIndexOfACollectionWithoutARoot_RunSucceedsWithAWarning_TheOthersAreUpgraded()
     {
-        // Local stack check 2026-11-18: collections of models that are not Available (e.g. RtEntity_SystemStreamDataArchive
-        // in a tenant without an Available StreamData model) keep their legacy indexes, because the engine upgrades only
-        // the collection roots of Available models. A collection the engine has no CK type for behaves the same.
+        // Local stack check 2026-11-18: collections the engine has no collection root for keep their legacy indexes,
+        // because the engine upgrades only the collection roots of Available models. Since AB#9322 such an orphaned
+        // collection no longer makes the run Incomplete: it ends Succeeded with a warning that names it.
         await WithTenantAsync("ixincompl", async (tenant, collection) =>
         {
             await MakeLegacyAsync(collection);
@@ -113,11 +114,55 @@ public class IndexUpgradeIntegrationTests
             await NewJob(NewStorage(), runs).UpgradeTenantAsync(tenant.TenantId, "test", null, null);
 
             var record = await runs.GetAsync(tenant.TenantId);
-            await Assert.That(record!.Status).IsEqualTo(IndexUpgradeRunStatus.Incomplete);
-            await Assert.That(record.Error).Contains("RtEntity_NotManaged.NotManaged_1");
+            await Assert.That(record!.Status).IsEqualTo(IndexUpgradeRunStatus.Succeeded);
+            await Assert.That(record.Warning).Contains("orphaned (no collection root): RtEntity_NotManaged (1 index)");
+            await Assert.That(record.Leftovers!.OrphanedCollections).IsEquivalentTo(new[] { "RtEntity_NotManaged" });
+            await Assert.That(record.Leftovers.ManagedIndexes).IsEqualTo(0);
             await Assert.That(record.LegacyIndexesAfter).IsEqualTo(1);
             await Assert.That(record.CollectionsUpgraded).Contains(collection.CollectionNamespace.CollectionName);
             await Assert.That(await DescribeAsync(collection)).Contains(i => i.Keys.SequenceEqual(TiebreakKeys));
+        });
+    }
+
+    [Test]
+    public async Task CollectionRootReader_ReadsWhatTheEngineWrote()
+    {
+        // AB#9322: the reader reads the engine's CkType collection directly (no public API names models that are not
+        // Available). Here the engine itself writes the metadata, so a change of its storage schema (collection name,
+        // field names, the representation of the model state, the collection naming) fails this test.
+        await WithTenantAsync("ixroots", async (tenant, collection) =>
+        {
+            var reader = new CkCollectionRootReader(_mongo);
+            var modelId = $"IxUpixroots-1.0.0";
+
+            var roots = await reader.GetCollectionRootsAsync(tenant.DatabaseName);
+
+            // The model's collection root names the collection the engine created, Available.
+            var root = roots.Single(r => r.ModelId == modelId);
+            await Assert.That(root.CollectionName).IsEqualTo(collection.CollectionNamespace.CollectionName);
+            await Assert.That(root.State).IsEqualTo(ModelState.Available);
+            await Assert.That(root.CkTypeId).IsEqualTo($"{modelId}/SimpleType-1");
+            // System's own collection roots are there too, all Available in a fresh tenant.
+            await Assert.That(roots).Contains(r => r.ModelId.StartsWith("System-", StringComparison.Ordinal));
+            await Assert.That(roots.All(r => r.CollectionName.StartsWith("RtEntity_", StringComparison.Ordinal))).IsTrue();
+
+            // A model in another state: the state is written with the engine's own class map (the engine has no API that
+            // moves a model to ResolveFailed on demand), so the field name and representation are the engine's.
+            var ckTypes = _mongo.GetDatabase(tenant.DatabaseName)
+                .GetCollection<CkType>(CkCollectionRootReader.CkTypeCollectionName);
+            var typeId = new CkId<CkTypeId>(root.CkTypeId);
+            var updated = await ckTypes.UpdateOneAsync(Builders<CkType>.Filter.Eq(t => t.CkTypeId, typeId),
+                Builders<CkType>.Update.Set(t => t.ModelState, ModelState.ResolveFailed));
+            await Assert.That(updated.ModifiedCount).IsEqualTo(1);
+
+            var afterUpdate = (await reader.GetCollectionRootsAsync(tenant.DatabaseName)).Single(r => r.ModelId == modelId);
+            await Assert.That(afterUpdate.State).IsEqualTo(ModelState.ResolveFailed);
+            var legacyName = await MakeLegacyAsync(collection);
+            var legacy = await Inspector().FindLegacyIndexesAsync(tenant.DatabaseName);
+            var classification = await LegacyIndexClassification.ClassifyAsync(reader, tenant.DatabaseName, legacy,
+                CancellationToken.None);
+            await Assert.That(classification.NotAvailable.Select(i => (i.Index.IndexName, i.ModelId, i.State)))
+                .Contains((legacyName, modelId, ModelState.ResolveFailed));
         });
     }
 
@@ -194,7 +239,7 @@ public class IndexUpgradeIntegrationTests
         var job2 = scheduler.Enqueue("tenant-2", "test").JobId;
 
         IIndexUpgradeJob NewFakeJob() => new IndexUpgradeJob(NullLogger<IndexUpgradeJob>.Instance, systemContext,
-            engine, coordination, new NoRunStore(), Options.Create(options));
+            engine, engine, coordination, new NoRunStore(), Options.Create(options));
 
         using (NewServer(storage, "replica-a", NewFakeJob()))
         using (NewServer(storage, "replica-b", NewFakeJob()))
@@ -254,7 +299,7 @@ public class IndexUpgradeIntegrationTests
         var jobId = scheduler.Enqueue("tenant-r", "test").JobId;
 
         IIndexUpgradeJob NewFakeJob() => new IndexUpgradeJob(NullLogger<IndexUpgradeJob>.Instance, systemContext,
-            engine, coordination, runs, Options.Create(options));
+            engine, engine, coordination, runs, Options.Create(options));
 
         using (NewServer(storage, "replica-old", NewFakeJob()))
         {
@@ -274,7 +319,7 @@ public class IndexUpgradeIntegrationTests
     }
 
     private IndexUpgradeJob NewJob(JobStorage storage, IIndexUpgradeRunStore runs) =>
-        new(NullLogger<IndexUpgradeJob>.Instance, _fixture.SystemContext, Inspector(),
+        new(NullLogger<IndexUpgradeJob>.Instance, _fixture.SystemContext, Inspector(), new CkCollectionRootReader(_mongo),
             new HangfireIndexUpgradeCoordination(() => storage), runs,
             Options.Create(new IndexUpgradeOptions
                 { Schedule = IndexUpgradeSchedule.Immediate, PollInterval = TimeSpan.FromMilliseconds(200) }));
@@ -450,7 +495,7 @@ public class IndexUpgradeIntegrationTests
     ///     The engine side of tenants with one legacy index each: the build takes <see cref="BuildTime" /> (the job's
     ///     token cancels it) and records how many builds run at the same time.
     /// </summary>
-    private sealed class SlowFakeEngine(TimeSpan buildTime) : ITenantIndexInspector
+    private sealed class SlowFakeEngine(TimeSpan buildTime) : ITenantIndexInspector, ICkCollectionRootReader
     {
         private readonly ConcurrentDictionary<string, bool> _legacy = new();
         private int _running;
@@ -520,6 +565,12 @@ public class IndexUpgradeIntegrationTests
         public Task<IReadOnlyList<(string Name, IReadOnlyList<string> Keys)>> ListIndexesAsync(string databaseName,
             string collectionName, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<(string Name, IReadOnlyList<string> Keys)>>([]);
+
+        /// <summary>RtEntity_X is the collection root of an Available model (AB#9322).</summary>
+        public Task<IReadOnlyList<CkCollectionRoot>> GetCollectionRootsAsync(string databaseName,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<CkCollectionRoot>>(
+                [new CkCollectionRoot("RtEntity_X", "X-1.0.0/X-1", "X-1.0.0", ModelState.Available)]);
 
         private static void InterlockedMax(ref int target, int value)
         {

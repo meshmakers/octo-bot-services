@@ -1,4 +1,4 @@
-# Paging index upgrade (AB#9118)
+# Paging index upgrade (AB#9118, AB#9322)
 
 Pages of runtime queries sort totally only when the CK Ascending indexes of a collection have the keys
 `{ckTypeId, attr…, _id, rtState}` (engine-mongodb AB#8960, `PagingTiebreakGate`). Indexes built by an engine before
@@ -21,17 +21,46 @@ they had before AB#8960.
 4. **Tenant and legacy indexes by their keys** (`LegacyIndexShape`): not unique, no text index, first key `ckTypeId`, an
    `rtState` key, no `_id` key. The index name is never looked at: an upgraded index may carry a hashed name
    `{Type}_{n}_id_<hash>`. No legacy index: the run ends at once (`NothingToDo`), no index is built.
+   **Category by the CK metadata** (AB#9322, see "Leftover categories" below): when none of the legacy indexes is
+   *managed*, the run ends `Succeeded` with a warning at once - the engine is not called and the tenant's
+   `index_update_lock` is not taken. If the CK metadata cannot be read, the engine runs as before.
 5. **Build**: `UpgradeTiebreakIndexesAsync` under the tenant's `index_update_lock`, collection by collection, the new
    index first, the legacy one dropped after it. The job's token stops the engine **before the next collection** (an
    index build already started finishes) when the service shuts down, the window closes, or a CK import of the tenant
    asks to go first. The window end is checked once more right before the engine is called.
-6. **Check**: one final read of the legacy indexes gives the count and the names. Left over without a cancellation means
-   `Incomplete` (warning with the list, no retry of this job; the next sweep looks again). Two causes:
-   - a model that is not `Available`: the engine does not select its collections; seen in the local check (e.g.
-     `RtEntity_SystemStreamDataArchive` in a tenant without the StreamData model in state Available). Repair the model
-     first. Such a tenant gets a job after every deploy and in every window; the run costs no index build;
-   - an index build of an `Available` model that failed: the engine logs the error and keeps the legacy index. If the
-     cause was transient, a later sweep succeeds.
+6. **Check**: one final read of the legacy indexes gives the count and the names; what is left is classified by the CK
+   metadata read again at that moment. Left over without a cancellation:
+   - *managed* indexes left (an index build of an `Available` model that failed: the engine logs the error and keeps the
+     legacy index) -> `Incomplete`, warning, the error lists only the managed indexes; no retry of this job, the next sweep
+     looks again (a transient cause then succeeds);
+   - only *model not Available* and/or *orphaned* indexes left -> `Succeeded` with a warning in the record (`Warning`,
+     `Leftovers`) and in the log (level Warning) - never a silent success;
+   - the CK metadata cannot be read -> `Incomplete` ("could not be read to tell why", the indexes listed).
+
+### Leftover categories (AB#9322)
+
+Every legacy index is counted in exactly one category, decided by the tenant's CK metadata - the collection roots
+(`IsCollectionRoot`) and the state of their models - never by the index name:
+
+| Category | Meaning | Keeps the tenant `Incomplete` | Gets a job from the sweep | Operator action |
+| --- | --- | --- | --- | --- |
+| *managed* | collection root of an `Available` model: the engine upgrades it | yes | yes | read the engine's warnings (index build failed) |
+| *model not Available* | collection root of a model in another state (`ResolveFailed`, `Importing`); the record names model id and state, e.g. `Monitoring-2.1.0 ResolveFailed` | no | no | `octo-cli LibraryStatus` of the tenant, then Fix or Update the model. A retired model without a catalog version (e.g. `Monitoring-2.1.0` on test-2 octosystem, retired 2026-09-30) stays until it is removed (AB#9525) |
+| *orphaned* | a collection without a collection root, left by an older model or a migration (e.g. `RtEntity_SystemQuery` after System 1.0.3 -> 2.0.0) | no | no | none; the collection and its indexes are not deleted |
+
+A model that becomes `Available` later (library update or Fix) turns its indexes *managed*, so the next sweep enqueues the
+tenant. A CK library update never creates legacy indexes: the engine creates missing indexes in the tiebreak shape and
+keeps an existing legacy index, so no extra sweep is needed after a model update beyond the normal one.
+
+**How the CK metadata is read** (`CkCollectionRootReader`): the engine's public CK type queries
+(`ITenantRepository.GetCkTypeAsync`) return types of `Available` models only, so a model in another state could not be
+named. The reader therefore reads the engine's CK metadata collection `CkType` of the tenant database directly (read-only;
+fields `_id`, `ckModelId`, `modelState`, `isCollectionRoot`) and derives the collection name as the engine does
+(`RtEntity_` + `ToStorageIdentifier()` of the type id). This couples bot-services to the engine's storage schema; the
+coupling is kept in that one class, and the integration test `CollectionRootReader_ReadsWhatTheEngineWrote` reads metadata
+the real engine wrote, so a schema change in the engine fails that test, not production. A document the reader cannot map
+(no or an unknown `modelState`) fails the read; the job and the sweep then fall back to the behaviour without
+classification.
 
 A run is never a failure because it cannot work now: `IndexUpgradeDeferredException` + `IndexUpgradeDeferAttribute`
 (state election filter, order 0, before `AutomaticRetry`) turn it into `Scheduled`: the job never enters `Failed`, the
@@ -53,7 +82,9 @@ never `Succeeded`.
 | `tenant-created` | `TenantManagementConsumer` on `PosCreateTenant` | a tenant was created or attached; a restore and a copy attach as well. The job is scheduled `StartDelay` later, so that the services set the tenant up (embedded CK imports) before the rebuild takes `index_update_lock`. Window schedule: only while a window is open, otherwise the next window picks the tenant up |
 
 The sweep reads the index list of every tenant (system tenant and every registry row) and enqueues a job only for a tenant
-that still has a legacy index; tenants already upgraded cost one `listIndexes` per collection and no job. A tenant whose
+that still has a *managed* legacy index (AB#9322); tenants with only *model not Available* or *orphaned* leftovers are
+counted in the sweep summary but get no job and take no `index_update_lock` (if their CK metadata cannot be read, they are
+enqueued as before and the job decides). Tenants already upgraded cost one `listIndexes` per collection and no job. A tenant whose
 index list could not be read fails the sweep after all other tenants were checked, so Hangfire retries it (a retry reads
 every tenant again; tenants whose job is still active are not enqueued twice, tenants whose job ended get a new one, which
 builds only what is left).
@@ -136,6 +167,22 @@ run that ended at the window or a lease),
 collections upgraded (only collections whose replacement index was seen), error. Status only: nothing reads it to decide
 whether to build. The status endpoint of AB#9301 reads it. A tenant that never needed a job has no record.
 
+Fields added by AB#9322 (absent in records of older versions; null when the run ended before it looked or could not
+classify):
+
+| Field | Content |
+| --- | --- |
+| `Leftovers.ManagedIndexes` | legacy indexes left of collection roots of `Available` models |
+| `Leftovers.ModelNotAvailableIndexes` | legacy indexes left of collection roots of models that are not `Available` |
+| `Leftovers.OrphanedIndexes` | legacy indexes left of collections without a collection root |
+| `Leftovers.ModelsNotAvailable` | one entry per model `{ModelId, State, IndexCount}`, e.g. `Monitoring-2.1.0`, `ResolveFailed`, 4, ordered by model id |
+| `Leftovers.OrphanedCollections` | the orphaned collection names, ordered, at most 20 |
+| `Leftovers.OrphanedCollectionsTotal` | how many orphaned collections there are (also beyond the 20 listed) |
+| `Warning` | the same leftovers as text, set whenever model not Available or orphaned indexes are left, e.g. `6 legacy index(es) are left that the job cannot upgrade; model not Available: Monitoring-2.1.0 ResolveFailed (4 indexes); orphaned (no collection root): RtEntity_SystemQuery (2 indexes)` |
+
+The names are the properties of `IndexUpgradeRunRecord` / `IndexUpgradeLeftovers`; in the stored document they follow the
+service's MongoDB naming convention. After a successful run with nothing left `Leftovers` holds zeros.
+
 Structured logs (Dash0, service `octo-bot-services`):
 
 - per collection: `Index upgrade of tenant '{TenantId}': collection '{Collection}' index '{LegacyIndexName}' {LegacyKeys}
@@ -143,8 +190,13 @@ Structured logs (Dash0, service `octo-bot-services`):
   previous observation that confirmed a replacement, shared by all collections found in the same observation (precision
   `PollInterval`);
 - per run: `Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): {CollectionsUpgraded}
-  collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}`;
-- per sweep: `Index upgrade sweep ({Trigger}) done: … checked, … with legacy indexes, … job(s) enqueued, … not checked`;
+  collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}`, when classified followed by
+  `(managed {ManagedIndexes}, model not Available {ModelNotAvailableIndexes}, orphaned {OrphanedIndexes})` and the warning;
+  level Warning when indexes are left. The words "model not Available" appear only for that category;
+- per sweep: `Index upgrade sweep ({Trigger}) done: … checked, … with legacy indexes the engine upgrades, … job(s)
+  enqueued, … not checked; … tenant(s) with only leftovers no job can change, no job for them; leftover legacy indexes
+  across all checked tenants: model not Available …, orphaned …` (the leftover counts include tenants that got a job for
+  their managed indexes);
 - at the start: `Index upgrade: Immediate schedule, …`, `Window schedule, …` or `switched off …`.
 
 ## Configuration
@@ -183,19 +235,23 @@ separate change.
 1. **Measure on staging-1** (a copy of prod-2): with `Schedule=Immediate`, after the deploy read the run records
    (`db.IndexUpgradeRuns.find()` in the system database) or the end lines in Dash0 and note the duration of the largest
    tenants. Pick `Window:MaxDuration` and `Window:Cron` so that the largest collection fits into a quiet time.
-2. **Go per cluster**: switching the window on for prod-1 or prod-2 needs the developer's go for that cluster.
-3. **Switch on**: set `OCTO_INDEXUPGRADE__WINDOW__ENABLED=true` (and `…__WINDOW__CRON`, `…__WINDOW__MAXDURATION` if not the
+2. **Check the tenants' LibraryStatus** before switching a prod window on: `octo-cli LibraryStatus` per tenant; a model that
+   is not `Available` keeps its legacy indexes (category *model not Available*) until it is fixed or updated - decide per
+   model whether to fix it first. The run records name such models after the first window.
+3. **Go per cluster**: switching the window on for prod-1 or prod-2 needs the developer's go for that cluster.
+4. **Switch on**: set `OCTO_INDEXUPGRADE__WINDOW__ENABLED=true` (and `…__WINDOW__CRON`, `…__WINDOW__MAXDURATION` if not the
    defaults) for the cluster and roll the bot service out. At the next cron time the window opens and the sweep enqueues
    every tenant with legacy indexes; they are rebuilt one after the other (`MaxConcurrent`). A tenant created or attached
    outside a window is picked up by the next window; a run that did not finish continues in the next window.
-4. **Verify**: per tenant, no CK Ascending index without `_id` is left:
+5. **Verify**: per tenant, no CK Ascending index without `_id` of a *managed* collection is left:
    `db.getCollectionNames().forEach(c => db[c].getIndexes().filter(i => !i.unique && Object.keys(i.key)[0] == "ckTypeId"
    && "rtState" in i.key && !("_id" in i.key) && !("_fts" in i.key)).forEach(i => print(c, i.name)))` prints nothing -
-   this live check decides. The run record is a hint only: a tenant that was clean already has none, and a record left
+   this live check decides (it also prints *model not Available* and *orphaned* leftovers; the run record's `leftovers`
+   tells them apart). The run record is a hint only: a tenant that was clean already has none, and a record left
    `Running` or missing after a failed status write is a bookkeeping matter (the next sweep skips a clean tenant). In the
    Hangfire dashboard (`/ui/jobs`, queue `index-upgrade`) look into failed jobs of the rollout that are not resolved; an
    older `Failed` entry whose tenant a later window completed (the index check above passes) needs nothing.
-5. **Switch off**: first stop new builds - `OCTO_INDEXUPGRADE__WINDOW__ENABLED=false` (or `OCTO_INDEXUPGRADE__MAXCONCURRENT=0`,
+6. **Switch off**: first stop new builds - `OCTO_INDEXUPGRADE__WINDOW__ENABLED=false` (or `OCTO_INDEXUPGRADE__MAXCONCURRENT=0`,
    which also stops an Immediate schedule) - and roll the bot service out: the recurring job `index-upgrade-window` is
    removed at the start, pending jobs end without a build. Deleting pending jobs in the dashboard alone does not stop the
    upgrade: the next sweep enqueues them again. A rebuild in progress finishes its current collection; the rollout stops it
@@ -206,16 +262,24 @@ separate change.
 - Unit (`tests/Jobs.Tests/IndexUpgrade`): shape by keys incl. hashed names and key order; deferral filter before
   `AutomaticRetry` and its exact deadline; options made safe; job: nothing to do, upgrade, re-run, global slot held (no
   resolve, no inspection), `MaxConcurrent` 0, tenant lease held, `index_update_lock` timeout, engine failure, legacy indexes
-  the engine does not upgrade (`Incomplete`), CK import during the upgrade (stops before the next collection, import runs,
+  the engine does not upgrade (`Incomplete`), leftovers by category (the two test-2 shapes: model not Available only and
+  orphaned only end `Succeeded` with the warning stored and logged at Warning, without the engine; managed and leftovers
+  mixed; managed left with leftovers -> `Incomplete` naming only the managed; CK metadata unreadable), CK import during
+  the upgrade (stops before the next collection, import runs, the lease proven held while the import runs),
   upgrade continues), shutdown (`Interrupted`, re-run completes), window off / closed / closing during the run; scheduler:
   two replicas receive `PosCreateTenant` -> one job, window rules, enqueue failure does not fail the consumer; sweep (two
-  overlapping sweeps, window from the occurrence, retry after the window, unreadable tenant retried); import gate (two
-  imports, configuration that cannot be read, upgrade off); start-up registration; wiring (`IndexUpgradeWiringTests`: the
-  host registrations give `ImportModelJob` its gate and `TenantManagementConsumer` its scheduler, `Program.cs` calls
-  `AddOctoIndexUpgrade`).
+  overlapping sweeps, window from the occurrence, retry after the window, unreadable tenant retried, only tenants with a
+  managed index enqueued and the others counted, a model that becomes Available enqueued by the next sweep, CK metadata
+  unreadable -> enqueued); classification (`LegacyIndexClassificationTests`: each category, two roots on one collection,
+  the cap of 20, collection naming, `CkType` document mapping); import gate (two imports, configuration that cannot be
+  read, upgrade off, an attempt started late by the thread pool waits only for the rest of `ImportWaitTimeout` or gives up
+  at once, AB#9317); start-up registration; wiring (`IndexUpgradeWiringTests`: the host registrations give
+  `ImportModelJob` its gate and `TenantManagementConsumer` its scheduler, `Program.cs` calls `AddOctoIndexUpgrade` -
+  comments do not count).
 - Integration (`tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests`, Docker): real engine clean run, re-run and a run
-  stopped after the build end in the same indexes; a legacy index in a collection the engine does not manage -> `Incomplete`,
-  the managed collection upgraded; attach of a tenant with legacy indexes -> `PosCreateTenant` -> job on a real
+  stopped after the build end in the same indexes; a legacy index in a collection without a collection root -> `Succeeded`
+  with the warning naming it, the managed collection upgraded; the collection root reader on metadata the real engine wrote
+  (collection name, `Available`, and `ResolveFailed` written with the engine's class map); attach of a tenant with legacy indexes -> `PosCreateTenant` -> job on a real
   Hangfire.Mongo storage -> new keys; two Hangfire servers on one storage with two tenants due (the first build held until
   the other job was deferred) -> never two rebuilds, the waiting job `Scheduled`, never `Failed`; a server stopped during a
   job -> `Interrupted`, another server completes it.

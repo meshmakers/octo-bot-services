@@ -92,7 +92,8 @@ public class IndexUpgradeScheduler(
 }
 
 /// <summary>
-///     Looks at every tenant and enqueues the index upgrade of each one that still has a legacy index (AB#9118): once
+///     Looks at every tenant and enqueues the index upgrade of each one that still has a legacy index of a collection
+///     root of an Available model (AB#9118, AB#9322): once
 ///     after the service start (Immediate) and when the build window opens (Window). Every replica may run it; the
 ///     per-tenant dedupe makes that harmless. Tenants already in the new shape cost one <c>listIndexes</c> per
 ///     collection, no job and no index build.
@@ -118,6 +119,7 @@ public interface IIndexUpgradeSweepJob
 public class IndexUpgradeSweepJob(
     ISystemContext systemContext,
     ITenantIndexInspector inspector,
+    ICkCollectionRootReader collectionRoots,
     IIndexUpgradeScheduler scheduler,
     IIndexUpgradeCoordination coordination,
     IOptions<IndexUpgradeOptions> options,
@@ -182,7 +184,7 @@ public class IndexUpgradeSweepJob(
             tenants.AddRange(resultSet.Items.Select(t => (t.TenantId, t.DatabaseName)));
         }
 
-        int due = 0, enqueued = 0, failed = 0;
+        int due = 0, enqueued = 0, failed = 0, leftoversOnly = 0, notAvailableIndexes = 0, orphanedIndexes = 0;
         foreach (var (tenantId, databaseName) in tenants
                      .Where(t => !string.IsNullOrWhiteSpace(t.TenantId) && !string.IsNullOrWhiteSpace(t.DatabaseName))
                      .DistinctBy(t => t.TenantId, StringComparer.OrdinalIgnoreCase))
@@ -194,6 +196,24 @@ public class IndexUpgradeSweepJob(
                 if (legacy.Count == 0)
                 {
                     continue;
+                }
+
+                // AB#9322: only a tenant with a legacy index of an Available model's collection root gets a job; leftovers
+                // no job can change are counted but take no job and no index_update_lock. A model that becomes Available
+                // later turns its indexes managed, so a later sweep picks the tenant up.
+                var classification = await TryClassifyAsync(databaseName, legacy, token);
+                if (classification != null)
+                {
+                    notAvailableIndexes += classification.NotAvailable.Count;
+                    orphanedIndexes += classification.Orphaned.Count;
+                    if (!classification.HasManaged)
+                    {
+                        leftoversOnly++;
+                        logger.LogDebug(
+                            "Index upgrade sweep ({Trigger}): tenant '{TenantId}' gets no job: {Warning}", trigger,
+                            tenantId, classification.Warning());
+                        continue;
+                    }
                 }
 
                 due++;
@@ -211,13 +231,36 @@ public class IndexUpgradeSweepJob(
         }
 
         logger.LogInformation(
-            "Index upgrade sweep ({Trigger}) done: {TenantCount} tenant(s) checked, {DueCount} with legacy indexes, " +
-            "{EnqueuedCount} job(s) enqueued, {FailedCount} not checked",
-            trigger, tenants.Count, due, enqueued, failed);
+            "Index upgrade sweep ({Trigger}) done: {TenantCount} tenant(s) checked, {DueCount} with legacy indexes the " +
+            "engine upgrades, {EnqueuedCount} job(s) enqueued, {FailedCount} not checked; {LeftoversOnlyCount} tenant(s) " +
+            "with only leftovers no job can change, no job for them; leftover legacy indexes across all checked tenants: " +
+            "model not Available {ModelNotAvailableIndexCount}, orphaned {OrphanedIndexCount}",
+            trigger, tenants.Count, due, enqueued, failed, leftoversOnly, notAvailableIndexes, orphanedIndexes);
         if (failed > 0)
         {
             throw new InvalidOperationException(
                 $"Index upgrade sweep ({trigger}): {failed} tenant(s) could not be checked; the sweep is retried.");
+        }
+    }
+
+    /// <summary>
+    ///     Classifies the legacy indexes of a tenant; null when its CK metadata cannot be read - the tenant is then
+    ///     enqueued as before, and its job decides.
+    /// </summary>
+    private async Task<LegacyIndexClassification?> TryClassifyAsync(string databaseName,
+        IReadOnlyList<LegacyIndex> legacy, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await LegacyIndexClassification.ClassifyAsync(collectionRoots, databaseName, legacy,
+                cancellationToken);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            logger.LogWarning(e,
+                "Index upgrade sweep: could not read the collection roots of database '{DatabaseName}'; the tenant is " +
+                "enqueued and its job decides", databaseName);
+            return null;
         }
     }
 }

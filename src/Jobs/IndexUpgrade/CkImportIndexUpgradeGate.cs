@@ -57,11 +57,7 @@ public class CkImportIndexUpgradeGate(
                 var budget = settings.ImportWaitTimeout - _time.GetElapsedTime(started);
                 if (budget <= TimeSpan.Zero)
                 {
-                    logger.LogWarning(
-                        "CK import of tenant '{TenantId}' stopped waiting for the index upgrade after {Timeout}; it runs now " +
-                        "and waits for the tenant's index_update_lock in the engine",
-                        tenantId, settings.ImportWaitTimeout);
-                    Clear(tenantId, requestId);
+                    GiveUp(tenantId, requestId, settings.ImportWaitTimeout);
                     return NoHold.Instance;
                 }
 
@@ -70,16 +66,29 @@ public class CkImportIndexUpgradeGate(
                 if (budget < MinimumAttempt)
                 {
                     // An attempt would take at least the storage's minimum lock wait and overrun the budget.
-                    logger.LogWarning(
-                        "CK import of tenant '{TenantId}' stopped waiting for the index upgrade after {Timeout}; it runs now " +
-                        "and waits for the tenant's index_update_lock in the engine",
-                        tenantId, settings.ImportWaitTimeout);
-                    Clear(tenantId, requestId);
+                    GiveUp(tenantId, requestId, settings.ImportWaitTimeout);
                     return NoHold.Instance;
                 }
 
-                var attempt = budget < AttemptTimeout ? budget : AttemptTimeout;
-                var lease = await Task.Run(() => coordination.TryAcquireTenant(tenantId, attempt), cancellationToken);
+                var (lease, exhausted) = await RunAttempt(() =>
+                {
+                    // AB#9317: the thread pool may start this delegate late; the budget is re-computed here, so an
+                    // attempt never runs on time that is already used up.
+                    var remaining = settings.ImportWaitTimeout - _time.GetElapsedTime(started);
+                    if (remaining < MinimumAttempt)
+                    {
+                        return (null, true);
+                    }
+
+                    return (coordination.TryAcquireTenant(tenantId,
+                        remaining < AttemptTimeout ? remaining : AttemptTimeout), false);
+                }, cancellationToken);
+                if (exhausted)
+                {
+                    GiveUp(tenantId, requestId, settings.ImportWaitTimeout);
+                    return NoHold.Instance;
+                }
+
                 if (lease != null)
                 {
                     if (cancellationToken.IsCancellationRequested)
@@ -122,6 +131,23 @@ public class CkImportIndexUpgradeGate(
             Clear(tenantId, requestId);
             return NoHold.Instance;
         }
+    }
+
+    /// <summary>
+    ///     Runs one lease attempt aside (the storage call blocks). Tests replace it to start the attempt late, as a busy
+    ///     thread pool does (AB#9317).
+    /// </summary>
+    internal Func<Func<(IDisposable? Lease, bool Exhausted)>, CancellationToken,
+        Task<(IDisposable? Lease, bool Exhausted)>> RunAttempt { get; set; } =
+        (attempt, cancellationToken) => Task.Run(attempt, cancellationToken);
+
+    private void GiveUp(string tenantId, string requestId, TimeSpan timeout)
+    {
+        logger.LogWarning(
+            "CK import of tenant '{TenantId}' stopped waiting for the index upgrade after {Timeout}; it runs now " +
+            "and waits for the tenant's index_update_lock in the engine",
+            tenantId, timeout);
+        Clear(tenantId, requestId);
     }
 
     private void Clear(string tenantId, string requestId)

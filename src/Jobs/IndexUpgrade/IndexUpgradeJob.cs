@@ -16,7 +16,8 @@ namespace Meshmakers.Octo.Backend.Jobs.IndexUpgrade;
 ///     Order of the checks, each before anything is built: switched off (<c>MaxConcurrent</c> 0), build window (Window
 ///     schedule), a global slot
 ///     (<see cref="IndexUpgradeOptions.MaxConcurrent" /> across all replicas), no CK import of the tenant asking to go
-///     first, the tenant lease, the tenant context, the legacy indexes by their keys (none: done). Then the engine
+///     first, the tenant lease, the tenant context, the legacy indexes by their keys (none: done), their category by the
+///     tenant's CK metadata (none of an Available model's collection root: done, with a warning, AB#9322). Then the engine
 ///     upgrades collection by collection under the tenant's <c>index_update_lock</c>; the job's token stops it before the
 ///     next collection when the service shuts down, the window closes or a CK import of the tenant asks to go first.
 /// </remarks>
@@ -24,6 +25,7 @@ public class IndexUpgradeJob(
     ILogger<IndexUpgradeJob> logger,
     ISystemContext systemContext,
     ITenantIndexInspector inspector,
+    ICkCollectionRootReader collectionRoots,
     IIndexUpgradeCoordination coordination,
     IIndexUpgradeRunStore runStore,
     IOptions<IndexUpgradeOptions> options,
@@ -121,6 +123,18 @@ public class IndexUpgradeJob(
             return;
         }
 
+        // AB#9322: the engine upgrades only collection roots of Available models. When nothing is for the engine, the
+        // run ends without calling it (and without taking the tenant's index_update_lock); the leftovers are named.
+        // If the CK metadata cannot be read, the engine runs as before and the classification after it decides.
+        var beforeClassification = await TryClassifyAsync(tenantContext.DatabaseName, before, shutdown);
+        if (beforeClassification is { HasManaged: false })
+        {
+            record.Leftovers = beforeClassification.ToRecord();
+            record.Warning = beforeClassification.Warning();
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, before.Count, LogLevel.Warning);
+            return;
+        }
+
         logger.LogInformation(
             "Index upgrade of tenant '{TenantId}' started ({Trigger}): {LegacyIndexCount} legacy index(es) in " +
             "{CollectionCount} collection(s) of database '{DatabaseName}'",
@@ -137,7 +151,9 @@ public class IndexUpgradeJob(
             return;
         }
 
-        var progress = new IndexUpgradeProgress(inspector, logger, tenantId, tenantContext.DatabaseName, before, _time);
+        // The progress log follows what the engine works on; leftovers it never touches would stay "pending".
+        var progress = new IndexUpgradeProgress(inspector, logger, tenantId, tenantContext.DatabaseName,
+            beforeClassification?.Managed ?? before, _time);
         // The window has its own token: whether it closed is read from the timer, not compared with the clock, so a timer
         // that fires a few milliseconds early still counts as the window closing.
         var untilClose = windowClosesAt == null ? Timeout.InfiniteTimeSpan : windowClosesAt.Value - Now();
@@ -243,19 +259,63 @@ public class IndexUpgradeJob(
             return;
         }
 
-        if (left.Count > 0)
+        if (left.Count == 0)
         {
-            // The engine upgrades only the collections of models that are Available, and it logs (does not throw) an
-            // index it cannot build. A retry of this job changes neither; the next sweep looks again. Found in the local
-            // stack check: collections of models that are not Available keep their legacy indexes.
-            var message = $"{left.Count} legacy index(es) are left that the engine did not upgrade (model not " +
-                          "Available, or the index build failed - see the engine's warnings): " +
-                          string.Join(", ", left.Select(i => $"{i.CollectionName}.{i.IndexName}"));
+            record.Leftovers = new IndexUpgradeLeftovers();
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, 0);
+            return;
+        }
+
+        // AB#9322: classify what is left by the CK metadata read now (a model may have changed state during the run).
+        var leftClassification = await TryClassifyAsync(tenantContext.DatabaseName, left, CancellationToken.None,
+            BookkeepingTimeout);
+        if (leftClassification == null)
+        {
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete,
+                $"{left.Count} legacy index(es) are left, and the tenant's CK metadata could not be read to tell why: " +
+                IndexNames(left), leftCount, LogLevel.Warning);
+            return;
+        }
+
+        record.Leftovers = leftClassification.ToRecord();
+        record.Warning = leftClassification.Warning();
+        if (leftClassification.HasManaged)
+        {
+            // The engine logs (does not throw) an index it cannot build; a retry of this job changes nothing, the next
+            // sweep looks again.
+            var message = $"{leftClassification.Managed.Count} legacy index(es) of collections the engine manages " +
+                          "(collection roots of Available models) are left; the index build failed - see the engine's " +
+                          "warnings: " + IndexNames(leftClassification.Managed);
             await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete, message, leftCount, LogLevel.Warning);
             return;
         }
 
-        await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, 0);
+        // Only leftovers no run can change: a success, never a silent one (warning in the record and the log).
+        await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, leftCount, LogLevel.Warning);
+    }
+
+    private static string IndexNames(IEnumerable<LegacyIndex> indexes) =>
+        string.Join(", ", indexes.Select(i => $"{i.CollectionName}.{i.IndexName}"));
+
+    /// <summary>Classifies <paramref name="legacy" /> by the tenant's CK metadata; null when it cannot be read.</summary>
+    private async Task<LegacyIndexClassification?> TryClassifyAsync(string databaseName,
+        IReadOnlyList<LegacyIndex> legacy, CancellationToken cancellationToken, TimeSpan? timeout = null)
+    {
+        try
+        {
+            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (timeout != null)
+            {
+                bounded.CancelAfter(timeout.Value);
+            }
+
+            return await LegacyIndexClassification.ClassifyAsync(collectionRoots, databaseName, legacy, bounded.Token);
+        }
+        catch (Exception e) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(e, "Could not read the collection roots of database '{DatabaseName}'", databaseName);
+            return null;
+        }
     }
 
     private async Task WatchYieldAsync(string tenantId, TimeSpan interval, Action yield,
@@ -360,7 +420,23 @@ public class IndexUpgradeJob(
         record.LegacyIndexesAfter = legacyLeft;
         await SaveAsync(record);
 
-        logger.Log(level ?? (status == IndexUpgradeRunStatus.Failed ? LogLevel.Error : LogLevel.Information),
+        var logLevel = level ?? (status == IndexUpgradeRunStatus.Failed ? LogLevel.Error : LogLevel.Information);
+        if (record.Leftovers is { } leftovers)
+        {
+            // AB#9322: the same counts as the record; "model not Available" only names that category.
+            logger.Log(logLevel,
+                "Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): " +
+                "{CollectionsUpgraded} collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter} " +
+                "(managed {ManagedIndexes}, model not Available {ModelNotAvailableIndexes}, orphaned {OrphanedIndexes})" +
+                "{Reason}{Warning}",
+                record.TenantId, status, record.DurationMs, record.Trigger, record.CollectionsUpgraded.Count,
+                record.LegacyIndexesBefore, legacyLeft, leftovers.ManagedIndexes, leftovers.ModelNotAvailableIndexes,
+                leftovers.OrphanedIndexes, error == null ? "" : ": " + error,
+                record.Warning == null ? "" : ". Warning: " + record.Warning);
+            return;
+        }
+
+        logger.Log(logLevel,
             "Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): " +
             "{CollectionsUpgraded} collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}" +
             "{Reason}",

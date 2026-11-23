@@ -122,6 +122,7 @@ public static class ServiceCollectionExtensions
             .PostConfigure(options => options.Normalize());
         services.AddSingleton<IIndexUpgradeMongoClient, IndexUpgradeMongoClient>();
         services.AddSingleton<ITenantIndexInspector, TenantIndexInspector>();
+        services.AddSingleton<ICkCollectionRootReader, CkCollectionRootReader>();
         services.AddSingleton<IIndexUpgradeRunStore, MongoIndexUpgradeRunStore>();
         services.AddSingleton<IIndexUpgradeCoordination>(_ => new HangfireIndexUpgradeCoordination());
         services.AddTransient<IIndexUpgradeScheduler, IndexUpgradeScheduler>();

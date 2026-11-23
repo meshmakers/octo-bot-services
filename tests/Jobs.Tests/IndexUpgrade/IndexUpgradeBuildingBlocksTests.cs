@@ -146,6 +146,58 @@ public class IndexUpgradeBuildingBlocksTests
     }
 
     [Test]
+    public async Task ImportGate_AttemptStartsAfterTheBudget_GivesUpWithoutWaiting()
+    {
+        // AB#9317: the thread pool starts the attempt only after the whole budget is used up.
+        var clock = new ManualTimestampProvider();
+        var coordination = Substitute.For<IIndexUpgradeCoordination>();
+        var gate = NewGate(coordination, TimeSpan.FromSeconds(10), clock);
+        var attempts = 0;
+        gate.RunAttempt = (attempt, _) =>
+        {
+            attempts++;
+            clock.Advance(TimeSpan.FromSeconds(11));
+            return Task.FromResult(attempt());
+        };
+
+        using var held = await gate.EnterAsync("t1", CancellationToken.None);
+
+        await Assert.That(attempts).IsEqualTo(1);
+        coordination.DidNotReceiveWithAnyArgs().TryAcquireTenant(default!, default);
+        coordination.Received(1).ClearYield("t1", Arg.Any<string>());
+    }
+
+    [Test]
+    public async Task ImportGate_AttemptStartsLate_WaitsOnlyForTheRestOfTheBudget()
+    {
+        // AB#9317: every attempt starts 7 s late; it may wait only what is left of the 10 s budget, never longer.
+        var clock = new ManualTimestampProvider();
+        var timeout = TimeSpan.FromSeconds(10);
+        var waits = new List<(TimeSpan Elapsed, TimeSpan Wait)>();
+        var coordination = Substitute.For<IIndexUpgradeCoordination>();
+        coordination.TryAcquireTenant("t1", Arg.Any<TimeSpan>()).Returns(call =>
+        {
+            var wait = call.ArgAt<TimeSpan>(1);
+            waits.Add((clock.Elapsed, wait));
+            clock.Advance(wait); // the storage waits the whole attempt and finds the tenant held
+            return null;
+        });
+        var gate = NewGate(coordination, timeout, clock);
+        gate.RunAttempt = (attempt, _) =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(7));
+            return Task.FromResult(attempt());
+        };
+
+        using var held = await gate.EnterAsync("t1", CancellationToken.None);
+
+        await Assert.That(waits.Count).IsEqualTo(1);
+        await Assert.That(waits[0].Wait).IsEqualTo(TimeSpan.FromSeconds(3));
+        await Assert.That(waits.All(w => w.Elapsed + w.Wait <= timeout)).IsTrue();
+        coordination.Received(1).ClearYield("t1", Arg.Any<string>());
+    }
+
+    [Test]
     public async Task ImportGate_CoordinationFailure_LetsTheImportRun()
     {
         var coordination = Substitute.For<IIndexUpgradeCoordination>();
@@ -368,12 +420,12 @@ public class IndexUpgradeBuildingBlocksTests
     }
 
     private static CkImportIndexUpgradeGate NewGate(IIndexUpgradeCoordination coordination,
-        TimeSpan? waitTimeout = null) =>
+        TimeSpan? waitTimeout = null, TimeProvider? timeProvider = null) =>
         new(coordination,
             Options.Create(new IndexUpgradeOptions
             {
                 Schedule = IndexUpgradeSchedule.Immediate, ImportWaitTimeout = waitTimeout ?? TimeSpan.FromMinutes(5)
-            }), NullLogger<CkImportIndexUpgradeGate>.Instance);
+            }), NullLogger<CkImportIndexUpgradeGate>.Instance, timeProvider);
 
     private static IState Elect(IState candidate)
     {
