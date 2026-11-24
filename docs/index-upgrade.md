@@ -194,7 +194,7 @@ change of a log level. **Alert rules that count warnings of `octo-bot-services` 
 | --- | --- | --- | --- |
 | `IndexUpgrade run started:` | 970901 | a sweep (after-deploy or window) starts looking at the tenants | trigger |
 | `IndexUpgrade run ended:` | 970902 | the sweep ends | result, trigger, duration, tenant count, tenants due, jobs enqueued, tenants not checked, leftover counts |
-| `IndexUpgrade tenant ended:` | 970903 | a tenant job ends without a retry following | result, tenant, status, trigger, duration, collections upgraded, legacy indexes before and after, leftover counts, reason |
+| `IndexUpgrade tenant ended:` | 970903 | a tenant job ends without a deferral retry (a `Failed` run logs one per Hangfire attempt) | result, tenant, status, trigger, duration, collections upgraded, legacy indexes before and after, leftover counts, reason |
 
 Result: `Completed`, `Incomplete` or `Failed`.
 
@@ -207,9 +207,10 @@ Result: `Completed`, `Incomplete` or `Failed`.
   tenant event; they keep their Debug or Information lines. A job for a tenant that no longer exists logs only an
   Information line.
 
-Index and collection names never appear at Warning: the legacy indexes left are logged at Information
-(`Index upgrade of tenant '{TenantId}': legacy indexes left: …`) and kept in the record's `Error`. The per-tenant start
-line stays at Information. Dash0 query: body starts with `IndexUpgrade run` or `IndexUpgrade tenant ended:`, service
+Index names never appear at Warning: the legacy indexes left are logged at Information
+(`Index upgrade of tenant '{TenantId}': legacy indexes left: …`) and kept in the record's `Error`. The leftover warning of
+AB#9322 stays in the tenant end line: it names the models that are not `Available` and up to 20 orphaned collections, with
+their index counts (one summary per run, not one line per index). The per-tenant start line stays at Information. Dash0 query: body starts with `IndexUpgrade run` or `IndexUpgrade tenant ended:`, service
 `octo-bot-services`.
 
 ### Other log lines

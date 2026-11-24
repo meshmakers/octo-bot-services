@@ -21,7 +21,8 @@ public enum IndexUpgradeRunResult
 ///     every cluster), so these informational events are logged at <see cref="LogLevel.Warning" />
 ///     (<see cref="LogLevel.Error" /> for <see cref="IndexUpgradeRunResult.Failed" />) to reach Dash0 without changing a
 ///     log level. Every message starts with a fixed prefix, so a Dash0 query can find them by the body text; alert rules
-///     that count warnings should exclude these prefixes. Per-index and per-collection details stay below Warning.
+///     that count warnings should exclude these prefixes. Index names stay below Warning; the end line keeps the
+///     AB#9322 leftover summary (models not Available, orphaned collections, with counts).
 /// </summary>
 public static class IndexUpgradeRunEvents
 {

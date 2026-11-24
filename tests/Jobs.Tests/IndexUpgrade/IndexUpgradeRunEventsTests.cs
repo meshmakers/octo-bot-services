@@ -114,6 +114,56 @@ public class IndexUpgradeRunEventsTests
     }
 
     [Test]
+    public async Task TenantJob_InterruptedByShutdown_EmitsNoEndEvent()
+    {
+        // Hangfire runs the job again after the restart; only that run's end is the event.
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        using var shutdown = new CancellationTokenSource();
+        _tenant.UpgradeTiebreakIndexesAsync(Arg.Any<IOctoAdminSession>(), Arg.Any<CancellationToken>())
+            .Returns<Task>(_ =>
+            {
+                shutdown.Cancel();
+                throw new OperationCanceledException(shutdown.Token);
+            });
+        var token = Substitute.For<IJobCancellationToken>();
+        token.ShutdownToken.Returns(shutdown.Token);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => Job().UpgradeTenantAsync(TenantId, "test", token, null));
+
+        await Assert.That(_jobLog.Events.Where(e => e.EventId == IndexUpgradeRunEvents.TenantEnded.Id)).IsEmpty();
+        await Assert.That(_jobLog.Entries.Where(e => e.Level >= LogLevel.Warning)).IsEmpty();
+    }
+
+    [Test]
+    public async Task TenantJob_SwitchedOff_EndsTheJob_EmitsIncompleteAtWarning()
+    {
+        // MaxConcurrent 0 ends the job without a retry: the job's end is visible.
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        _options.MaxConcurrent = 0;
+
+        await Job().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        var end = await SingleTenantEndAsync(LogLevel.Warning);
+        await Assert.That(end).StartsWith("IndexUpgrade tenant ended: Incomplete, ");
+        await Assert.That(end).Contains("ended Deferred");
+    }
+
+    [Test]
+    public async Task TenantJob_WindowClosed_EndsTheJob_EmitsIncompleteAtWarning()
+    {
+        _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
+        _options.Schedule = IndexUpgradeSchedule.Window;
+        _options.Window.Enabled = true;
+        _coordination.WindowClosesAt = DateTime.UtcNow.AddMinutes(-1);
+
+        await Job().UpgradeTenantAsync(TenantId, "test", null, null);
+
+        var end = await SingleTenantEndAsync(LogLevel.Warning);
+        await Assert.That(end).StartsWith("IndexUpgrade tenant ended: Incomplete, ");
+        await Assert.That(end).Contains("window is closed");
+    }
+
+    [Test]
     public async Task TenantJob_StartLine_StaysBelowWarning()
     {
         _indexes.AddLegacy(DatabaseName, "RtEntity_A", "A_1", "attributes.name");
