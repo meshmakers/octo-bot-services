@@ -1,5 +1,6 @@
 using Hangfire;
 using Hangfire.Server;
+using System.Diagnostics;
 using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -174,68 +175,91 @@ public class IndexUpgradeSweepJob(
             return;
         }
 
-        var tenants = new List<(string TenantId, string DatabaseName)>
-        {
-            (systemContext.TenantId, systemContext.DatabaseName)
-        };
-        using (var adminSession = await systemContext.GetAdminSessionAsync())
-        {
-            var resultSet = await systemContext.GetAllTenantsAsync(adminSession);
-            tenants.AddRange(resultSet.Items.Select(t => (t.TenantId, t.DatabaseName)));
-        }
-
+        // AB#9709: the run events reach Dash0 at the shipped level (Warn); see IndexUpgradeRunEvents.
+        logger.LogWarning(IndexUpgradeRunEvents.RunStarted,
+            IndexUpgradeRunEvents.RunStartedPrefix + " sweep ({Trigger}) looks at every tenant", trigger);
+        var clock = Stopwatch.StartNew();
+        var tenantCount = 0;
         int due = 0, enqueued = 0, failed = 0, leftoversOnly = 0, notAvailableIndexes = 0, orphanedIndexes = 0;
-        foreach (var (tenantId, databaseName) in tenants
-                     .Where(t => !string.IsNullOrWhiteSpace(t.TenantId) && !string.IsNullOrWhiteSpace(t.DatabaseName))
-                     .DistinctBy(t => t.TenantId, StringComparer.OrdinalIgnoreCase))
+        try
         {
-            token.ThrowIfCancellationRequested();
-            try
+            var tenants = new List<(string TenantId, string DatabaseName)>
             {
-                var legacy = await inspector.FindLegacyIndexesAsync(databaseName, null, token);
-                if (legacy.Count == 0)
-                {
-                    continue;
-                }
+                (systemContext.TenantId, systemContext.DatabaseName)
+            };
+            using (var adminSession = await systemContext.GetAdminSessionAsync())
+            {
+                var resultSet = await systemContext.GetAllTenantsAsync(adminSession);
+                tenants.AddRange(resultSet.Items.Select(t => (t.TenantId, t.DatabaseName)));
+            }
 
-                // AB#9322: only a tenant with a legacy index of an Available model's collection root gets a job; leftovers
-                // no job can change are counted but take no job and no index_update_lock. A model that becomes Available
-                // later turns its indexes managed, so a later sweep picks the tenant up.
-                var classification = await TryClassifyAsync(databaseName, legacy, token);
-                if (classification != null)
+            tenantCount = tenants.Count;
+            foreach (var (tenantId, databaseName) in tenants
+                         .Where(t => !string.IsNullOrWhiteSpace(t.TenantId) && !string.IsNullOrWhiteSpace(t.DatabaseName))
+                         .DistinctBy(t => t.TenantId, StringComparer.OrdinalIgnoreCase))
+            {
+                token.ThrowIfCancellationRequested();
+                try
                 {
-                    notAvailableIndexes += classification.NotAvailable.Count;
-                    orphanedIndexes += classification.Orphaned.Count;
-                    if (!classification.HasManaged)
+                    var legacy = await inspector.FindLegacyIndexesAsync(databaseName, null, token);
+                    if (legacy.Count == 0)
                     {
-                        leftoversOnly++;
-                        logger.LogDebug(
-                            "Index upgrade sweep ({Trigger}): tenant '{TenantId}' gets no job: {Warning}", trigger,
-                            tenantId, classification.Warning());
                         continue;
                     }
-                }
 
-                due++;
-                if (scheduler.Enqueue(tenantId, trigger).Created)
-                {
-                    enqueued++;
+                    // AB#9322: only a tenant with a legacy index of an Available model's collection root gets a job;
+                    // leftovers no job can change are counted but take no job and no index_update_lock. A model that
+                    // becomes Available later turns its indexes managed, so a later sweep picks the tenant up.
+                    var classification = await TryClassifyAsync(databaseName, legacy, token);
+                    if (classification != null)
+                    {
+                        notAvailableIndexes += classification.NotAvailable.Count;
+                        orphanedIndexes += classification.Orphaned.Count;
+                        if (!classification.HasManaged)
+                        {
+                            leftoversOnly++;
+                            logger.LogDebug(
+                                "Index upgrade sweep ({Trigger}): tenant '{TenantId}' gets no job: {Warning}", trigger,
+                                tenantId, classification.Warning());
+                            continue;
+                        }
+                    }
+
+                    due++;
+                    if (scheduler.Enqueue(tenantId, trigger).Created)
+                    {
+                        enqueued++;
+                    }
                 }
-            }
-            catch (Exception e) when (e is not OperationCanceledException)
-            {
-                failed++;
-                logger.LogWarning(e, "Index upgrade sweep ({Trigger}): could not check tenant '{TenantId}'", trigger,
-                    tenantId);
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    failed++;
+                    logger.LogWarning(e, "Index upgrade sweep ({Trigger}): could not check tenant '{TenantId}'", trigger,
+                        tenantId);
+                }
             }
         }
+        catch (Exception e)
+        {
+            // The service stopped (Hangfire runs the sweep again) or the tenant list could not be read.
+            var result = e is OperationCanceledException ? IndexUpgradeRunResult.Incomplete : IndexUpgradeRunResult.Failed;
+            logger.Log(IndexUpgradeRunEvents.EndLevel(result), IndexUpgradeRunEvents.RunEnded, e,
+                IndexUpgradeRunEvents.RunEndedPrefix + " {Result}, sweep ({Trigger}) after {DurationMs} ms: " +
+                "{TenantCount} tenant(s), {DueCount} with legacy indexes the engine upgrades, {EnqueuedCount} job(s) " +
+                "enqueued before it stopped: {Reason}",
+                result, trigger, (long)clock.Elapsed.TotalMilliseconds, tenantCount, due, enqueued, e.Message);
+            throw;
+        }
 
-        logger.LogInformation(
-            "Index upgrade sweep ({Trigger}) done: {TenantCount} tenant(s) checked, {DueCount} with legacy indexes the " +
-            "engine upgrades, {EnqueuedCount} job(s) enqueued, {FailedCount} not checked; {LeftoversOnlyCount} tenant(s) " +
-            "with only leftovers no job can change, no job for them; leftover legacy indexes across all checked tenants: " +
-            "model not Available {ModelNotAvailableIndexCount}, orphaned {OrphanedIndexCount}",
-            trigger, tenants.Count, due, enqueued, failed, leftoversOnly, notAvailableIndexes, orphanedIndexes);
+        var endResult = failed > 0 ? IndexUpgradeRunResult.Incomplete : IndexUpgradeRunResult.Completed;
+        logger.Log(IndexUpgradeRunEvents.EndLevel(endResult), IndexUpgradeRunEvents.RunEnded,
+            IndexUpgradeRunEvents.RunEndedPrefix + " {Result}, sweep ({Trigger}) done after {DurationMs} ms: " +
+            "{TenantCount} tenant(s) checked, {DueCount} with legacy indexes the engine upgrades, {EnqueuedCount} job(s) " +
+            "enqueued, {FailedCount} not checked; {LeftoversOnlyCount} tenant(s) with only leftovers no job can change, " +
+            "no job for them; leftover legacy indexes across all checked tenants: model not Available " +
+            "{ModelNotAvailableIndexCount}, orphaned {OrphanedIndexCount}",
+            endResult, trigger, (long)clock.Elapsed.TotalMilliseconds, tenantCount, due, enqueued, failed,
+            leftoversOnly, notAvailableIndexes, orphanedIndexes);
         if (failed > 0)
         {
             throw new InvalidOperationException(

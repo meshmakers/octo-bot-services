@@ -131,7 +131,7 @@ public class IndexUpgradeJob(
         {
             record.Leftovers = beforeClassification.ToRecord();
             record.Warning = beforeClassification.Warning();
-            await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, before.Count, LogLevel.Warning);
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, before.Count);
             return;
         }
 
@@ -210,7 +210,7 @@ public class IndexUpgradeJob(
             if (shutdown.IsCancellationRequested)
             {
                 await EndAsync(record, clock, IndexUpgradeRunStatus.Interrupted,
-                    "The service stopped; Hangfire runs the job again.", leftCount);
+                    "The service stopped; Hangfire runs the job again.", leftCount, jobEnds: false);
                 ExceptionDispatchInfo.Capture(failure).Throw();
                 return;
             }
@@ -254,8 +254,7 @@ public class IndexUpgradeJob(
             // The engine returned normally, but what is left could not be read: not verified, so not a success. The next
             // sweep looks again.
             await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete,
-                "The engine finished, but the legacy indexes left could not be read; the result is not verified.", null,
-                LogLevel.Warning);
+                "The engine finished, but the legacy indexes left could not be read; the result is not verified.", null);
             return;
         }
 
@@ -272,8 +271,8 @@ public class IndexUpgradeJob(
         if (leftClassification == null)
         {
             await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete,
-                $"{left.Count} legacy index(es) are left, and the tenant's CK metadata could not be read to tell why: " +
-                IndexNames(left), leftCount, LogLevel.Warning);
+                $"{left.Count} legacy index(es) are left, and the tenant's CK metadata could not be read to tell why",
+                leftCount, indexNames: IndexNames(left));
             return;
         }
 
@@ -285,13 +284,14 @@ public class IndexUpgradeJob(
             // sweep looks again.
             var message = $"{leftClassification.Managed.Count} legacy index(es) of collections the engine manages " +
                           "(collection roots of Available models) are left; the index build failed - see the engine's " +
-                          "warnings: " + IndexNames(leftClassification.Managed);
-            await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete, message, leftCount, LogLevel.Warning);
+                          "warnings";
+            await EndAsync(record, clock, IndexUpgradeRunStatus.Incomplete, message, leftCount,
+                indexNames: IndexNames(leftClassification.Managed));
             return;
         }
 
         // Only leftovers no run can change: a success, never a silent one (warning in the record and the log).
-        await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, leftCount, LogLevel.Warning);
+        await EndAsync(record, clock, IndexUpgradeRunStatus.Succeeded, null, leftCount);
     }
 
     private static string IndexNames(IEnumerable<LegacyIndex> indexes) =>
@@ -405,44 +405,83 @@ public class IndexUpgradeJob(
     private async Task DeferAsync(IndexUpgradeRunRecord record, Stopwatch clock, int? legacyLeft, string reason,
         TimeSpan delay, LogLevel level = LogLevel.Information)
     {
-        await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred, reason, legacyLeft, level);
+        await EndAsync(record, clock, IndexUpgradeRunStatus.Deferred, reason, legacyLeft, level, jobEnds: false);
         throw new IndexUpgradeDeferredException(
             $"Index upgrade of tenant '{record.TenantId}' deferred: {reason}; next try in {delay}", delay);
     }
 
+    /// <summary>
+    ///     Records and logs the end of the run. When the job ends here (<paramref name="jobEnds" />: no retry follows), the
+    ///     line is the tenant end event of AB#9709 (<see cref="IndexUpgradeRunEvents.TenantEnded" />, at the shipped level);
+    ///     a deferral that Hangfire retries and an interruption keep <paramref name="level" />. <paramref name="indexNames" />
+    ///     go into the record's error after <paramref name="error" />, and into the log only at Information.
+    /// </summary>
     private async Task EndAsync(IndexUpgradeRunRecord record, Stopwatch clock, IndexUpgradeRunStatus status,
-        string? error, int? legacyLeft, LogLevel? level = null)
+        string? error, int? legacyLeft, LogLevel? level = null, bool jobEnds = true, string? indexNames = null)
     {
         record.Status = status;
-        record.Error = error;
+        record.Error = indexNames == null ? error : $"{error}: {indexNames}";
         record.EndedAt = Now();
         record.DurationMs = (long)clock.Elapsed.TotalMilliseconds;
         record.LegacyIndexesAfter = legacyLeft;
         await SaveAsync(record);
 
-        var logLevel = level ?? (status == IndexUpgradeRunStatus.Failed ? LogLevel.Error : LogLevel.Information);
+        if (indexNames != null)
+        {
+            // AB#9709: per-index details stay below the shipped level; the record keeps them as well.
+            logger.LogInformation("Index upgrade of tenant '{TenantId}': legacy indexes left: {IndexNames}",
+                record.TenantId, indexNames);
+        }
+
+        var result = jobEnds ? IndexUpgradeRunEvents.ResultOf(status) : null;
+        var logLevel = result is { } r
+            ? IndexUpgradeRunEvents.EndLevel(r)
+            : level ?? (status == IndexUpgradeRunStatus.Failed ? LogLevel.Error : LogLevel.Information);
+        var reason = error == null ? "" : ": " + error;
         if (record.Leftovers is { } leftovers)
         {
             // AB#9322: the same counts as the record; "model not Available" only names that category.
-            logger.Log(logLevel,
-                "Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): " +
-                "{CollectionsUpgraded} collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter} " +
-                "(managed {ManagedIndexes}, model not Available {ModelNotAvailableIndexes}, orphaned {OrphanedIndexes})" +
-                "{Reason}{Warning}",
+            var warning = record.Warning == null ? "" : ". Warning: " + record.Warning;
+            if (result is { } endResult)
+            {
+                logger.Log(logLevel, IndexUpgradeRunEvents.TenantEnded,
+                    TenantEndedTemplate + EndedTemplate + LeftoversTemplate,
+                    endResult, record.TenantId, status, record.DurationMs, record.Trigger,
+                    record.CollectionsUpgraded.Count, record.LegacyIndexesBefore, legacyLeft, leftovers.ManagedIndexes,
+                    leftovers.ModelNotAvailableIndexes, leftovers.OrphanedIndexes, reason, warning);
+                return;
+            }
+
+            logger.Log(logLevel, EndedTemplate + LeftoversTemplate,
                 record.TenantId, status, record.DurationMs, record.Trigger, record.CollectionsUpgraded.Count,
                 record.LegacyIndexesBefore, legacyLeft, leftovers.ManagedIndexes, leftovers.ModelNotAvailableIndexes,
-                leftovers.OrphanedIndexes, error == null ? "" : ": " + error,
-                record.Warning == null ? "" : ". Warning: " + record.Warning);
+                leftovers.OrphanedIndexes, reason, warning);
             return;
         }
 
-        logger.Log(logLevel,
-            "Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): " +
-            "{CollectionsUpgraded} collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}" +
-            "{Reason}",
+        if (result is { } plainResult)
+        {
+            logger.Log(logLevel, IndexUpgradeRunEvents.TenantEnded, TenantEndedTemplate + EndedTemplate + "{Reason}",
+                plainResult, record.TenantId, status, record.DurationMs, record.Trigger,
+                record.CollectionsUpgraded.Count, record.LegacyIndexesBefore, legacyLeft, reason);
+            return;
+        }
+
+        logger.Log(logLevel, EndedTemplate + "{Reason}",
             record.TenantId, status, record.DurationMs, record.Trigger, record.CollectionsUpgraded.Count,
-            record.LegacyIndexesBefore, legacyLeft, error == null ? "" : ": " + error);
+            record.LegacyIndexesBefore, legacyLeft, reason);
     }
+
+    /// <summary>Start of the tenant end event (AB#9709); a Dash0 query finds it by the prefix.</summary>
+    private const string TenantEndedTemplate = IndexUpgradeRunEvents.TenantEndedPrefix + " {Result}, ";
+
+    private const string EndedTemplate =
+        "Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): " +
+        "{CollectionsUpgraded} collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}";
+
+    private const string LeftoversTemplate =
+        " (managed {ManagedIndexes}, model not Available {ModelNotAvailableIndexes}, orphaned {OrphanedIndexes})" +
+        "{Reason}{Warning}";
 
     private async Task SaveAsync(IndexUpgradeRunRecord record)
     {

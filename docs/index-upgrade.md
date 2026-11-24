@@ -1,4 +1,4 @@
-# Paging index upgrade (AB#9118, AB#9322)
+# Paging index upgrade (AB#9118, AB#9322, AB#9709)
 
 Pages of runtime queries sort totally only when the CK Ascending indexes of a collection have the keys
 `{ckTypeId, attr…, _id, rtState}` (engine-mongodb AB#8960, `PagingTiebreakGate`). Indexes built by an engine before
@@ -183,6 +183,37 @@ classify):
 The names are the properties of `IndexUpgradeRunRecord` / `IndexUpgradeLeftovers`; in the stored document they follow the
 service's MongoDB naming convention. After a successful run with nothing left `Leftovers` holds zeros.
 
+### Run events in Dash0 (AB#9709)
+
+bot-services ships only `Warn` and above: `nlog.config` defaults `Meshmakers.*` to `Warn` when `OCTO_LOG_LEVEL` is unset,
+and the clusters set `logLevel: Warn` or nothing. So the start and the end of every run are logged at **Warning**
+(**Error** for `Failed`) as informational events, with a fixed prefix in the message and a fixed event id. They need no
+change of a log level. **Alert rules that count warnings of `octo-bot-services` should exclude these prefixes.**
+
+| Prefix | Event id | When | Carries |
+| --- | --- | --- | --- |
+| `IndexUpgrade run started:` | 970901 | a sweep (after-deploy or window) starts looking at the tenants | trigger |
+| `IndexUpgrade run ended:` | 970902 | the sweep ends | result, trigger, duration, tenant count, tenants due, jobs enqueued, tenants not checked, leftover counts |
+| `IndexUpgrade tenant ended:` | 970903 | a tenant job ends without a retry following | result, tenant, status, trigger, duration, collections upgraded, legacy indexes before and after, leftover counts, reason |
+
+Result: `Completed`, `Incomplete` or `Failed`.
+
+- Sweep: `Completed` when every tenant was checked; `Incomplete` when a tenant could not be checked (the sweep is retried)
+  or the service stopped; `Failed` when the tenant list could not be read (Error, with the exception). A sweep that is
+  skipped (switched off, window over, no system tenant) logs no run event, only its Information line.
+- Tenant job: `Succeeded` and `NothingToDo` end `Completed`; `Incomplete` and a `Deferred` that ends the job (upgrade
+  switched off, window closed) end `Incomplete`; `Failed` ends `Failed` (Error; each Hangfire attempt logs its own end).
+  A deferral Hangfire retries (global limit, CK import, `index_update_lock`, yield) and an `Interrupted` run log no
+  tenant event; they keep their Debug or Information lines. A job for a tenant that no longer exists logs only an
+  Information line.
+
+Index and collection names never appear at Warning: the legacy indexes left are logged at Information
+(`Index upgrade of tenant '{TenantId}': legacy indexes left: …`) and kept in the record's `Error`. The per-tenant start
+line stays at Information. Dash0 query: body starts with `IndexUpgrade run` or `IndexUpgrade tenant ended:`, service
+`octo-bot-services`.
+
+### Other log lines
+
 Structured logs (Dash0, service `octo-bot-services`):
 
 - per collection: `Index upgrade of tenant '{TenantId}': collection '{Collection}' index '{LegacyIndexName}' {LegacyKeys}
@@ -191,12 +222,15 @@ Structured logs (Dash0, service `octo-bot-services`):
   `PollInterval`);
 - per run: `Index upgrade of tenant '{TenantId}' ended {Status} after {DurationMs} ms ({Trigger}): {CollectionsUpgraded}
   collection(s) upgraded, legacy indexes {LegacyIndexesBefore} -> {LegacyIndexesAfter}`, when classified followed by
-  `(managed {ManagedIndexes}, model not Available {ModelNotAvailableIndexes}, orphaned {OrphanedIndexes})` and the warning;
-  level Warning when indexes are left. The words "model not Available" appear only for that category;
-- per sweep: `Index upgrade sweep ({Trigger}) done: … checked, … with legacy indexes the engine upgrades, … job(s)
-  enqueued, … not checked; … tenant(s) with only leftovers no job can change, no job for them; leftover legacy indexes
-  across all checked tenants: model not Available …, orphaned …` (the leftover counts include tenants that got a job for
-  their managed indexes);
+  `(managed {ManagedIndexes}, model not Available {ModelNotAvailableIndexes}, orphaned {OrphanedIndexes})` and the warning.
+  When the job ends there, the line is the tenant event above, prefixed `IndexUpgrade tenant ended: {Result}, ` (Warning,
+  Error for `Failed`); a deferral that is retried keeps Debug or Information. The words "model not Available" appear only
+  for that category;
+- per sweep: `IndexUpgrade run ended: {Result}, sweep ({Trigger}) done after {DurationMs} ms: … tenant(s) checked, … with
+  legacy indexes the engine upgrades, … job(s) enqueued, … not checked; … tenant(s) with only leftovers no job can change,
+  no job for them; leftover legacy indexes across all checked tenants: model not Available …, orphaned …` (the leftover
+  counts include tenants that got a job for their managed indexes), after `IndexUpgrade run started: sweep ({Trigger})
+  looks at every tenant`;
 - at the start: `Index upgrade: Immediate schedule, …`, `Window schedule, …` or `switched off …`.
 
 ## Configuration
@@ -233,7 +267,7 @@ separate change.
 ## Production rollout procedure
 
 1. **Measure on staging-1** (a copy of prod-2): with `Schedule=Immediate`, after the deploy read the run records
-   (`db.IndexUpgradeRuns.find()` in the system database) or the end lines in Dash0 and note the duration of the largest
+   (`db.IndexUpgradeRuns.find()` in the system database) or the `IndexUpgrade tenant ended:` lines in Dash0 and note the duration of the largest
    tenants. Pick `Window:MaxDuration` and `Window:Cron` so that the largest collection fits into a quiet time.
 2. **Check the tenants' LibraryStatus** before switching a prod window on: `octo-cli LibraryStatus` per tenant; a model that
    is not `Available` keeps its legacy indexes (category *model not Available*) until it is fixed or updated - decide per
