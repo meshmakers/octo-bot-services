@@ -152,6 +152,13 @@ that the asset repository wrote moments before the job was enqueued).
   30 and 60 s): importing a CK model version that is already installed is a no-op, and the cache streams are cleared
   only after a successful import (the batch clears all of its keys at the end), so a retry finds the files again.
   `ImportRtAsync` is not retried by Hangfire because the RT import strategies are not idempotent.
+* **Service-managed models are refused** (AB#9325): the engine refuses every caller import of a `System` or `System.*`
+  model (`ServiceManagedCkModelImportRefusedException`, code `CK_SERVICE_MANAGED_MODEL`), whatever queued the job - the
+  asset repository, the MCP or AI service, a job enqueued before the asset repository refused such files. The job fails
+  at once with that error (`AutomaticRetry.ExceptOn`, no retry), the command logs one WARN with model id and code (never
+  the model content), and the cache stream is kept until it expires. In a batch the models before the refused one stay
+  imported and the rest is not imported. Service-managed models reach a tenant only through the owning service's
+  embedded import (restart, `ClearCache`, `ReRunTenantSetup`).
 * Other job types (export, dump, restore, sweeps) keep `Attempts = 0` and `Delete`; they do not read the cache.
 
 ### Secret sweep and secrets admin API (AB#5539, AB#5544)

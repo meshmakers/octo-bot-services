@@ -34,6 +34,14 @@ internal class ImportCkModelCommand(
 
             logger.LogInformation("Import of CK model completed");
         }
+        catch (ServiceManagedCkModelImportRefusedException e)
+        {
+            // AB#9325: the engine refuses every caller import of a service-managed model (System, System.*). The job
+            // fails with the coded error (code, model id, rule); no retry (IImportModelJob) and no model content.
+            logger.LogWarning("Import of CK model '{CkModelId}' refused ({Code}): service-managed models are installed " +
+                              "only by the platform services", e.ModelId, e.Code);
+            throw;
+        }
         catch (Exception e)
         {
             logger.LogError(e, "Import of CK model failed");
@@ -64,6 +72,14 @@ internal class ImportCkModelCommand(
             await tenantContext.ImportCkModelAsync(ckCompiledModelRoot);
 
             logger.LogInformation("Import of CK model completed");
+        }
+        catch (ServiceManagedCkModelImportRefusedException e)
+        {
+            // AB#9325: the engine refuses every caller import of a service-managed model (System, System.*). The job
+            // fails with the coded error (code, model id, rule); no retry (IImportModelJob) and no model content.
+            logger.LogWarning("Import of CK model '{CkModelId}' refused ({Code}): service-managed models are installed " +
+                              "only by the platform services", e.ModelId, e.Code);
+            throw;
         }
         catch (Exception e)
         {

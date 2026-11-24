@@ -1,5 +1,6 @@
 using Meshmakers.Octo.Runtime.Contracts;
 using Hangfire;
+using Meshmakers.Octo.Runtime.Contracts.MongoDb;
 using Meshmakers.Octo.Runtime.Contracts.Exchange;
 
 namespace Meshmakers.Octo.Backend.Jobs.Jobs;
@@ -10,7 +11,9 @@ namespace Meshmakers.Octo.Backend.Jobs.Jobs;
 /// <remarks>
 ///     Retry policy (AB#7256): a failed job is never deleted, it stays <c>Failed</c> in Hangfire for diagnosis. CK
 ///     imports are retried three times (after 10, 30 and 60 seconds): importing the same CK model version again is
-///     safe, and the cache streams are cleared only after a successful import. Runtime imports are not retried by
+///     safe, and the cache streams are cleared only after a successful import. A refused import of a service-managed
+///     model (<see cref="ServiceManagedCkModelImportRefusedException" />, code <c>CK_SERVICE_MANAGED_MODEL</c>) is not
+///     retried: the refusal is final, the job goes to <c>Failed</c> at once. Runtime imports are not retried by
 ///     Hangfire because their import strategies are not idempotent; they only repeat the cache lookup in-process.
 /// </remarks>
 public interface IImportModelJob
@@ -23,7 +26,8 @@ public interface IImportModelJob
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     /// <returns></returns>
     [JobDisplayName("Importing ConstructionKit Metadata to tenant '{0}'")]
-    [AutomaticRetry(Attempts = 3, DelaysInSeconds = [10, 30, 60], OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+    [AutomaticRetry(Attempts = 3, DelaysInSeconds = [10, 30, 60], OnAttemptsExceeded = AttemptsExceededAction.Fail,
+        ExceptOn = [typeof(ServiceManagedCkModelImportRefusedException)])]
     Task ImportCkAsync(string tenantId, string key,
         IBotCancellationToken? cancellationToken);
 
@@ -36,7 +40,8 @@ public interface IImportModelJob
     /// <param name="keys">Ordered list of cache keys (one per model, dependencies first)</param>
     /// <param name="cancellationToken">A cancellation token to abort the job</param>
     [JobDisplayName("Importing ConstructionKit Metadata batch to tenant '{0}'")]
-    [AutomaticRetry(Attempts = 3, DelaysInSeconds = [10, 30, 60], OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+    [AutomaticRetry(Attempts = 3, DelaysInSeconds = [10, 30, 60], OnAttemptsExceeded = AttemptsExceededAction.Fail,
+        ExceptOn = [typeof(ServiceManagedCkModelImportRefusedException)])]
     Task ImportCkBatchAsync(string tenantId, List<string> keys,
         IBotCancellationToken? cancellationToken);
 
