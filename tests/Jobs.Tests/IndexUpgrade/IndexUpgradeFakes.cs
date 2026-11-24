@@ -306,6 +306,19 @@ internal sealed class ListLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
 {
     private readonly Lock _gate = new();
     private readonly List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> _entries = [];
+    private readonly List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> _events = [];
+
+    /// <summary>The lines with their event id (AB#9709).</summary>
+    public IReadOnlyList<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Events
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _events.ToList();
+            }
+        }
+    }
 
     public IReadOnlyList<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries
     {
@@ -329,7 +342,9 @@ internal sealed class ListLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
     {
         lock (_gate)
         {
-            _entries.Add((logLevel, formatter(state, exception)));
+            var message = formatter(state, exception);
+            _entries.Add((logLevel, message));
+            _events.Add((logLevel, eventId.Id, message));
         }
     }
 }

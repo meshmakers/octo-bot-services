@@ -335,6 +335,12 @@ configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
   binder cannot convert is caught by the start-up registration and the import gate (upgrade off, imports as before).
 - **Code defaults = production** (`Schedule = Window`, `Window:Enabled = false`): nothing is built without deployment values; test-2 and
   staging-1 set `OCTO_INDEXUPGRADE__SCHEDULE=Immediate`. `MaxConcurrent = 0` switches the upgrade off in every schedule.
+- **Run events at the shipped level (AB#9709)**: bot-services ships `Warn` and above only, so the sweep's start and end and the end of
+  every tenant job that is not deferred for a retry are logged at Warning (Error for `Failed`) with the prefixes and event ids of
+  `IndexUpgradeRunEvents` (`IndexUpgrade run started:`, `IndexUpgrade run ended:`, `IndexUpgrade tenant ended:`). Nothing else of
+  the upgrade goes to Warning on the success path; index names stay at Information (the record keeps them), only the AB#9322 leftover
+  summary (models not Available, orphaned collections, with counts) stays in the end line. Never
+  change a log level for this. Pinned by `IndexUpgradeRunEventsTests`.
 - Tests: `tests/Jobs.Tests/IndexUpgrade/*` (unit; `IndexUpgradeWiringTests` pins that the host registrations give `ImportModelJob`
   its gate and `TenantManagementConsumer` its scheduler - both are optional constructor parameters),
   `tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests` (Docker: real engine,
