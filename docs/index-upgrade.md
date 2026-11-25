@@ -1,11 +1,16 @@
-# Paging index upgrade (AB#9118, AB#9322, AB#9709)
+---
+description: Operator view of the paging index upgrade: what the job does, configuration per environment, rollout and the leftover categories.
+background: true
+---
+
+# Paging index upgrade
 
 Pages of runtime queries sort totally only when the CK Ascending indexes of a collection have the keys
-`{ckTypeId, attr…, _id, rtState}` (engine-mongodb AB#8960, `PagingTiebreakGate`). Indexes built by an engine before
-AB#8960 have the legacy keys `{ckTypeId, attr…, rtState}`; a CK import and `UpdateIndexesAsync` keep them on purpose. The
+`{ckTypeId, attr…, _id, rtState}` (engine-mongodb, `PagingTiebreakGate`). Indexes built by an engine before
+the `_id` tiebreak have the legacy keys `{ckTypeId, attr…, rtState}`; a CK import and `UpdateIndexesAsync` keep them on purpose. The
 only way to replace them is `ITenantContext.UpgradeTiebreakIndexesAsync`. The bot service runs it as one idempotent
 Hangfire job per tenant. Until a tenant was upgraded, its pages sorted by an attribute with a legacy index keep the order
-they had before AB#8960.
+they had before the `_id` tiebreak.
 
 ## What the job does
 
@@ -21,7 +26,7 @@ they had before AB#8960.
 4. **Tenant and legacy indexes by their keys** (`LegacyIndexShape`): not unique, no text index, first key `ckTypeId`, an
    `rtState` key, no `_id` key. The index name is never looked at: an upgraded index may carry a hashed name
    `{Type}_{n}_id_<hash>`. No legacy index: the run ends at once (`NothingToDo`), no index is built.
-   **Category by the CK metadata** (AB#9322, see "Leftover categories" below): when none of the legacy indexes is
+   **Category by the CK metadata** (see "Leftover categories" below): when none of the legacy indexes is
    *managed*, the run ends `Succeeded` with a warning at once - the engine is not called and the tenant's
    `index_update_lock` is not taken. If the CK metadata cannot be read, the engine runs as before.
 5. **Build**: `UpgradeTiebreakIndexesAsync` under the tenant's `index_update_lock`, collection by collection, the new
@@ -37,7 +42,7 @@ they had before AB#8960.
      `Leftovers`) and in the log (level Warning) - never a silent success;
    - the CK metadata cannot be read -> `Incomplete` ("could not be read to tell why", the indexes listed).
 
-### Leftover categories (AB#9322)
+### Leftover categories
 
 Every legacy index is counted in exactly one category, decided by the tenant's CK metadata - the collection roots
 (`IsCollectionRoot`) and the state of their models - never by the index name:
@@ -45,7 +50,7 @@ Every legacy index is counted in exactly one category, decided by the tenant's C
 | Category | Meaning | Keeps the tenant `Incomplete` | Gets a job from the sweep | Operator action |
 | --- | --- | --- | --- | --- |
 | *managed* | collection root of an `Available` model: the engine upgrades it | yes | yes | read the engine's warnings (index build failed) |
-| *model not Available* | collection root of a model in another state (`ResolveFailed`, `Importing`); the record names model id and state, e.g. `Monitoring-2.1.0 ResolveFailed` | no | no | `octo-cli LibraryStatus` of the tenant, then Fix or Update the model. A retired model without a catalog version (e.g. `Monitoring-2.1.0` on test-2 octosystem, retired 2026-09-30) stays until it is removed (AB#9525) |
+| *model not Available* | collection root of a model in another state (`ResolveFailed`, `Importing`); the record names model id and state, e.g. `Monitoring-2.1.0 ResolveFailed` | no | no | `octo-cli LibraryStatus` of the tenant, then Fix or Update the model. A retired model without a catalog version (e.g. `Monitoring-2.1.0` on a test environment, retired 2026-09-30) stays until it is removed |
 | *orphaned* | a collection without a collection root, left by an older model or a migration (e.g. `RtEntity_SystemQuery` after System 1.0.3 -> 2.0.0) | no | no | none; the collection and its indexes are not deleted |
 
 A model that becomes `Available` later (library update or Fix) turns its indexes *managed*, so the next sweep enqueues the
@@ -82,7 +87,7 @@ never `Succeeded`.
 | `tenant-created` | `TenantManagementConsumer` on `PosCreateTenant` | a tenant was created or attached; a restore and a copy attach as well. The job is scheduled `StartDelay` later, so that the services set the tenant up (embedded CK imports) before the rebuild takes `index_update_lock`. Window schedule: only while a window is open, otherwise the next window picks the tenant up |
 
 The sweep reads the index list of every tenant (system tenant and every registry row) and enqueues a job only for a tenant
-that still has a *managed* legacy index (AB#9322); tenants with only *model not Available* or *orphaned* leftovers are
+that still has a *managed* legacy index; tenants with only *model not Available* or *orphaned* leftovers are
 counted in the sweep summary but get no job and take no `index_update_lock` (if their CK metadata cannot be read, they are
 enqueued as before and the job decides). Tenants already upgraded cost one `listIndexes` per collection and no job. A tenant whose
 index list could not be read fails the sweep after all other tenants were checked, so Hangfire retries it (a retry reads
@@ -110,7 +115,7 @@ slot and the tenant lease, the second ends `NothingToDo`.
 (`DistributedLockTimeoutException`; seen with dumps, `JobOperationRelay`). A tenant rebuild can take hours, so every waiting
 tenant would end as a failed job, retry after retry. The global limit is therefore an own lease: the slots
 `octo:index-upgrade:slot:0..N-1` are Hangfire distributed locks of the shared MongoDB job storage, taken without waiting
-(`HangfireDistributedLockOwner`, held on one thread because the Hangfire.Mongo lock is thread-affine, AB#5539). Hangfire.Mongo
+(`HangfireDistributedLockOwner`, held on one thread because the Hangfire.Mongo lock is thread-affine). Hangfire.Mongo
 keeps a held lock alive with a heartbeat; after a killed pod it expires. A failed release is swallowed (the lock expires),
 so it never changes the outcome of the import or upgrade that held it. A run that gets no slot is `Scheduled` again and
 holds no worker while it waits. Each replica runs a lightweight Hangfire server (workers only, the full server schedules)
@@ -137,13 +142,13 @@ The engine holds the tenant's `index_update_lock` for a whole upgrade run; a CK 
 - **The upgrade waits for a CK import**: while the tenant lease is held or a yield request is set, the upgrade does not
   start. When `index_update_lock` is held by someone else (an embedded import or `UpdateIndexesAsync` of another service), the
   engine's `TimeoutException` after 90 s makes the run `Scheduled` again after `RetryDelay`.
-- **Remaining risk** (accepted, Odin 2026-11-18, option A): the **embedded** CK model imports of the other services at their
+- **Remaining risk** (accepted 2026-11-18, option A): the **embedded** CK model imports of the other services at their
   tenant setup (asset repository, communication controller, …; after a deploy that raises a model version, or right after
   an attach) do not go through this gate. Meeting a running rebuild they time out after 90 s, and the service retries the
-  tenant setup (`TenantSetupRetryTracker`, AB#7249, 30 s doubling to 5 min) until the rebuild of the current collection
+  tenant setup (`TenantSetupRetryTracker`, 30 s doubling to 5 min) until the rebuild of the current collection
   ended; the `TenantSetup` health check turns `Degraded` after 10 minutes. `StartDelay` (5 min) lets those imports finish
   before the after-deploy sweep starts and before the job of a created or attached tenant runs. The engine fix (release
-  `index_update_lock` between collections) is AB#9302.
+  `index_update_lock` between collections) is tracked separately.
 
 ### Restart during a job
 
@@ -165,9 +170,9 @@ One document per tenant in the **system database**, collection `IndexUpgradeRuns
 `Incomplete`, `Failed`, stored as text), start, end, duration, legacy indexes before and after (empty = not read, e.g. a
 run that ended at the window or a lease),
 collections upgraded (only collections whose replacement index was seen), error. Status only: nothing reads it to decide
-whether to build. The status endpoint of AB#9301 reads it. A tenant that never needed a job has no record.
+whether to build. The status endpoint reads it. A tenant that never needed a job has no record.
 
-Fields added by AB#9322 (absent in records of older versions; null when the run ended before it looked or could not
+Fields added with the leftover categories (absent in records of older versions; null when the run ended before it looked or could not
 classify):
 
 | Field | Content |
@@ -183,7 +188,7 @@ classify):
 The names are the properties of `IndexUpgradeRunRecord` / `IndexUpgradeLeftovers`; in the stored document they follow the
 service's MongoDB naming convention. After a successful run with nothing left `Leftovers` holds zeros.
 
-### Run events in Dash0 (AB#9709)
+### Run events in Dash0
 
 bot-services ships only `Warn` and above: `nlog.config` defaults `Meshmakers.*` to `Warn` when `OCTO_LOG_LEVEL` is unset,
 and the clusters set `logLevel: Warn` or nothing. So the start and the end of every run are logged at **Warning**
@@ -208,8 +213,8 @@ Result: `Completed`, `Incomplete` or `Failed`.
   Information line.
 
 Index names never appear at Warning: the legacy indexes left are logged at Information
-(`Index upgrade of tenant '{TenantId}': legacy indexes left: …`) and kept in the record's `Error`. The leftover warning of
-AB#9322 stays in the tenant end line: it names the models that are not `Available` and up to 20 orphaned collections, with
+(`Index upgrade of tenant '{TenantId}': legacy indexes left: …`) and kept in the record's `Error`. The leftover warning
+stays in the tenant end line: it names the models that are not `Available` and up to 20 orphaned collections, with
 their index counts (one summary per run, not one line per index). The per-tenant start line stays at Information. Dash0 query: body starts with `IndexUpgrade run` or `IndexUpgrade tenant ended:`, service
 `octo-bot-services`.
 
@@ -258,22 +263,22 @@ imports run as before.
 
 | Environment | Values |
 | --- | --- |
-| test-2 | `OCTO_INDEXUPGRADE__SCHEDULE=Immediate` |
-| staging-1 | `OCTO_INDEXUPGRADE__SCHEDULE=Immediate` |
-| prod-1, prod-2 | defaults (`Window`, window off); switched on per cluster after the go (below) |
+| test environment | `OCTO_INDEXUPGRADE__SCHEDULE=Immediate` |
+| staging environment | `OCTO_INDEXUPGRADE__SCHEDULE=Immediate` |
+| production clusters | defaults (`Window`, window off); switched on per cluster after the go (below) |
 
 The deployment values live in `octo-mesh-deployment` (bot-services values per environment); they are set there by a
 separate change.
 
 ## Production rollout procedure
 
-1. **Measure on staging-1** (a copy of prod-2): with `Schedule=Immediate`, after the deploy read the run records
+1. **Measure on staging** (a copy of production): with `Schedule=Immediate`, after the deploy read the run records
    (`db.IndexUpgradeRuns.find()` in the system database) or the `IndexUpgrade tenant ended:` lines in Dash0 and note the duration of the largest
    tenants. Pick `Window:MaxDuration` and `Window:Cron` so that the largest collection fits into a quiet time.
 2. **Check the tenants' LibraryStatus** before switching a prod window on: `octo-cli LibraryStatus` per tenant; a model that
    is not `Available` keeps its legacy indexes (category *model not Available*) until it is fixed or updated - decide per
    model whether to fix it first. The run records name such models after the first window.
-3. **Go per cluster**: switching the window on for prod-1 or prod-2 needs the developer's go for that cluster.
+3. **Go per cluster**: switching the window on for a production cluster needs the developer's go for that cluster.
 4. **Switch on**: set `OCTO_INDEXUPGRADE__WINDOW__ENABLED=true` (and `…__WINDOW__CRON`, `…__WINDOW__MAXDURATION` if not the
    defaults) for the cluster and roll the bot service out. At the next cron time the window opens and the sweep enqueues
    every tenant with legacy indexes; they are rebuilt one after the other (`MaxConcurrent`). A tenant created or attached
@@ -297,7 +302,7 @@ separate change.
 - Unit (`tests/Jobs.Tests/IndexUpgrade`): shape by keys incl. hashed names and key order; deferral filter before
   `AutomaticRetry` and its exact deadline; options made safe; job: nothing to do, upgrade, re-run, global slot held (no
   resolve, no inspection), `MaxConcurrent` 0, tenant lease held, `index_update_lock` timeout, engine failure, legacy indexes
-  the engine does not upgrade (`Incomplete`), leftovers by category (the two test-2 shapes: model not Available only and
+  the engine does not upgrade (`Incomplete`), leftovers by category (the two shapes seen in testing: model not Available only and
   orphaned only end `Succeeded` with the warning stored and logged at Warning, without the engine; managed and leftovers
   mixed; managed left with leftovers -> `Incomplete` naming only the managed; CK metadata unreadable), CK import during
   the upgrade (stops before the next collection, import runs, the lease proven held while the import runs),
@@ -308,7 +313,7 @@ separate change.
   unreadable -> enqueued); classification (`LegacyIndexClassificationTests`: each category, two roots on one collection,
   the cap of 20, collection naming, `CkType` document mapping); import gate (two imports, configuration that cannot be
   read, upgrade off, an attempt started late by the thread pool waits only for the rest of `ImportWaitTimeout` or gives up
-  at once, AB#9317); start-up registration; wiring (`IndexUpgradeWiringTests`: the host registrations give
+  at once); start-up registration; wiring (`IndexUpgradeWiringTests`: the host registrations give
   `ImportModelJob` its gate and `TenantManagementConsumer` its scheduler, `Program.cs` calls `AddOctoIndexUpgrade` -
   comments do not count).
 - Integration (`tests/Jobs.IntegrationTests/IndexUpgradeIntegrationTests`, Docker): real engine clean run, re-run and a run
