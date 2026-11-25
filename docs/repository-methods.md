@@ -88,3 +88,9 @@ warnings; cancellation is rethrown unchanged). The dump job never detaches, so i
 the text are separate changes; until then octo-cli `RestoreTenant` exits non-zero on such a restore and the Studio shows a plain
 success. Details: README
 "Restore: services that were not told about the tenant".
+
+- **Split of a new async method (rule for the next one)**: the handler validates before it enqueues and uses
+  `Methods/JobOperationRelay` and `Methods/BotJobMethodErrors`; the job enters `OperationJobGuard.EnterAsync` so it runs
+  at most once (`DumpRepositoryJob.cs`, `RestoreRepositoryJob.cs`, `ArchiveData/ExportArchiveDataJob.cs`,
+  `ArchiveData/ImportArchiveDataJob.cs`). Exception: the dump handler keeps its own declared errors
+  (`TenantRepositoryDumpHandler.cs`).

@@ -18,3 +18,6 @@ giving up). `DefaultConfigurationCreatorService` takes the DI instance (`tenantS
 `octo.tenant_setup.failed` / `octo.tenant_setup.pending_seconds` (tag `octo.tenant.id`) feed the Dash0 alert. Details,
 options and tests: `octo-common-services/docs/tenant-setup.md`, section "Tenant Setup - Failure Handling". Test here:
 `tests/Jobs.Tests/Services/TenantSetupRetryWiringTests.cs`. Tests use one isolated `TenantSetupRetryTracker` per test and share it across the creator instances of that test when exercising a retry.
+
+- **A failed tenant setup is never dropped**: `DefaultConfigurationCreatorService` takes the shared
+  `TenantSetupRetryTracker` and passes it on, so every failed `SetupAsync` is queued for the background retry.
