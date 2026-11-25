@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- AB#9118 Docs: `docs/index-upgrade.md` records the staging measurement of the index upgrade (2026-11-25: whole run about
+  16 minutes, largest tenant 14 minutes for one collection of 885,240 documents, about 15-16 s per index per 100,000
+  documents, slower MongoDB for every tenant of the cluster, no errors). The production rollout procedure now derives
+  from it the window length, the quiet time, the memory and disk check, the chart values per cluster, the Dash0 check
+  and a stop procedure during a window.
 - AB#9709 New: the index upgrade reports its runs at the shipped log level, so Dash0 shows them without a log level
   change. Each sweep (after-deploy or window) logs `IndexUpgrade run started:` and `IndexUpgrade run ended: {Result}` with
   the tenant count, the jobs enqueued and the duration; each tenant job that ends without a deferral retry logs

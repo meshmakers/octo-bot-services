@@ -270,20 +270,68 @@ imports run as before.
 The deployment values live in `octo-mesh-deployment` (bot-services values per environment); they are set there by a
 separate change.
 
+## Measured on staging (2026-11-25)
+
+The staging environment is a copy of production. Measured with `Schedule=Immediate` from the `IndexUpgrade run` and
+`IndexUpgrade tenant ended:` events in Dash0 (AB#9118); bot-services 3.5.83, one replica, `MaxConcurrent` 1.
+
+- **Sweep**: started 5 minutes after the bot-services start (`StartDelay`) and ended `Completed` after 0.7 s: 10 tenants
+  checked, 7 with legacy indexes, 7 jobs enqueued, no leftovers.
+- **Tenants**: the jobs ran one after the other and all ended `Completed`, legacy indexes to 0.
+  - 6 tenants took 16-24 s each (47-77 collections, 119-205 legacy indexes).
+  - The largest tenant took 837 s (14 min). 811 s of it were one collection of 885,240 documents with 6 legacy
+    indexes; each index took 133-141 s, built one after the other (background build, write concern majority).
+- **Whole run**: about 16 minutes (without the largest tenant about 2 minutes).
+- **Rule of thumb**: about 15-16 s per index per 100,000 documents on this hardware (133-141 s per index for 885,240
+  documents). The duration of a tenant is driven by its largest collections, not by the number of collections.
+
+Impact while the indexes were built (no errors anywhere):
+
+- **MongoDB**: working set up from 1.5-4.6 GB to 5.0-5.3 GB per replica (peak 6.7 GB). CPU up from 0.05-0.09 to
+  0.26-0.40 cores per pod. Free disk on the data volume down by about 120 MB per replica.
+- **Other services and tenants**: 2,486 slow MongoDB commands (10 in the 10 minutes before), the slowest 2.95 s. Most
+  were in the communication controller, the asset repository and identity, on every tenant of the cluster, not only on
+  the tenant being rebuilt. Server spans of the communication controller peaked at 3.5 s. No 5xx, no failed tenant
+  setup or CK import.
+- **bot-services**: no error, retry, deferral or wait for `index_update_lock`.
+
+What follows for production:
+
+- **Window length**: plan at least 15 minutes for a tenant like the largest staging tenant. Scale with the document count
+  and the number of legacy indexes of the largest collections on the production cluster (rule of thumb above). Add
+  about 20 s for every other tenant with legacy indexes.
+- **Window end**: the window end only stops the next *collection*. An index build of a large collection that already
+  started finishes after the end (up to about 14 minutes for the largest staging collection). Leave that headroom
+  before the busy hours start.
+- **Quiet time**: all tenants of the cluster get slower while a large collection is rebuilt (MongoDB latency up to about
+  3 s, no errors). Run the window outside the business hours of every tenant on that cluster, not only of the tenant
+  being rebuilt. The default `Window:Cron` `0 1 * * *` is 01:00 UTC.
+- **Memory and disk**: on staging the working set of the replicas rose by 2.1-4.3 GB at the peak. Before the window
+  opens, check that every MongoDB replica has that much memory free above its normal working set, and a few hundred MB
+  of free disk on the data volume (more for larger collections).
+
 ## Production rollout procedure
 
 1. **Measure on staging** (a copy of production): with `Schedule=Immediate`, after the deploy read the run records
    (`db.IndexUpgradeRuns.find()` in the system database) or the `IndexUpgrade tenant ended:` lines in Dash0 and note the duration of the largest
-   tenants. Pick `Window:MaxDuration` and `Window:Cron` so that the largest collection fits into a quiet time.
+   tenants. Pick `Window:MaxDuration` and `Window:Cron` so that the largest collection fits into a quiet time. The
+   measurement of 2026-11-25 and the guidance that follows from it are in the section above.
 2. **Check the tenants' LibraryStatus** before switching a prod window on: `octo-cli LibraryStatus` per tenant; a model that
    is not `Available` keeps its legacy indexes (category *model not Available*) until it is fixed or updated - decide per
    model whether to fix it first. The run records name such models after the first window.
 3. **Go per cluster**: switching the window on for a production cluster needs the developer's go for that cluster.
 4. **Switch on**: set `OCTO_INDEXUPGRADE__WINDOW__ENABLED=true` (and `…__WINDOW__CRON`, `…__WINDOW__MAXDURATION` if not the
-   defaults) for the cluster and roll the bot service out. At the next cron time the window opens and the sweep enqueues
+   defaults) for the cluster and roll the bot service out. In the octo-mesh chart these are
+   `services.bot.indexUpgrade.window.enabled`, `.cron` and `.maxDuration` in the values file of that cluster only; leave
+   `schedule` unset (`Window`). One cluster per change. At the next cron time the window opens and the sweep enqueues
    every tenant with legacy indexes; they are rebuilt one after the other (`MaxConcurrent`). A tenant created or attached
    outside a window is picked up by the next window; a run that did not finish continues in the next window.
-5. **Verify**: per tenant, no CK Ascending index without `_id` of a *managed* collection is left:
+5. **Verify**: in Dash0 (service `octo-bot-services`) the window logs `IndexUpgrade run started: sweep (window)` and
+   `IndexUpgrade run ended: Completed` with the number of jobs enqueued, then one `IndexUpgrade tenant ended: Completed`
+   per enqueued tenant with `legacy indexes N -> 0` and leftover counts 0. A tenant that ended `Incomplete` (window
+   closed) continues in the next window; `Failed` needs a look. Meanwhile watch the MongoDB replicas (memory, CPU, slow
+   commands) and the 5xx rate of the other services. Then the live check decides: per tenant, no CK Ascending index
+   without `_id` of a *managed* collection is left:
    `db.getCollectionNames().forEach(c => db[c].getIndexes().filter(i => !i.unique && Object.keys(i.key)[0] == "ckTypeId"
    && "rtState" in i.key && !("_id" in i.key) && !("_fts" in i.key)).forEach(i => print(c, i.name)))` prints nothing -
    this live check decides (it also prints *model not Available* and *orphaned* leftovers; the run record's `leftovers`
@@ -296,6 +344,12 @@ separate change.
    removed at the start, pending jobs end without a build. Deleting pending jobs in the dashboard alone does not stop the
    upgrade: the next sweep enqueues them again. A rebuild in progress finishes its current collection; the rollout stops it
    before the next one.
+7. **Stop during a window** (other tenants are hit harder than expected): switch off as in step 6. Plan for the
+   index builds of the collection in progress to finish first (up to about 14 minutes for a collection like the largest
+   staging one). The graceful restart of bot-services records the run `Interrupted` ("Restart during a job" above); the
+   requeued job defers while the window is off, and a later window completes the tenant without dropping an index before
+   its replacement exists. When the cluster is quiet again, switch the window back on (step 4) at a quieter
+   `Window:Cron`.
 
 ## Tests
 
