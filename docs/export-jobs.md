@@ -49,8 +49,7 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
   fixed dummy values: export by query and by deep graph (from the user; from its role, whose graph does not reach the user today) never contain them, a stored filter (equals for
   the right and a wrong guess, like, regex, range; record path `UserTokens.Value`) or sort order on a credential is refused, and no log line
   (`ExportEngineFixture.Logs`, Debug incl. the MongoDB command log, kept only while a test sets `Enabled`) carries a dummy value. The class
-  seeds once (re-seeds after another class's `ResetAsync`, `ResetGeneration`): a refused export leaves its session open and a reset
-  then waits for MongoDB to expire the transaction.
+  seeds once and re-seeds after another class's `ResetAsync` (detected through `ResetGeneration`).
 - ImportRt: `InitiatedBySubjectId` is enough for the lock protection - it is a per-type policy opt-in
   (`ProtectBlueprintLocked`), not a per-role classification - so no roles are passed. Note: the import session stays the
   system session by design of the lock protection (write grants are not evaluated per caller there).
@@ -77,8 +76,7 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
   `Jobs.IntegrationTests/ExportSessionDisposalTests` (refused stored query twice, query and deep-graph export failing after their
   reads, successful export: no open transaction in `$currentOp`, and a tenant reset right after completes within 30 s; without the
   fix each reset waits about 90 s) and `Jobs.Tests/Services/RepositoryFixupServiceSessionTests` (failing and successful script run
-  dispose their session). Integration test classes may call `ExportEngineFixture.ResetAsync()` after a failing export again; seeding
-  once per class to avoid the wait is no longer needed.
+  dispose their session). Integration test classes may call `ExportEngineFixture.ResetAsync()` after a failing export.
 - Tests: `tests/Jobs.IntegrationTests` (`ExportPermissionTests`, needs Docker): the two real export commands against the real engine and a
   Testcontainers MongoDB with a restricted policy table and the tiny `tests/ExportTestCkModel` - denied type, owned-only, allowed caller,
   unrestricted tenant (same bytes for every caller), system context refused, for the query and the deep-graph export. Unit tests:

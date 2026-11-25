@@ -35,7 +35,7 @@ method this service hosts. User documentation: README "Repository dump as an asy
 - **Result JSON**: the generated `RtRecord` would serialize its attribute dictionary; `src/SystemBotCkModel/RtRepositoryDumpResultRecord.Json.cs`
   adds a System.Text.Json converter so the wire form is the bare `{"jobId","downloadPath"}` object (method wire contract).
 - **CK model**: 3.7.0 adds `TenantRepository` (`derivable: Model`), the record `RepositoryDumpResult` and two attributes - a Minor.
-  `minEngineVersion` rises from 3.5.1 to **3.5.67** (`execution.mode`, `ck-engine-version.md` of the engine): publish only where every
+  `minEngineVersion` rises from 3.5.1 to **3.5.67** (`execution.mode`): publish only where every
   service runs that engine.
 - Tests: `Jobs.Tests/Methods/TenantRepositoryDumpHandlerTests` (accept without side effect, one enqueue with operation id and starter,
   progress relay, result, declared errors, cancellation, wire form of the result), `Jobs.Tests/Jobs/Operations/DumpRepositoryJobForOperationTests`
@@ -84,9 +84,7 @@ reads the warnings (output lines naming ClearCache, plus a fallback for `TenantC
 becomes `RepositoryRestoreResult.ClearCacheRequired` (optional record member, so 3.9.0 is a Minor). A failed restore already
 carries the line in the job error (`JobFailedException.CommandExecutionFailed` embeds `CommandResult.ToString()`); a job that
 throws after a successful engine restore with warnings rethrows `RestoreRepositoryJob.NotificationWarningsFailure` (message plus
-warnings; cancellation is rethrown unchanged). The dump job never detaches, so it has no such warning. CLI and Studio display of
-the text are separate changes; until then octo-cli `RestoreTenant` exits non-zero on such a restore and the Studio shows a plain
-success. Details: README
+warnings; cancellation is rethrown unchanged). The dump job never detaches, so it has no such warning. Details: README
 "Restore: services that were not told about the tenant".
 
 - **Split of a new async method (rule for the next one)**: the handler validates before it enqueues and uses

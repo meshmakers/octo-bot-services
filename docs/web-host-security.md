@@ -1,6 +1,6 @@
 ---
 description: CORS policy, session and token cookies, and the Data Protection key ring shared by all replicas.
-applies_to: src/BotServices/Configuration/*Cors*.cs, src/BotServices/Configuration/Configure*Options.cs
+applies_to: src/BotServices/Configuration/*Cors*.cs, src/BotServices/Configuration/Configure*Options.cs, src/BotServices/Program.cs
 ---
 
 # CORS, cookies and the Data Protection key ring

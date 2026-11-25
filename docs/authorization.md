@@ -18,7 +18,7 @@ Rules:
 - The role is checked on the caller's own token. A parent-tenant user (`[AllowParentTenantAdministration]`) needs
   `TenantManagement` in the parent tenant, not in the target tenant.
 - The dump is a whole-tenant backup and bypasses row-level data permissions by design (see "Export jobs run as the
-  caller" below); the runtime-data exports are the opposite.
+  caller" in `docs/export-jobs.md`); the runtime-data exports are the opposite.
 - Role policies probe both claim spellings (`role` and `ClaimTypes.Role`) via `BotAuthorizationPolicies.HasTenantRole`.
 - Tenant gate defaults (`UserTokenEnforcement` / `ServiceTokenEnforcement` = Enforce) must not be overridden in
   `Program.cs`; `TenantJobRoleWiringTests` pins this.

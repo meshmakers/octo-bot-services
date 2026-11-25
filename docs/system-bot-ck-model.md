@@ -41,6 +41,6 @@ parameter `publishSystemCkModels` (boolean, **default true**; gate introduced as
 run on every build and refuse a breaking change declared as minor; an already-published version is a no-op. Default true because CK v2
 range retention and the completed re-pin removed the exact-pin breakage that motivated default false.
 
-**To build main without publishing:** Azure DevOps -> pipeline `octo-bot-services-CI` -> *Run pipeline* -> branch `main` -> untick
-*Publish System CK models to the CK catalogs (main)*; CLI: `az pipelines run --id 94 --branch main --parameters publishSystemCkModels=false`.
+**To build main without publishing:** Azure DevOps -> the CI pipeline of this repository -> *Run pipeline* -> branch `main` -> untick
+*Publish System CK models to the CK catalogs (main)*; CLI: `az pipelines run --id <pipeline id> --branch main --parameters publishSystemCkModels=false`.
 `r*` tags (release train) publish as before; `dev/*`/`test/*` builds never publish to the shared catalogs.

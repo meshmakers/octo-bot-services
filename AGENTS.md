@@ -28,12 +28,12 @@ behaviour is documented in `README.md`.
 | `src/BotServices/Consumers/**` | `docs/command-consumers.md` |
 | `src/Jobs/Commands/**`, `src/Jobs/Jobs/*Model*Job.cs`, `src/Jobs/Jobs/RunFixupJob.cs`, `tests/Jobs.IntegrationTests/Export*.cs` | `docs/export-jobs.md` |
 | `src/BotServices/HangfireSetup/**` | `docs/hangfire-mongo-connection.md` |
-| `src/Jobs/IndexUpgrade/**`, `tests/Jobs.Tests/IndexUpgrade/**` | `docs/index-upgrade-rules.md` |
+| `src/Jobs/IndexUpgrade/**`, `tests/Jobs.Tests/IndexUpgrade/**`, `src/Jobs/Jobs/ImportModelJob.cs`, `src/BotServices/Consumers/TenantManagementConsumer.cs` | `docs/index-upgrade-rules.md` |
 | `src/BotServices/Methods/**`, `src/Jobs/Jobs/Operations/**`, `src/Jobs/Jobs/*Repository*.cs`, `src/Jobs/Jobs/ArchiveData/**` | `docs/repository-methods.md` |
 | `src/SystemBotCkModel/**`, `tests/Jobs.Tests/CkModels/**` | `docs/system-bot-ck-model.md` |
 | `src/BotServices/Services/DefaultConfigurationCreatorService.cs` | `docs/tenant-setup-retry.md` |
 | `src/BotServices/Tus*.cs`, `src/BotServices/Services/ArtifactTusStore.cs`, `src/Jobs/Services/*SharedUploadStore.cs` | `docs/tus-uploads.md` |
-| `src/BotServices/Configuration/*Cors*.cs`, `src/BotServices/Configuration/Configure*Options.cs` | `docs/web-host-security.md` |
+| `src/BotServices/Configuration/*Cors*.cs`, `src/BotServices/Configuration/Configure*Options.cs`, `src/BotServices/Program.cs` | `docs/web-host-security.md` |
 <!-- <<< end generated: routing -->
 
 Background, not path-triggered: `docs/index-upgrade.md` (operator view of the paging index upgrade, linked from
@@ -66,7 +66,8 @@ dotnet test --project tests/Jobs.IntegrationTests/Jobs.IntegrationTests.csproj -
 - **Every entry point of a tenant-wide data job is gated by the tenant role `TenantManagement`, read from the caller's
   own token.** An HTTP route carries `BotServiceConstants.TenantJobManagementPolicy` (`TenantApi`
   `JobsController.cs:117`, `:139`, `:169`, `:192`, `:217`, `:311`; `SystemApi` `JobsController.cs:133`), a CK method
-  declares the role for the method host (`BotMethodHost.cs:36`), a tus route goes through
+  declares `roles: [ TenantManagement ]` in its type (`types/tenantRepository.yaml` of `SystemBotCkModel`), which the
+  method host checks (`BotMethodHost.cs:37`), a tus route goes through
   `TusUploadAuthorization.cs:29`; bus consumers have no gate of their own. Do not override the tenant gate defaults
   (`Enforce`) in `Program.cs`. Exception: the dump is a whole-tenant backup by design and bypasses row-level data
   permissions; its protection is the gate. `docs/authorization.md`; enforced by `TenantJobRoleWiringTests.cs:94` (an

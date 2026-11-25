@@ -1,6 +1,6 @@
 ---
 description: Rules of the per-tenant paging index upgrade job: shape by keys, triggers, leases, incomplete runs, leftover categories, run events.
-applies_to: src/Jobs/IndexUpgrade/**, tests/Jobs.Tests/IndexUpgrade/**
+applies_to: src/Jobs/IndexUpgrade/**, tests/Jobs.Tests/IndexUpgrade/**, src/Jobs/Jobs/ImportModelJob.cs, src/BotServices/Consumers/TenantManagementConsumer.cs
 ---
 
 # Paging index upgrade per tenant: rules
@@ -22,7 +22,9 @@ configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
 - **Global limit = own lease** (`HangfireIndexUpgradeCoordination` slots on Hangfire distributed locks, failed releases swallowed), not
   `DisableConcurrentExecution`: its lock timeout fails waiting jobs during hours-long builds. Leases are taken before the tenant is
   resolved or inspected. A run that cannot work now throws `IndexUpgradeDeferredException`; `IndexUpgradeDeferAttribute` (order 0,
-  before `AutomaticRetry`) makes it `Scheduled`, never `Failed`.
+  before `AutomaticRetry`) makes it `Scheduled`, never `Failed`. A switched-off
+  upgrade (`MaxConcurrent` 0) or a closed window is no deferral Hangfire retries: the run records `Deferred` and ends `Succeeded`, and the
+  next sweep enqueues the tenant again.
 - **Incomplete, not Failed**: legacy indexes of collections the engine manages (collection roots of Available models) that are
   left after the run - a build the engine logged as failed - end it `Incomplete` (warning, no retry). So does a final read that
   failed after the engine returned (`LegacyIndexesAfter` null, "not verified": look at MongoDB, not at the models) and CK metadata
@@ -32,7 +34,7 @@ configuration per environment and prod rollout: `docs/index-upgrade.md`. Rules:
   collection - a deliberate coupling pinned by `IndexUpgradeIntegrationTests.CollectionRootReader_ReadsWhatTheEngineWrote`), never by
   the name. Leftovers that are only model not Available or orphaned end the run `Succeeded` with `Warning` and `Leftovers` in the
   record (logged at Warning), without calling the engine when nothing is managed; the sweep enqueues a tenant only for a managed
-  index. Details: "Leftover categories" in `docs/index-upgrade.md`.
+  index (when the CK metadata cannot be read it enqueues the tenant anyway). Details: "Leftover categories" in `docs/index-upgrade.md`.
 - **CK imports go first**: `ImportModelJob` CK imports enter `ICkImportIndexUpgradeGate` (own yield request per import + tenant lease);
   a running upgrade stops before its next collection and is rescheduled. Embedded CK imports of other services do not pass the gate
   (90 s lock wait in the engine, then `TenantSetupRetryTracker`); documented remaining risk, engine fix tracked separately.

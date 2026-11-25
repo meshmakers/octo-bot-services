@@ -1,5 +1,5 @@
 ---
-description: Bus command consumers are registered shared (competing consumers) so each command is processed once by any replica.
+description: Bus command consumers are registered shared (competing consumers) so any replica takes a command; delivery is at-least-once.
 applies_to: src/BotServices/Consumers/**
 ---
 
@@ -10,8 +10,9 @@ applies_to: src/BotServices/Consumers/**
 The six bus commands of this service (`ImportCk`, `ImportCkBatch`, `ImportRt`, `ExportRtByQuery`, `ExportRtByDeepGraph`:
 `ModelCommandsConsumer`; `RemoveRecurringJobsByScheduleGroup`: `RecurringJobConsumer`) are registered **shared**
 (competing consumers) in `Consumers/BotCommandConsumers.cs`, called from `Program.cs`. With two or more replicas every
-replica consumes them and each command is processed **exactly once** by one of them; before they became shared they were classic
-exclusive consumers (one replica consumed, the others waited).
+replica consumes them and each delivery goes to one of them; before they became shared they were classic
+exclusive consumers (one replica consumed, the others waited). Delivery is **at-least-once**: after a lost acknowledgement the broker
+delivers a command again, and `ModelCommandsConsumer` has no deduplication, so it then enqueues a second job.
 
 - `CommandConsumerOptions { MigratesLegacyCommand = true }` is **required**: the senders (asset repository, communication
   controller, AI and MCP service; `AddCommandClient`) still send to the classic address. The consumers use the queues
