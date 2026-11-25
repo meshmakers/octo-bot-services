@@ -5,7 +5,7 @@ applies_to: src/BotServices/Configuration/*Cors*.cs, src/BotServices/Configurati
 
 # CORS, cookies and the Data Protection key ring
 
-## CORS and cookies (AB#7270)
+## CORS and cookies
 
 - CORS = the shared known-origins policy of `AddOctoServiceInfrastructure()` (`app.UseCors()` without a policy): allowed
   origins are the registered client origins of the addressed tenant (system routes and unknown tenants: system tenant),
@@ -20,6 +20,6 @@ applies_to: src/BotServices/Configuration/*Cors*.cs, src/BotServices/Configurati
   neither the query token nor the cookie becomes an Authorization header. After the update an old cookie with
   `Path=/` stays in the browser until it expires; it is ignored outside `/ui`.
 
-## Data Protection key ring shared by all replicas (AB#9172)
+## Data Protection key ring shared by all replicas
 
 Data Protection keys (cookies, OIDC `state`/`nonce`, antiforgery) are persisted with `AddOctoDataProtectionKeyRing("OctoBotServices")` (`octo-common-services/docs/data-protection.md`): one key ring shared by all replicas and kept across restarts, stored in the system tenant and encrypted with the `SecretEncryption` key ring. Without a key ring the service keeps the local default directory (one ring per pod) and logs a warning; then multi-replica sign-in fails again. Roll out an identity service that ignores prefixed key names first (soft order).

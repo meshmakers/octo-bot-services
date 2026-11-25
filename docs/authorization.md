@@ -5,7 +5,7 @@ applies_to: src/BotServices/Configuration/BotAuthorizationPolicies.cs, src/BotSe
 
 # Authorization and tenant job gates
 
-## Authorization (AB#4497)
+## Authorization
 
 | Surface | Required |
 | --- | --- |

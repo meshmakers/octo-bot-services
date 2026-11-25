@@ -129,7 +129,7 @@ without it, no job is enqueued):
 * A dump is a whole-tenant backup and **bypasses row-level data permissions by design**; the role gate is what protects
   it. The runtime-data exports (`ExportRtByQuery`, `ExportRtByDeepGraph`) are the opposite: they run with the identity
   and roles of the user who requested them, so the result contains only what that user may read, and only the
-  initiating subject can download it (see "Export jobs run as the caller" in `CLAUDE.md`).
+  initiating subject can download it (see "Export jobs run as the caller" in `docs/export-jobs.md`).
 * The Hangfire dashboard `/ui/jobs` lists the jobs of all tenants, so on top of the scope gate it is reachable only
   for callers of the **system tenant** (`tenant_id` claim = `OctoSystemConfiguration.SystemTenantId`) **that also hold
   the tenant role `TenantManagement`** (`HangfireDashboardAccessMiddleware` + `HangfireDashboardAuthorizationFilter`);
@@ -492,7 +492,7 @@ all. The **`Add…` call is what makes the variables take effect** — `UseOctoT
 alone runs on the built-in defaults and the environment is ignored (AB#5047). Every OctoMesh service
 hosting the middleware (Identity, Communication Controller, Asset-Repo, Bot, MCP) binds the same
 section through the same helper, so one fleet-wide value reaches all of them. Semantics and the
-`Enforce` rollout rules are documented in `octo-common-services/CLAUDE.md`.
+`Enforce` rollout rules are documented in `octo-common-services/docs/tenant-generation-check.md`.
 
 ### Running more than one replica: command consumers (AB#6910)
 
@@ -502,7 +502,7 @@ consumers (queues `…::shared`, registered in `src/BotServices/Consumers/BotCom
 replicas each command is processed exactly once by one of them, and the caller gets the answer as before. Senders
 need no change: the consumers serve the classic command address (`MigratesLegacyCommand = true`) once no old
 exclusive replica is alive, so a rolling update from an older build loses or duplicates nothing. Requires
-`Meshmakers.Octo.Common.DistributionEventHub` 3.5.65 or newer (AB#8368). Details: `CLAUDE.md`, "Command consumers run
+`Meshmakers.Octo.Common.DistributionEventHub` 3.5.65 or newer. Details: `docs/command-consumers.md`, "Command consumers run
 on every replica".
 
 ### Repository dump as an asynchronous CK method (AB#8445)

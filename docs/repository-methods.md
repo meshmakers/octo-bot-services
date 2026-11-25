@@ -5,11 +5,11 @@ applies_to: src/BotServices/Methods/**, src/Jobs/Jobs/Operations/**, src/Jobs/Jo
 
 # Repository dump, restore and archive data as async CK methods
 
-## Async repository dump as a CK method (AB#8445; System.Bot 3.7.0)
+## Async repository dump as a CK method (System.Bot 3.7.0)
 
 `System.Bot/TenantRepository.Dump-1` (static, `execution.mode: async`, `handler: service`, roles `TenantManagement`) is the first CK
 method this service hosts. User documentation: README "Repository dump as an asynchronous CK method"; method runtime:
-`octo-common-services/docs/method-handler-sdk.md` section 11.
+`octo-common-services/docs/method-handler-sdk-async.md`.
 
 - **Host**: `src/BotServices/Methods/BotMethodHost.cs` (`AddBotCkMethodHost`, called from `Program.cs`; `AddCkMethodHandlerDiscovery` on the
   event hub). It registers the handler, the caller token validation (authority = `Bot:AuthorityUrl`), the MongoDB operation store
@@ -24,7 +24,7 @@ method this service hosts. User documentation: README "Repository dump as an asy
 - **At most once (OD-5)**: Hangfire requeues a job whose server stopped (graceful: the shutdown token cancels it and it is requeued;
   killed: after the invisibility timeout). `AutomaticRetry` does not cover that, so `RunForOperation` sets `OctoDumpStarted` at the first
   start and fails a second start with `OctoDumpOutcome = interrupted`; it also refuses when the operation is no longer `Accepted` /
-  `Running` (`operation-closed`). The operation of a stopped host ends `METHOD_OUTCOME_UNKNOWN` / `handler-lost` (runtime of AB#8443).
+  `Running` (`operation-closed`). The operation of a stopped host ends `METHOD_OUTCOME_UNKNOWN` / `handler-lost` (runtime of the method operations).
 - **Replicas**: the work and the job may run on different replicas (shared Hangfire storage, job parameters as the channel). If the
   replica of the work dies, the operation ends `handler-lost` while the job may still finish; the dump is then reachable through
   `system/v1/jobs` only (outcome unknown by design).
@@ -33,7 +33,7 @@ method this service hosts. User documentation: README "Repository dump as an asy
   (`DistributedLockTimeoutException`, job deleted, nothing dumped); the handler answers `DUMP_FAILED` with `reason`
   `another-dump-running`, and the caller tries again later. Raising the timeout would keep a Hangfire worker blocked for as long.
 - **Result JSON**: the generated `RtRecord` would serialize its attribute dictionary; `src/SystemBotCkModel/RtRepositoryDumpResultRecord.Json.cs`
-  adds a System.Text.Json converter so the wire form is the bare `{"jobId","downloadPath"}` object (method wire contract, AB#8079).
+  adds a System.Text.Json converter so the wire form is the bare `{"jobId","downloadPath"}` object (method wire contract).
 - **CK model**: 3.7.0 adds `TenantRepository` (`derivable: Model`), the record `RepositoryDumpResult` and two attributes - a Minor.
   `minEngineVersion` rises from 3.5.1 to **3.5.67** (`execution.mode`, `ck-engine-version.md` of the engine): publish only where every
   service runs that engine.
@@ -43,7 +43,7 @@ method this service hosts. User documentation: README "Repository dump as an asy
   `Jobs.Tests/CkModels/SystemBotCkLanguage2Tests` and `Jobs.IntegrationTests/SystemBotCkLanguage2PersistenceTests` (method survives the
   round trip).
 
-## Restore and archive data as async CK methods (AB#8447; System.Bot 3.8.0)
+## Restore and archive data as async CK methods (System.Bot 3.8.0)
 
 `TenantRepository.Restore-1`, `ExportArchiveData-1`, `ImportArchiveData-1` (static, async, `TenantManagement`). User docs: README
 "Restore and archive data export/import as asynchronous CK methods".
@@ -58,11 +58,11 @@ method this service hosts. User documentation: README "Repository dump as an asy
   (`SystemBotCkModel/RtJobResultRecords.Json.cs`, generic `RtRecordWireJsonConverter<T>`; the dump keeps its own converter).
 - Row-pump progress has **no percentage** (`DumpProgress.Percent = -1` → stored without percent).
 - Restore: the operation record is in the system database, never touched by the restore. Deleted tenant: `TenantManagementConsumer`
-  purges via `ICkMethodOperationTenantPurge` (common-services AB#8447) on **`PosDeleteTenant`** (after the drop, sent from a `finally` also when the drop fails; `PreDeleteTenant`
+  purges via `ICkMethodOperationTenantPurge` (common-services) on **`PosDeleteTenant`** (after the drop, sent from a `finally` also when the drop fails; `PreDeleteTenant`
   only removes the recurring jobs), failures only logged. **The delete events are also sent by a restore (`TenantBackupService`
   drops and re-attaches the tenant) and a detach** — purge only when `ITenantLifecycleStore` shows `Deleting` (the delete endpoint
   marks it before it starts); without that gate a method restore deleted its own record (local E2E 2026-11-11).
-- **Recreated tenant id (AB#8881, security)**: the purge can fail and a call admitted before the delete can write its record after the
+- **Recreated tenant id (security)**: the purge can fail and a call admitted before the delete can write its record after the
   purge. `AddCkMethodMongoOperationStore()` wraps the store in `CkMethodTenantGenerationOperationStore` (common-services), so every read
   (`DumpOperationGate`, the gateway) ignores records accepted before the current tenant's `TenantLifecycleRecord.CreatedUtc`.
   `DefaultConfigurationCreatorService.StartTenantAsync` runs `Methods/OperationRecordGenerationCleanup` (removes those records via

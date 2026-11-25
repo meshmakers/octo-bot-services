@@ -5,10 +5,10 @@ applies_to: src/Jobs/Commands/ImportCkModelCommand.cs, src/Jobs/Jobs/ImportModel
 
 # CK imports of service-managed models
 
-## CK imports of service-managed models are refused (AB#9325)
+## CK imports of service-managed models are refused
 
 `ImportModelJob.ImportCkAsync` / `ImportCkBatchAsync` call `ImportCkModelCommand`, which calls the engine's caller overload
-`ITenantContext.ImportCkModelAsync(CkCompiledModelRoot)`. Since engine-mongodb AB#9325 that overload refuses every `System` /
+`ITenantContext.ImportCkModelAsync(CkCompiledModelRoot)`. In engine-mongodb that overload refuses every `System` /
 `System.*` model (`ServiceManagedCkModelImportRefusedException`, code `CK_SERVICE_MANAGED_MODEL`) before it writes anything.
 The command logs one WARN (model id, code, never the content) and rethrows; both job methods carry
 `AutomaticRetry(ExceptOn = [typeof(ServiceManagedCkModelImportRefusedException)])`, so the job is `Failed` at once. The job

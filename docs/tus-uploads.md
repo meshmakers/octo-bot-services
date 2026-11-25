@@ -5,7 +5,7 @@ applies_to: src/BotServices/Tus*.cs, src/BotServices/Services/ArtifactTusStore.c
 
 # tus uploads shared by all replicas
 
-## tus uploads are shared by all replicas (AB#8736)
+## tus uploads are shared by all replicas
 
 The bot runs with more than one replica behind an ingress without affinity. Never store upload state on the pod's disk or
 in process memory: the tus endpoint (`TusUploadEndpoint.MapBotTusUpload`) stores into the artifact store
