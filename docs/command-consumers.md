@@ -17,7 +17,7 @@ delivers a command again, and `ModelCommandsConsumer` has no deduplication, so i
 - `CommandConsumerOptions { MigratesLegacyCommand = true }` is **required**: the senders (asset repository, communication
   controller, AI and MCP service; `AddCommandClient`) still send to the classic address. The consumers use the queues
   `…::shared` and serve the classic address only while no old exclusive replica is alive, so a rolling update starts
-  without errors and loses or duplicates nothing. Rollback: stop the new replicas first (`octo-distributedEventHub/docs/DEVELOPER.md`,
+  without errors and loses no command (at-least-once delivery still applies, see above). Rollback: stop the new replicas first (`octo-distributedEventHub/docs/DEVELOPER.md`,
   "Migrating exclusive command queues"). Needs the event hub fix (DistributionEventHub 3.5.65 or newer, one
   `LegacyCommandBridgeObserver` per migrated command): before it, only the first migrated command of a process served
   classic senders, and `BotCommandConsumerReplicaTests` fails.

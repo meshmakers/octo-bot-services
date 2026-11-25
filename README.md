@@ -501,7 +501,7 @@ The six bus commands of the service (`ImportCk`, `ImportCkBatch`, `ImportRt`, `E
 consumers (queues `…::shared`, registered in `src/BotServices/Consumers/BotCommandConsumers.cs`). With two or more
 replicas each delivery goes to one of them (delivery is at-least-once, see `docs/command-consumers.md`), and the caller gets the answer as before. Senders
 need no change: the consumers serve the classic command address (`MigratesLegacyCommand = true`) once no old
-exclusive replica is alive, so a rolling update from an older build loses or duplicates nothing. Requires
+exclusive replica is alive, so a rolling update from an older build starts without errors and loses no command (delivery is at-least-once: a command can be delivered more than once). Requires
 `Meshmakers.Octo.Common.DistributionEventHub` 3.5.65 or newer. Details: `docs/command-consumers.md`, "Command consumers run
 on every replica".
 
