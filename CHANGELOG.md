@@ -3,7 +3,7 @@
 ## Unreleased
 
 - AB#9118 Docs: `docs/index-upgrade.md` records the staging measurement of the index upgrade (2026-11-25: whole run about
-  16 minutes, largest tenant 14 minutes for one collection of 885,240 documents, about 22-23 s per index per 100,000
+  16 minutes, largest tenant 14 minutes for one collection of 885,240 documents, about 15-16 s per index per 100,000
   documents, slower MongoDB for every tenant of the cluster, no errors). The production rollout procedure now derives
   from it the window length, the quiet time, the memory and disk check, the chart values per cluster, the Dash0 check
   and a stop procedure during a window.

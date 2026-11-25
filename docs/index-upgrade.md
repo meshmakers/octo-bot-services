@@ -282,8 +282,8 @@ The staging environment is a copy of production. Measured with `Schedule=Immedia
   - The largest tenant took 837 s (14 min). 811 s of it were one collection of 885,240 documents with 6 legacy
     indexes; each index took 133-141 s, built one after the other (background build, write concern majority).
 - **Whole run**: about 16 minutes (without the largest tenant about 2 minutes).
-- **Rule of thumb**: about 22-23 s per index per 100,000 documents on this hardware. The duration of a tenant is driven
-  by its largest collections, not by the number of collections.
+- **Rule of thumb**: about 15-16 s per index per 100,000 documents on this hardware (133-141 s per index for 885,240
+  documents). The duration of a tenant is driven by its largest collections, not by the number of collections.
 
 Impact while the indexes were built (no errors anywhere):
 
