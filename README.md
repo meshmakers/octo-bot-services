@@ -384,7 +384,7 @@ archive **keeps its status** (result detail `status Failed` / `status Disabled`)
 Skipped with the reason, table untouched: a rollup over a Hidden attribute, a rollup whose source was restored this way, and a
 native backup written before AB#9141 that still holds such a column; the rollup repair after the restore leaves these archives
 alone too (its scope excludes them). If the check cannot read the model, the restore goes on as before. The job takes the optional `ICkCacheService` to name the Hidden columns of an archive the re-validation does not record.
-Details: engine `docs/archive-hidden-columns.md`, "Backups".
+Details: `octo-construction-kit-engine/docs/archive-hidden-columns.md`, "Backups".
 
 **Rollup reconcile** (after the archives of every restore with archive data, format 1 and 2; AB#5967 slice 2). A recompute flag
 restored from the backup (`RecomputeInProgress`) is reset first, because it would suppress the orphan check. The

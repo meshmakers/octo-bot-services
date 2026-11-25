@@ -1,3 +1,8 @@
+---
+description: Operator view of the paging index upgrade: what the job does, configuration per environment, rollout and the leftover categories.
+background: true
+---
+
 # Paging index upgrade (AB#9118, AB#9322, AB#9709)
 
 Pages of runtime queries sort totally only when the CK Ascending indexes of a collection have the keys
