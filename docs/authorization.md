@@ -1,6 +1,6 @@
 ---
 description: HTTP authorization of the job service: policies, tenant roles, Hangfire dashboard access and tenant gate defaults.
-applies_to: src/BotServices/Configuration/BotAuthorizationPolicies.cs, src/BotServices/*Authorization*.cs, src/BotServices/HangfireDashboard*.cs, src/BotServices/*Api/**
+applies_to: src/BotServices/Configuration/BotAuthorizationPolicies.cs, src/BotServices/*Authorization*.cs, src/BotServices/HangfireDashboard*.cs, src/BotServices/*Api/**, src/BotServices/Program.cs
 ---
 
 # Authorization and tenant job gates

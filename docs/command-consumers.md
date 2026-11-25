@@ -1,6 +1,6 @@
 ---
 description: Bus command consumers are registered shared (competing consumers) so any replica takes a command; delivery is at-least-once.
-applies_to: src/BotServices/Consumers/**
+applies_to: src/BotServices/Consumers/**, src/BotServices/Program.cs
 ---
 
 # Command consumers on every replica
@@ -28,7 +28,7 @@ delivers a command again, and `ModelCommandsConsumer` has no deduplication, so i
 - The deprecation warning ("classic EXCLUSIVE topology") is no longer logged at start. A new command consumer is
   added to `BotCommandConsumers` with the shared options and a comment why it is safe.
 - Tests: `Jobs.IntegrationTests/BotCommandConsumerReplicaTests` (Docker, RabbitMQ Testcontainer): two replicas with the
-  production registration and recording Hangfire fakes, 12 commands of each kind from classic senders, each processed
-  once, both replicas consume; no deprecation warning at start; rolling update old exclusive + new shared replica.
+  production registration and recording Hangfire fakes, 12 commands of each kind from classic senders, each handled by one
+  replica, both replicas consume; no deprecation warning at start; rolling update old exclusive + new shared replica.
 - Operations: queues `*::shared` and exchanges `*::send` are new names; broker policies or monitoring matching command
   queue names must include them.

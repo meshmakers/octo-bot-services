@@ -23,9 +23,9 @@ behaviour is documented in `README.md`.
 <!-- >>> generated: routing -->
 | When you change | Read first |
 |---|---|
-| `src/BotServices/Configuration/BotAuthorizationPolicies.cs`, `src/BotServices/*Authorization*.cs`, `src/BotServices/HangfireDashboard*.cs`, `src/BotServices/*Api/**` | `docs/authorization.md` |
+| `src/BotServices/Configuration/BotAuthorizationPolicies.cs`, `src/BotServices/*Authorization*.cs`, `src/BotServices/HangfireDashboard*.cs`, `src/BotServices/*Api/**`, `src/BotServices/Program.cs` | `docs/authorization.md` |
 | `src/Jobs/Commands/ImportCkModelCommand.cs`, `src/Jobs/Jobs/ImportModelJob.cs` | `docs/ck-import-refusal.md` |
-| `src/BotServices/Consumers/**` | `docs/command-consumers.md` |
+| `src/BotServices/Consumers/**`, `src/BotServices/Program.cs` | `docs/command-consumers.md` |
 | `src/Jobs/Commands/**`, `src/Jobs/Jobs/*Model*Job.cs`, `src/Jobs/Jobs/RunFixupJob.cs`, `tests/Jobs.IntegrationTests/Export*.cs` | `docs/export-jobs.md` |
 | `src/BotServices/HangfireSetup/**` | `docs/hangfire-mongo-connection.md` |
 | `src/Jobs/IndexUpgrade/**`, `tests/Jobs.Tests/IndexUpgrade/**`, `src/Jobs/Jobs/ImportModelJob.cs`, `src/BotServices/Consumers/TenantManagementConsumer.cs` | `docs/index-upgrade-rules.md` |
@@ -67,7 +67,7 @@ dotnet test --project tests/Jobs.IntegrationTests/Jobs.IntegrationTests.csproj -
   own token.** An HTTP route carries `BotServiceConstants.TenantJobManagementPolicy` (`TenantApi`
   `JobsController.cs:117`, `:139`, `:169`, `:192`, `:217`, `:311`; `SystemApi` `JobsController.cs:133`), a CK method
   declares `roles: [ TenantManagement ]` in its type (`types/tenantRepository.yaml` of `SystemBotCkModel`), which the
-  method host checks (`BotMethodHost.cs:37`), a tus route goes through
+  method host checks (`BotMethodHost.cs:38`), a tus route goes through
   `TusUploadAuthorization.cs:29`; bus consumers have no gate of their own. Do not override the tenant gate defaults
   (`Enforce`) in `Program.cs`. Exception: the dump is a whole-tenant backup by design and bypasses row-level data
   permissions; its protection is the gate. `docs/authorization.md`; enforced by `TenantJobRoleWiringTests.cs:94` (an
