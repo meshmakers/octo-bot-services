@@ -297,6 +297,18 @@ file id (never a local path). Never copy a whole upload inside a request (the in
 assemblies remove each other's result): the job start only checks, the job reads (import) or assembles (restore). Test: `Jobs.Tests/Api/SharedUploadReplicaTests` (two hosts over one store: create on A, HEAD and PATCH on B, job
 start on A, job on a third), `Jobs.Tests/Services/SharedUploadStoreTests`. Details: README "Shared tus uploads".
 
+## CK imports of service-managed models are refused (AB#9325)
+
+`ImportModelJob.ImportCkAsync` / `ImportCkBatchAsync` call `ImportCkModelCommand`, which calls the engine's caller overload
+`ITenantContext.ImportCkModelAsync(CkCompiledModelRoot)`. Since engine-mongodb AB#9325 that overload refuses every `System` /
+`System.*` model (`ServiceManagedCkModelImportRefusedException`, code `CK_SERVICE_MANAGED_MODEL`) before it writes anything.
+The command logs one WARN (model id, code, never the content) and rethrows; both job methods carry
+`AutomaticRetry(ExceptOn = [typeof(ServiceManagedCkModelImportRefusedException)])`, so the job is `Failed` at once. The job
+signatures are unchanged on purpose: a job enqueued before the update runs into the same refusal. Batch rule: per model, in
+order; the refused model stops the batch, earlier models stay imported, no cache stream is cleared. Never add a bypass
+here: service-managed models come only through the owning service's embedded import. Tests:
+`tests/Jobs.Tests/Jobs/ImportModelJobServiceManagedRefusalTests`.
+
 ## Paging index upgrade per tenant (AB#9118)
 
 `src/Jobs/IndexUpgrade`: one idempotent Hangfire job per tenant (`IIndexUpgradeJob`, queue `index-upgrade`, own lightweight
