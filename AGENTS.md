@@ -13,7 +13,7 @@ behaviour is documented in `README.md`.
 
 - `src/BotServices` - ASP.NET Core host: `Program.cs`, REST controllers, bus command consumers, the CK method host.
 - `src/Jobs` - Hangfire jobs, commands, secret sweep and the index upgrade (`src/Jobs/IndexUpgrade`).
-- `src/RepositoryUpdate` - repository fixup scripts.
+- `src/RepositoryUpdate` - repository fixup scripts. `src/BotServices.Resources` - localized resource texts.
 - `src/SystemBotCkModel` - the embedded `System.Bot` CK model.
 - `tests/Jobs.Tests` - unit tests. `tests/Jobs.IntegrationTests` - integration tests against real MongoDB and
   RabbitMQ containers (Docker). `tests/ExportTestCkModel` - the small CK model the export tests use.
@@ -63,38 +63,47 @@ dotnet test --project tests/Jobs.IntegrationTests/Jobs.IntegrationTests.csproj -
 
 - **This repository is public.** No work item ids, internal hostnames, environment, customer or tenant names, or
   secrets in docs and in new or changed code comments and test names; remove an existing one when you touch its line.
-- **A new tenant-wide data job gets `BotServiceConstants.TenantJobManagementPolicy` on every entry point and a test
-  that names the entry point.** The role is read from the caller's own token; the tenant gate defaults
-  (`Enforce`) are not overridden in `Program.cs`. Exception: the dump is a whole-tenant backup by design and bypasses
+- **Every entry point of a tenant-wide data job is gated by the tenant role `TenantManagement`.** An HTTP route
+  carries `BotServiceConstants.TenantJobManagementPolicy` (`TenantApi` `JobsController.cs:117`, `:139`, `:169`, `:192`,
+  `:217`, `:311`; `SystemApi` `JobsController.cs:133`) and a test that names it; a CK method declares the role for the
+  method host (`BotMethodHost.cs:36`); a tus route goes through `TusUploadAuthorization.cs:29`. The role is read from
+  the caller's own token; the tenant gate defaults (`Enforce`) are not overridden in `Program.cs`. Bus consumers have
+  no role gate of their own. Exception: the dump is a whole-tenant backup by design and bypasses
   row-level data permissions; its protection is the gate. `docs/authorization.md`; enforced by
-  `TenantJobRoleWiringTests.cs:94` (an explicit list of entry points: add yours) and `:118` (gate defaults),
-  `DumpWholeTenantByDesignTests.cs:21`.
+  `TenantJobRoleWiringTests.cs:94` (an explicit list of HTTP entry points: add yours), `:108` (system download route)
+  and `:118` (gate defaults), `DumpWholeTenantByDesignTests.cs:21`.
 - **A job that reads runtime data for a user runs as that user and fails closed.** It takes the subject from the
   command, refuses a request without one and opens its session through `ExportCallerContext.OpenSessionAsync`,
   never through the parameterless `GetSessionAsync()`; a service token is never the system. Exceptions: the dump
-  (above) and the import session, which stays a system session. `docs/export-jobs.md`; enforced by
-  `ExportCallerContextTests.cs:57` and `:84`, `ExportArtifactSubjectBindingTests.cs:18`.
-- **Every repository session is disposed with `using var session`, and no `catch` aborts the transaction itself.**
-  After a failed commit the abort throws and hides the cause. `docs/export-jobs.md`; enforced by
+  (above), the import session, which stays a system session, and jobs without a requesting user (aggregation,
+  fixup: `AttributeValueAggregatorJob.cs:56`, `RepositoryFixupService.cs:28`, `:65`), which may use a system session.
+  `docs/export-jobs.md`; enforced by `ExportCallerContextTests.cs:57` and `:84`,
+  `ExportArtifactSubjectBindingTests.cs:18`.
+- **Every repository session is disposed by a `using` declaration or block, and no `catch` aborts the transaction
+  itself.** After a failed commit the abort throws and hides the cause. `docs/export-jobs.md`; enforced by
   `ExportSessionDisposalTests.cs:36` (needs Docker), `RepositoryFixupServiceSessionTests.cs:20`.
 - **A new bus command consumer is registered shared through `BotCommandConsumers.SharedOptions`, with a comment why
   concurrent consumers are safe.** `MigratesLegacyCommand` stays `true` while senders use the classic address.
   `docs/command-consumers.md`; enforced by `BotCommandConsumerReplicaTests.cs:34` (needs Docker),
   `BotCommandConsumers.cs:30`.
-- **No upload or job state lives on a pod's disk or in process memory.** The service runs with several replicas
-  without affinity: tus state goes through `ISharedUploadStore`, jobs read it by tus file id, and a request never
-  copies a whole upload. `docs/tus-uploads.md`; enforced by `SharedUploadReplicaTests.cs:25`.
+- **No upload state, and no state that one request or job run hands to another, lives on a pod's disk or in process
+  memory; scratch files inside one job run are fine.** The service runs with several replicas without affinity: tus
+  state goes through `ISharedUploadStore`, jobs read it by tus file id, and a request never copies a whole upload.
+  `docs/tus-uploads.md`; enforced by `SharedUploadReplicaTests.cs:25`.
 - **The Hangfire job storage gets a `MongoUrl` and one `MongoClient`, never a connection string.** The string form of
   the driver's URL types is redacted. `docs/hangfire-mongo-connection.md`; enforced by
   `HangfireMongoConnectionTests.cs:27`, `HangfireMongoConnection.cs`.
 - **A job whose signature is stored in Hangfire keeps that signature; add an overload instead of changing it.** Jobs
-  enqueued before an update must still run (an old overload runs with the safe default). Never bypass the refusal of
-  service-managed CK models in the import jobs. `docs/ck-import-refusal.md`, `docs/export-jobs.md`; enforced by
-  `ImportModelJobRtTests.cs:73`, `ImportModelJobServiceManagedRefusalTests.cs:54`.
-- **A new async CK method of this service reuses `JobOperationRelay`, `OperationJobGuard` and `BotJobMethodErrors`,
-  validates before it enqueues, and runs a job at most once.** `docs/repository-methods.md`; enforced by
-  `TenantRepositoryDumpHandlerTests.cs:26`,
-  `DumpRepositoryJobForOperationTests.cs:82`.
+  enqueued before an update must still run (an old overload runs with the safe default). `docs/export-jobs.md`;
+  enforced by `ImportModelJobRtTests.cs:73`.
+- **The CK import jobs never bypass the refusal of service-managed (`System`) models.** The job fails at once without
+  retry and keeps its signature. `docs/ck-import-refusal.md`; enforced by
+  `ImportModelJobServiceManagedRefusalTests.cs:54`.
+- **A new async CK method of this service validates before it enqueues; its handler uses `JobOperationRelay` and
+  `BotJobMethodErrors`, and its job enters `OperationJobGuard` so it runs at most once.** Exception: the dump handler
+  keeps its own declared errors (`TenantRepositoryDumpHandler.cs:45`, `:107`). `docs/repository-methods.md`; enforced
+  by `TenantRepositoryDumpHandlerTests.cs:26`, `DumpRepositoryJobForOperationTests.cs:82` (guard:
+  `DumpRepositoryJob.cs:67`, `RestoreRepositoryJob.cs:99`, `ExportArchiveDataJob.cs:74`, `ImportArchiveDataJob.cs:78`).
 - **A change of the `System.Bot` model is judged against the semver rows before you edit it.** A new type declares
   `derivable` on purpose; raising `minEngineVersion` or the dependency floor is a decision, not a side effect.
   `docs/system-bot-ck-model.md`; enforced by `SystemBotCkLanguage2Tests.cs:13` and the CK version validation of the

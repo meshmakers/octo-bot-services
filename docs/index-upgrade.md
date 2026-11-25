@@ -50,7 +50,7 @@ Every legacy index is counted in exactly one category, decided by the tenant's C
 | Category | Meaning | Keeps the tenant `Incomplete` | Gets a job from the sweep | Operator action |
 | --- | --- | --- | --- | --- |
 | *managed* | collection root of an `Available` model: the engine upgrades it | yes | yes | read the engine's warnings (index build failed) |
-| *model not Available* | collection root of a model in another state (`ResolveFailed`, `Importing`); the record names model id and state, e.g. `Monitoring-2.1.0 ResolveFailed` | no | no | `octo-cli LibraryStatus` of the tenant, then Fix or Update the model. A retired model without a catalog version (e.g. `Monitoring-2.1.0` on test-2 octosystem, retired 2026-09-30) stays until it is removed |
+| *model not Available* | collection root of a model in another state (`ResolveFailed`, `Importing`); the record names model id and state, e.g. `Monitoring-2.1.0 ResolveFailed` | no | no | `octo-cli LibraryStatus` of the tenant, then Fix or Update the model. A retired model without a catalog version (e.g. `Monitoring-2.1.0` on a test environment, retired 2026-09-30) stays until it is removed |
 | *orphaned* | a collection without a collection root, left by an older model or a migration (e.g. `RtEntity_SystemQuery` after System 1.0.3 -> 2.0.0) | no | no | none; the collection and its indexes are not deleted |
 
 A model that becomes `Available` later (library update or Fix) turns its indexes *managed*, so the next sweep enqueues the

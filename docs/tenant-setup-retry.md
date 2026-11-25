@@ -7,7 +7,7 @@ applies_to: src/BotServices/Services/DefaultConfigurationCreatorService.cs
 
 ## Failed tenant setup is retried without MongoDB
 
-On a staging cluster, 2026-10-21: during a MongoDB primary election the setup of two tenants failed, the log
+On a pre-production cluster, 2026-10-21: during a MongoDB primary election the setup of two tenants failed, the log
 said "this tenant will be retried in the background", but this service wired no retry store, so nothing was ever
 retried and the tenants' adapters stayed offline ("Tenant not enabled") until a manual pod restart. The shared
 `TenantSetupRetryTracker` (octo-common-services, in-memory, process-wide) now queues every failed `SetupAsync` and
