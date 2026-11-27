@@ -238,14 +238,15 @@ public class ImportModelJob : IImportModelJob
             await _compressionService.ExtractFileFromZipAsync(cacheStream.Stream, cacheStream.ContentType, files =>
             {
                 var compressedFiles = files as CompressedFile[] ?? files.ToArray();
-                var jsonFile = compressedFiles.FirstOrDefault(x => Path.GetExtension(x.Name).ToLower() == ".json");
-                if (jsonFile == null)
+                var jsonFile = compressedFiles.FirstOrDefault(file => HasExtension(file, ".json"));
+                if (jsonFile != null)
                 {
-                    contentType = MimeTypes.MimeTypeYaml;
-                    return compressedFiles.FirstOrDefault(x => Path.GetExtension(x.Name).ToLower() == ".yaml");
+                    return jsonFile;
                 }
 
-                return null;
+                contentType = MimeTypes.MimeTypeYaml;
+                return compressedFiles.FirstOrDefault(file => HasExtension(file, ".yaml", ".yml"))
+                       ?? throw JobFailedException.NoModelFileInZip();
             }, tempFile);
             return new Tuple<string, string>(tempFile, contentType);
         }
@@ -266,6 +267,12 @@ public class ImportModelJob : IImportModelJob
         }
 
         throw JobFailedException.ContentTypeNotSupported(cacheStream.ContentType);
+    }
+
+    private static bool HasExtension(CompressedFile file, params string[] extensions)
+    {
+        var fileExtension = Path.GetExtension(file.Name);
+        return extensions.Any(extension => string.Equals(fileExtension, extension, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task ClearCache(string tenantId, string key)

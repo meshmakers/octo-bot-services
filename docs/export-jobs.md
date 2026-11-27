@@ -58,6 +58,10 @@ Hangfire `IExportModelJob`) run with the data permissions of the user who reques
   passes it to `RtImportCallerContext.UserInitiated(subject, kind)`, where CK types with a `writeAccess` block (engine) admit or
   refuse the import (message 144). The overloads without the kind stay for jobs enqueued before (Hangfire resolves the stored signature)
   and run with `Unknown`. Tests: `Jobs.Tests/Jobs/ImportModelJobRtTests`, `Jobs.Tests/Consumers/ModelCommandsConsumerImportCallerTests`.
+- Zip uploads (ImportCk, the CK batch import, ImportRt): the job imports one entry of the zip. The first `.json` entry wins
+  and is imported as JSON; without one, the first `.yaml` or `.yml` entry is imported as YAML (extensions in any case). A
+  zip with neither fails with `JobFailedException` naming the accepted extensions.
+  Tests: `Jobs.Tests/Jobs/ImportModelJobZipTests`.
 - Export/import round trip of record arrays: `Jobs.IntegrationTests/DataPointRoundTripTests` (needs Docker) exports an entity
   with a seed-owned RecordArray of `DataPointSample` (the ownership layout of `System.Communication/DataPoint`: `Name` and the
   required `ExternalId` seed-owned, `CurrentValue` / `LastUpdate` runtime state; `tests/ExportTestCkModel`, `Control`) by deep graph
