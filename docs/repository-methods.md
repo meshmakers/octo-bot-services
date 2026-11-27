@@ -80,7 +80,10 @@ The engine refuses a restore whose dump holds a service-managed CK model (`Syste
 published one, before the attach (repository octo-construction-kit-engine-mongodb, file ck-model-import.md, "Restore check of service-managed models").
 Its failure `Error` starts with `RESTORE_SYSTEM_MODEL_REFUSED` and names model, version and reason, never content.
 `JobFailedException.RestoreFailed` (used by `RestoreRepositoryJob` and `RestorePreSweepDumpJob`) fails the job with that
-message as it is; any other restore failure keeps the command details (`CommandExecutionFailed`). The `Restore-1` method
+message as it is, followed by the engine's tenant-notification warnings (`TenantNotificationWarnings`): the engine checks
+once before anything is dropped and once more before the attach, and a refusal of the second check comes after
+`dropExistingTenant` dropped the existing tenant, possibly with a failed tenant-deleted notification. Any other restore
+failure keeps the command details (`CommandExecutionFailed`). The `Restore-1` method
 reports it as `RESTORE_FAILED` like every failed restore job, so System.Bot needs no new declared error. Tests:
 `RestoreRepositoryJobTests.Run_SystemModelRefusal_*`, `PreSweepDumpRestoreJobTests.RestoreJob_SystemModelRefusal_*`.
 

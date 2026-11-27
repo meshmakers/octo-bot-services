@@ -407,14 +407,20 @@ The engine checks the service-managed CK models of a dump (`System`, `System.*`)
 equals a version published in the CK catalog: a model whose content differs from the published model of the same id, an
 unpublished or too new version, an unknown model name, foreign element rows, or a version below the platform's security
 floor refuse the whole restore. A genuine model older than the platform's version is raised to that version during the
-restore. The check runs once on the dump's CK collections before anything is dropped, so a refused dump leaves an existing
-tenant as it was; it needs the CK catalog and fails closed when it cannot read it. A dump that holds an unpublished System
-version (e.g. from a development environment) cannot be restored where that version is not published.
+restore. The check runs twice. First on the dump's CK collections, before anything is dropped: a dump refused there leaves
+an existing tenant as it was. Then again on the restored database, before the attach: a refusal there (for example
+`upgrade_failed`, or a catalog that cannot be read any more) comes after `dropExistingTenant` dropped the existing tenant,
+which is then gone like after any restore that fails after the drop. The check needs the CK catalog and fails closed when
+it cannot read it. A dump that holds an unpublished System version (e.g. from a development environment) cannot be
+restored where that version is not published.
 
-A refusal fails the restore job with the engine's message as it is: it starts with `RESTORE_SYSTEM_MODEL_REFUSED` and names
-each refused model, its version and the reason (`content_differs`, `unknown_version`, `higher_major`, `unknown_model`,
-`inconsistent_rows`, `multiple_versions`, `below_floor`, `target_not_published`, `catalog_unavailable`,
-`system_tenant_unavailable`, `model_unreadable`, `upgrade_failed`), never model content (`JobFailedException.RestoreFailed`).
+A refusal fails the restore job with the engine's message as it is (`JobFailedException.RestoreFailed`): it starts with
+`RESTORE_SYSTEM_MODEL_REFUSED` and names each refused model, its version and the reason (`content_differs`,
+`unknown_version`, `higher_major`, `unknown_model`, `inconsistent_rows`, `multiple_versions`, `below_floor`,
+`target_not_published`, `catalog_unavailable`, `system_tenant_unavailable`, `model_unreadable`, `upgrade_failed`), never
+model content. Two refusals name no model: when the dump's CK models could not be read for the check (the message carries
+the mongorestore error), and when the host cannot run the check. A tenant-notification warning of the engine (a failed
+tenant-deleted notification after the drop: run ClearCache for the tenant) follows the message in the job error.
 
 | Where | What the administrator sees |
 | --- | --- |

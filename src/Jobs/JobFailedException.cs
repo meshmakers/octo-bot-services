@@ -57,13 +57,18 @@ public class JobFailedException : Exception
     /// <summary>
     ///     The job failure of a failed engine restore. A refusal of the restore check of service-managed models fails the
     ///     job with the engine's message as it is (it names model, version and reason, never model content; nothing was
-    ///     attached); every other failure keeps the command details.
+    ///     attached), followed by the engine's tenant-notification warnings: a refusal after the existing tenant was
+    ///     dropped can come with a failed tenant-deleted notification, whose recovery (ClearCache) must reach the
+    ///     administrator. Every other failure keeps the command details, the engine output included.
     /// </summary>
     internal static Exception RestoreFailed(CommandResult commandResult, string tenantId)
     {
         if (commandResult.Error.StartsWith(RestoreSystemModelRefusedCode, StringComparison.Ordinal))
         {
-            return new JobFailedException(commandResult.Error);
+            var warnings = Jobs.TenantNotificationWarnings.From(commandResult, tenantId);
+            return new JobFailedException(warnings.Count == 0
+                ? commandResult.Error
+                : commandResult.Error + Environment.NewLine + string.Join(Environment.NewLine, warnings));
         }
 
         return CommandExecutionFailed(commandResult, tenantId, "mongorestore");
