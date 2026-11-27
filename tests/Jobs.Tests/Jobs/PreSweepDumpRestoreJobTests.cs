@@ -76,6 +76,24 @@ public class PreSweepDumpRestoreJobTests : ArtifactStoreJobTestBase
     }
 
     [Test]
+    public async Task RestoreJob_SystemModelRefusal_FailsWithTheEngineMessage_AndRunsNoVerify()
+    {
+        await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,
+            new SecretSweepRunInfo("run-s"), CancellationToken.None);
+        const string refusal = "RESTORE_SYSTEM_MODEL_REFUSED: the restore of tenant 'tenant-1' was refused before the " +
+                               "attach. 'System.Identity-3.99.0' (unknown_version): the CK catalog does not publish " +
+                               "version 3.99.0 of 'System.Identity'. The tenant was not attached.";
+        CaptureRestores(() => CommandResult.Failure(refusal));
+
+        var failure = await Assert.That(async () => await CreateRestoreJob().Run(Tenant, "run-s", null, null, null))
+            .Throws<JobFailedException>();
+
+        await Assert.That(failure!.Message).IsEqualTo(refusal);
+        await _coordinator.DidNotReceive().SweepTenantAsync(Tenant, SecretSweepMode.Verify,
+            Arg.Any<SecretSweepTrigger>(), Arg.Any<SecretSweepRunInfo?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
     public async Task RestoreJob_VerifyThrowsAfterAFailedNotification_TheJobErrorNamesClearCache()
     {
         await CreateRealCoordinator().SweepTenantAsync(Tenant, SecretSweepMode.Encrypt, SecretSweepTrigger.Manual,

@@ -414,7 +414,7 @@ public partial class RestoreRepositoryJob(
 
         if (!r.Success)
         {
-            throw JobFailedException.CommandExecutionFailed(r, tenantId, "mongorestore");
+            throw JobFailedException.RestoreFailed(r, tenantId);
         }
 
         logger.LogInformation("Restored database '{DatabaseName}' for tenant '{TenantId}'", databaseName, tenantId);

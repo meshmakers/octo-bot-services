@@ -109,7 +109,7 @@ public class RestorePreSweepDumpJob(
                     true, true, RestoreTimeout, ct);
                 if (!result.Success)
                 {
-                    throw JobFailedException.CommandExecutionFailed(result, tenantId, "mongorestore");
+                    throw JobFailedException.RestoreFailed(result, tenantId);
                 }
 
                 // Restored, but a tenant notification failed after the commit: the job result names the recovery.

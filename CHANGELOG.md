@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- AB#9326 New: a restore the engine refuses because a service-managed CK model of the dump (System, System.*) is not a
+  genuine published one fails the restore job (REST restore job, `Restore-1` method, pre-sweep dump restore) with the
+  engine's message as it is (`RESTORE_SYSTEM_MODEL_REFUSED`, model, version and reason; never model content) instead of
+  the generic mongorestore command details (`JobFailedException.RestoreFailed`). The `Restore-1` method answers
+  `RESTORE_FAILED` as for every failed restore. The check itself runs in engine-mongodb; this service needs that engine
+  version to refuse anything. Docs: README "Restore: refused service-managed CK models", `docs/repository-methods.md`.
+  Tests: `RestoreRepositoryJobTests`, `PreSweepDumpRestoreJobTests`.
+
 - AB#9339 Fix: CK, CK batch and RT imports of a zip with a `.json` entry import that entry as JSON instead of failing
   with "No file to extract"; a `.yml` entry is accepted like `.yaml`, JSON wins when a zip has both, and a zip without a
   model entry fails with a message naming `.json`, `.yaml` and `.yml`. Also fixes AB#8572.
