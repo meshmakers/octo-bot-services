@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- AB#9339 Fix: CK, CK batch and RT imports of a zip with a `.json` entry import that entry as JSON instead of failing
+  with "No file to extract"; a `.yml` entry is accepted like `.yaml`, JSON wins when a zip has both, and a zip without a
+  model entry fails with a message naming `.json`, `.yaml` and `.yml`. Also fixes AB#8572.
+
 - AB#9118 Docs: `docs/index-upgrade.md` records the staging measurement of the index upgrade (2026-11-25: whole run about
   16 minutes, largest tenant 14 minutes for one collection of 885,240 documents, about 15-16 s per index per 100,000
   documents, slower MongoDB for every tenant of the cluster, no errors). The production rollout procedure now derives

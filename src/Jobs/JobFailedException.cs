@@ -29,6 +29,12 @@ public class JobFailedException : Exception
         return new JobFailedException($"File type '{contentType}' is not supported.");
     }
 
+    internal static Exception NoModelFileInZip()
+    {
+        return new JobFailedException(
+            "The zip archive contains no model file: expected an entry ending in .json, .yaml or .yml.");
+    }
+
     internal static Exception ExportCallerContextMissing(string tenantId, string exportKind)
     {
         return new JobFailedException(
