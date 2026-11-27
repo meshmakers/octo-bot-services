@@ -400,6 +400,28 @@ store without an account key (managed identity is phase 2), a stream data reposi
 (`SupportsStagingCopy` false), or a CrateDB whose job log filter is missing (the readiness check, or `ArchiveCopyRefusedException` with reason
 `JobLogNotFiltered`).
 
+### Restore: refused service-managed CK models
+
+The engine checks the service-managed CK models of a dump (`System`, `System.*`) before it attaches the restored tenant
+(repository octo-construction-kit-engine-mongodb, file ck-model-import.md, "Restore check of service-managed models"). A model is accepted only when it
+equals a version published in the CK catalog: a model whose content differs from the published model of the same id, an
+unpublished or too new version, an unknown model name, foreign element rows, or a version below the platform's security
+floor refuse the whole restore. A genuine model older than the platform's version is raised to that version during the
+restore. The check runs once on the dump's CK collections before anything is dropped, so a refused dump leaves an existing
+tenant as it was; it needs the CK catalog and fails closed when it cannot read it. A dump that holds an unpublished System
+version (e.g. from a development environment) cannot be restored where that version is not published.
+
+A refusal fails the restore job with the engine's message as it is: it starts with `RESTORE_SYSTEM_MODEL_REFUSED` and names
+each refused model, its version and the reason (`content_differs`, `unknown_version`, `higher_major`, `unknown_model`,
+`inconsistent_rows`, `multiple_versions`, `below_floor`, `target_not_published`, `catalog_unavailable`,
+`system_tenant_unavailable`, `model_unreadable`, `upgrade_failed`), never model content (`JobFailedException.RestoreFailed`).
+
+| Where | What the administrator sees |
+| --- | --- |
+| `system/v1/jobs/{jobId}` / `{tenantId}/v1/jobs/{jobId}` (`JobDto`) | `status` `Failed`, `errorMessage` = the engine message |
+| `Restore-1` method | declared error `RESTORE_FAILED` with the job id; the job carries the message |
+| Restore of a pre-sweep dump | the same failed job; the Verify sweep does not run |
+
 ### Restore: services that were not told about the tenant
 
 After its commit the engine (`ITenantBackupService.RestoreTenantAsync`) publishes the tenant notifications: tenant-deleted when it

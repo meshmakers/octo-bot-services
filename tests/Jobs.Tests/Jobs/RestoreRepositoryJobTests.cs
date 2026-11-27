@@ -147,6 +147,30 @@ public class RestoreRepositoryJobTests
             .Throws<JobFailedException>().WithMessageContaining("run ClearCache for the tenant");
     }
 
+    [Test]
+    public async Task Run_SystemModelRefusal_FailsTheJobWithTheEngineMessageAsItIs()
+    {
+        const string refusal = "RESTORE_SYSTEM_MODEL_REFUSED: the restore of tenant 'tenant-1' was refused before the " +
+                               "attach. 'System.Identity-3.8.0' (content_differs): its content differs from the " +
+                               "published model of the same id. The tenant was not attached.";
+
+        var exception = await Assert.That(async () => await RunWithEngineResultAsync(CommandResult.Failure(refusal)))
+            .Throws<JobFailedException>();
+
+        await Assert.That(exception!.Message).IsEqualTo(refusal);
+        await Assert.That(exception.Message).DoesNotContain("Command 'mongorestore'");
+    }
+
+    [Test]
+    public async Task Run_OtherRestoreFailure_KeepsTheCommandDetails()
+    {
+        var exception = await Assert.That(async () => await RunWithEngineResultAsync(new CommandResult
+                { Success = false, ExitCode = 1, Error = "mongorestore failed" }))
+            .Throws<JobFailedException>();
+
+        await Assert.That(exception!.Message).Contains("Command 'mongorestore' failed for tenant 'tenant-1'");
+    }
+
     private async Task<RestoreRepositoryResult?> RunWithEngineResultAsync(CommandResult engineResult)
     {
         var tempFile = Path.GetTempFileName();

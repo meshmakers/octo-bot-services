@@ -74,6 +74,16 @@ method this service hosts. User documentation: README "Repository dump as an asy
 - CK model: 3.8.0 = additions only (Minor), `minEngineVersion` stays 3.5.67; enum `ArchiveImportMode` keys = REST enum keys (test).
 - Tests: see README.
 
+## Restore refusal of service-managed CK models
+
+The engine refuses a restore whose dump holds a service-managed CK model (`System`, `System.*`) that is not a genuine
+published one, before the attach (repository octo-construction-kit-engine-mongodb, file ck-model-import.md, "Restore check of service-managed models").
+Its failure `Error` starts with `RESTORE_SYSTEM_MODEL_REFUSED` and names model, version and reason, never content.
+`JobFailedException.RestoreFailed` (used by `RestoreRepositoryJob` and `RestorePreSweepDumpJob`) fails the job with that
+message as it is; any other restore failure keeps the command details (`CommandExecutionFailed`). The `Restore-1` method
+reports it as `RESTORE_FAILED` like every failed restore job, so System.Bot needs no new declared error. Tests:
+`RestoreRepositoryJobTests.Run_SystemModelRefusal_*`, `PreSweepDumpRestoreJobTests.RestoreJob_SystemModelRefusal_*`.
+
 ## Restore jobs report failed tenant notifications (System.Bot 3.9.0)
 
 A restore whose tenant-created or tenant-deleted notification failed after the engine's commit succeeds, but the services may

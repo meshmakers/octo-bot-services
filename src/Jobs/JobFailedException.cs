@@ -48,6 +48,27 @@ public class JobFailedException : Exception
         return new JobFailedException($"No value of key '{key} in distribute cache for tenant '{tenantId}' found.");
     }
 
+    /// <summary>
+    ///     Stable error code at the start of the engine's restore failure when the service-managed CK models of the dump
+    ///     (System, System.*) are not genuine published ones (engine-mongodb <c>RestoreSystemModelGuard.RefusalCode</c>).
+    /// </summary>
+    internal const string RestoreSystemModelRefusedCode = "RESTORE_SYSTEM_MODEL_REFUSED";
+
+    /// <summary>
+    ///     The job failure of a failed engine restore. A refusal of the restore check of service-managed models fails the
+    ///     job with the engine's message as it is (it names model, version and reason, never model content; nothing was
+    ///     attached); every other failure keeps the command details.
+    /// </summary>
+    internal static Exception RestoreFailed(CommandResult commandResult, string tenantId)
+    {
+        if (commandResult.Error.StartsWith(RestoreSystemModelRefusedCode, StringComparison.Ordinal))
+        {
+            return new JobFailedException(commandResult.Error);
+        }
+
+        return CommandExecutionFailed(commandResult, tenantId, "mongorestore");
+    }
+
     internal static Exception CommandExecutionFailed(CommandResult commandResult, string tenantId, string commandName)
     {
         return new JobFailedException(
